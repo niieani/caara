@@ -7,11 +7,13 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { InputLogger } from "./inputLogger.ts";
 import { mockResponsesFixture } from "./protocol.ts";
+import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
+import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 
 /** Stable project root used as a realistic Codex workspace path in transport tests. */
 const projectRoot = process.cwd();
@@ -131,15 +133,28 @@ const makeCaptureDiagnosticsLoggerLayer = (loggedDiagnostics: Array<ResponsesReq
     }),
   });
 
+/** Builds a per-test relay logger layer that records structured relay events in order. */
+const makeCaptureRelayLoggerLayer = (relayEvents: Array<RelayLogEvent>) =>
+  Layer.succeed(RelayLogger, {
+    log: Effect.fnUntraced(function* (event: RelayLogEvent) {
+      yield* Effect.sync(() => {
+        relayEvents.push(event);
+      });
+    }),
+  });
+
 /** Builds the full scoped provider test layer for one test's captured logs. */
 const makeProviderTestLayer = (
   loggedInputs: Array<Schema.Json>,
   loggedDiagnostics: Array<ResponsesRequestDiagnostics>,
+  relayEvents: Array<RelayLogEvent>,
 ) =>
   mockResponsesServerLayer.pipe(
     Layer.provideMerge(BunHttpServer.layerTest),
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
     Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
+    Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
+    Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );
 
 /** Parsed Responses SSE frame decoded through Effect's OpenAI stream-event schema. */
@@ -211,6 +226,7 @@ const decodeCompletedEvent = Schema.decodeUnknownSync(
 function streamsFakeReasoningAndFinalAnswer() {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
@@ -242,19 +258,43 @@ function streamsFakeReasoningAndFinalAnswer() {
     assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
     assert.deepStrictEqual(diagnostics.body, requestBody);
     assert.deepStrictEqual(diagnostics.cwdCandidates, [projectRoot]);
-    assert.strictEqual(reasoningData.delta, mockResponsesFixture.reasoningText);
+    assert.strictEqual(reasoningData.delta, simulatorDriverFixture.reasoningText);
     assert.strictEqual(messageData.item.type, "message");
     assert.deepStrictEqual(messageData.item.content, [
-      { type: "output_text", text: mockResponsesFixture.assistantText, annotations: [] },
+      { type: "output_text", text: simulatorDriverFixture.assistantText, annotations: [] },
     ]);
+    assert.notStrictEqual(simulatorDriverFixture.assistantText, mockResponsesFixture.assistantText);
     assert.strictEqual(completedData.type, "response.completed");
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
+    assert.deepStrictEqual(
+      relayEvents.map((event) => event._tag),
+      [
+        "TurnAccepted",
+        "TargetSelected",
+        "DriverStarted",
+        "RuntimeEventRelayed",
+        "RuntimeEventRelayed",
+        "TurnCompleted",
+      ],
+    );
+    assert.deepStrictEqual(relayEvents[1], {
+      _tag: "TargetSelected",
+      externalAgentKind: "claude",
+      externalModelSpecifier: "test",
+      rawDriverOptions: {
+        effort: "max",
+      },
+      requestedModel: "claude/test",
+      threadId: "codex-thread-1",
+      turnId: makeTurnId(),
+    });
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
 }
 
 /** Test program for the unsupported non-streaming Responses request contract. */
 function rejectsNonStreamingRequest() {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
@@ -279,7 +319,8 @@ function rejectsNonStreamingRequest() {
     assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
     assert.deepStrictEqual(diagnostics.body, nonStreamingRequestBody);
     assert.deepStrictEqual(diagnostics.cwdCandidates, [projectRoot]);
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
+    assert.deepStrictEqual(relayEvents, []);
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
 }
 
 /** Test program for OpenAI-shaped invalid request responses at the HTTP boundary. */
@@ -296,6 +337,7 @@ function rejectsInvalidCodexRequest({
 }) {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
@@ -310,7 +352,42 @@ function rejectsInvalidCodexRequest({
     assert.strictEqual(getField(getField(responseBody, "error"), "type"), "invalid_request_error");
     assert.match(String(getField(getField(responseBody, "error"), "message")), expectedMessage);
     assert.strictEqual(loggedDiagnostics.length, 1);
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
+    assert.deepStrictEqual(relayEvents, []);
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
+}
+
+/** Test program for simulator driver failure visibility through relay logs. */
+function logsSimulatorDriverFailures() {
+  const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
+
+  return Effect.gen(function* () {
+    const request = setCodexHeaders({
+      request: yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post("/v1/responses?simulator_failure=start"),
+        requestBody,
+      ),
+    });
+    const response = yield* HttpClient.execute(request);
+    const responseBody = yield* response.json;
+
+    assert.strictEqual(response.status, 500);
+    assert.strictEqual(getField(getField(responseBody, "error"), "type"), "server_error");
+    assert.match(String(getField(getField(responseBody, "error"), "message")), /simulator/i);
+    assert.deepStrictEqual(
+      relayEvents.map((event) => event._tag),
+      ["TurnAccepted", "TargetSelected", "DriverStarted", "TurnFailed"],
+    );
+    assert.deepStrictEqual(relayEvents.at(-1), {
+      _tag: "TurnFailed",
+      threadId: "codex-thread-1",
+      turnId: makeTurnId(),
+      message: simulatorDriverFixture.startFailureMessage,
+    });
+    assert.deepStrictEqual(loggedInputs, []);
+    assert.strictEqual(loggedDiagnostics.length, 1);
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
 }
 
 describe("mock Responses provider", () => {
@@ -384,5 +461,9 @@ describe("mock Responses provider", () => {
       }),
       expectedMessage: /cwd/i,
     }),
+  );
+
+  it.effect("logs simulator driver failures with an OpenAI-shaped transport error", () =>
+    logsSimulatorDriverFailures(),
   );
 });

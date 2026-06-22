@@ -4,11 +4,11 @@ import * as Sse from "effect/unstable/encoding/Sse";
 /** Single Server-Sent Event frame emitted by the mock Responses provider. */
 export interface SseEvent {
   readonly event: string;
-  readonly data: Schema.Json;
+  readonly data: unknown;
 }
 
 /** Encodes a JSON-compatible SSE data payload through Effect Schema. */
-export const encodeSseData = (data: Schema.Json): string =>
+export const encodeSseData = (data: unknown): string =>
   Schema.encodeSync(Schema.UnknownFromJsonString)(data);
 
 /** Encodes one event as an SSE frame using Effect's native SSE encoder. */
