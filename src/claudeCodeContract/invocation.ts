@@ -16,6 +16,7 @@ export interface ClaudeCodePrintInvocationOptions {
   readonly maxBudgetUsd?: string;
   readonly tools?: ClaudeCodeToolSelection;
   readonly debugFile?: string;
+  readonly sessionId?: string;
   readonly resumeSessionId?: string;
   readonly includePartialMessages?: boolean;
 }
@@ -47,6 +48,7 @@ export const buildClaudeCodePrintInvocation = ({
   maxBudgetUsd,
   tools,
   debugFile,
+  sessionId,
   resumeSessionId,
   includePartialMessages,
 }: ClaudeCodePrintInvocationOptions): ClaudeCodePrintInvocation => {
@@ -54,6 +56,9 @@ export const buildClaudeCodePrintInvocation = ({
 
   if (includePartialMessages === true) {
     args.push("--include-partial-messages");
+  }
+  if (sessionId !== undefined) {
+    args.push("--session-id", sessionId);
   }
   if (resumeSessionId !== undefined) {
     args.push("--resume", resumeSessionId);

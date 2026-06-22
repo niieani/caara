@@ -211,6 +211,18 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
         runtimeEventTag: runtimeEvent._tag,
       }),
     ),
+    Stream.catch((error) =>
+      Stream.drain(
+        Stream.fromEffect(
+          relayLogger.log({
+            _tag: "TurnFailed",
+            threadId: responsesRequest.codex.threadId,
+            turnId: responsesRequest.codex.turnId,
+            message: error.message,
+          }),
+        ),
+      ),
+    ),
   );
   const completeTurn = Effect.gen(function* () {
     yield* relayLogger.log({

@@ -71,7 +71,7 @@ export const agentDriverCancelShape = Effect.fnUntraced(function* () {
 
 /** Driver start result containing runtime events and durable external session state. */
 export interface AgentDriverTurnResult {
-  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent>;
+  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError>;
   readonly externalSession: ExternalSessionState;
   readonly cancel: typeof agentDriverCancelShape;
 }
@@ -93,8 +93,10 @@ export const agentDriverStartShape = Effect.fnUntraced(function* (_turn: AgentDr
   });
   const externalSessionChoices: readonly ExternalSessionState[] = [new EphemeralExternalSession()];
   const externalSession = Option.getOrThrow(Option.fromUndefinedOr(externalSessionChoices.at(0)));
+  const runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError> =
+    Stream.fromIterable<AgentRuntimeEvent>([]);
   return {
-    runtimeEvents: Stream.fromIterable<AgentRuntimeEvent>([]),
+    runtimeEvents,
     externalSession,
     cancel: agentDriverCancelShape,
   } satisfies AgentDriverTurnResult;
