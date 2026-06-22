@@ -33,17 +33,32 @@ export interface ClaudeCodeAgentDriverConfig {
 const driverError = (cause: unknown): AgentDriverError =>
   new AgentDriverError({ message: String(cause) });
 
-/** Builds an invocation for a first-turn Claude Code session. */
-const firstTurnInvocationOptions = Effect.fnUntraced(function* ({
+/** Extracts a durable Claude session id from prior external session state. */
+const durableSessionIdOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(
+    [turn.externalSession]
+      .filter((session): session is DurableExternalSession => session?._tag === "Durable")
+      .map((session) => session.externalSessionId)
+      .at(0),
+  );
+
+/** Builds an invocation for a first or resumed Claude Code session. */
+const turnInvocationOptions = Effect.fnUntraced(function* ({
   turn,
   prompt,
   sessionId,
+  resumeSessionId,
 }: {
   readonly turn: AgentDriverTurn;
   readonly prompt: string;
   readonly sessionId: string;
+  readonly resumeSessionId: string | undefined;
 }) {
   const options = yield* parseClaudeCodeDriverOptions(turn.target.rawDriverOptions);
+  const newSessionId = Option.match(Option.fromUndefinedOr(resumeSessionId), {
+    onNone: () => sessionId,
+    onSome: () => undefined,
+  });
   return {
     cwd: turn.cwd,
     prompt,
@@ -53,7 +68,8 @@ const firstTurnInvocationOptions = Effect.fnUntraced(function* ({
     tools: options.tools,
     debugFile: options.debugFile,
     includePartialMessages: options.includePartialMessages,
-    sessionId,
+    sessionId: newSessionId,
+    resumeSessionId,
   } satisfies ClaudeCodePrintInvocationOptions;
 });
 
@@ -239,8 +255,17 @@ const createClaudeCodeAgentDriver = ({
 }): AgentDriver => ({
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     const prompt = yield* extractClaudeCodePrompt(turn.prompt.input);
-    const sessionId = randomUUID();
-    const invocationOptions = yield* firstTurnInvocationOptions({ turn, prompt, sessionId });
+    const resumeSessionId = Option.getOrUndefined(durableSessionIdOption(turn));
+    const sessionId = Option.match(Option.fromUndefinedOr(resumeSessionId), {
+      onNone: () => randomUUID(),
+      onSome: (existingSessionId) => existingSessionId,
+    });
+    const invocationOptions = yield* turnInvocationOptions({
+      turn,
+      prompt,
+      sessionId,
+      resumeSessionId,
+    });
     const childProcess = yield* spawnClaudeCode({ command, env, invocationOptions });
 
     return {

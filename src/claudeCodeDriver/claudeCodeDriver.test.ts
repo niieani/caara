@@ -44,20 +44,20 @@ const projectRoot = process.cwd();
 const makeThreadId = (): string => "codex-thread-real-claude-first-turn";
 
 /** Stable Codex turn id used by the real Claude driver first-turn test. */
-const makeTurnId = (): string => "turn-real-claude-first";
+const makeTurnId = (turnIndex: number): string => `turn-real-claude-${turnIndex}`;
 
 /** Text prompt expected to cross the Responses-to-Claude prompt boundary. */
-const makePromptText = (): string => "please prove first turn";
+const makePromptText = (turnIndex: number): string => `please prove turn ${turnIndex}`;
 
 /** Assistant text emitted by the fake Claude executable. */
-const makeFakeAssistantText = (): string => "FAKE_CLAUDE_FIRST_TURN";
+const makeFakeAssistantText = (turnIndex: number): string => `FAKE_CLAUDE_TURN_${turnIndex}`;
 
 /** Responses input fixture sent through the Claude driver boundary. */
-const makeInput = (): Schema.Json => [
+const makeInput = (turnIndex: number): Schema.Json => [
   {
     type: "message",
     role: "user",
-    content: [{ type: "input_text", text: makePromptText() }],
+    content: [{ type: "input_text", text: makePromptText(turnIndex) }],
   },
 ];
 
@@ -72,10 +72,11 @@ const valueAfter = (flag) => {
 };
 const sessionId = valueAfter("--session-id") ?? valueAfter("--resume") ?? "missing-session";
 const model = valueAfter("--model") ?? "missing-model";
+const turnIndex = valueAfter("--resume") === undefined ? 1 : 2;
 
-writeFileSync(process.env.CAARA_FAKE_CLAUDE_ARGV_FILE, JSON.stringify(args));
-writeFileSync(process.env.CAARA_FAKE_CLAUDE_CWD_FILE, process.cwd());
-writeFileSync(process.env.CAARA_FAKE_CLAUDE_PROMPT_FILE, args.at(-1) ?? "");
+writeFileSync(process.env.CAARA_FAKE_CLAUDE_ARGV_FILE, JSON.stringify(args) + "\\n", { flag: "a" });
+writeFileSync(process.env.CAARA_FAKE_CLAUDE_CWD_FILE, process.cwd() + "\\n", { flag: "a" });
+writeFileSync(process.env.CAARA_FAKE_CLAUDE_PROMPT_FILE, (args.at(-1) ?? "") + "\\n", { flag: "a" });
 
 console.log(JSON.stringify({
   type: "system",
@@ -90,7 +91,7 @@ console.log(JSON.stringify({
 console.log(JSON.stringify({
   type: "assistant",
   message: {
-    content: [{ type: "text", text: "${makeFakeAssistantText()}" }],
+    content: [{ type: "text", text: \`FAKE_CLAUDE_TURN_\${turnIndex}\` }],
   },
   session_id: sessionId,
 }));
@@ -98,7 +99,7 @@ console.log(JSON.stringify({
   type: "result",
   subtype: "success",
   is_error: false,
-  result: "${makeFakeAssistantText()}",
+  result: \`FAKE_CLAUDE_TURN_\${turnIndex}\`,
   stop_reason: "end_turn",
   session_id: sessionId,
   terminal_reason: "completed",
@@ -106,59 +107,88 @@ console.log(JSON.stringify({
 `;
 
 /** Builds Codex turn metadata for the first-turn Claude driver test. */
-const makeTurnMetadata = (): Readonly<Record<string, Schema.Json>> => ({
+const makeTurnMetadata = ({
+  turnIndex,
+  includeWorkspace,
+}: {
+  readonly turnIndex: number;
+  readonly includeWorkspace: boolean;
+}): Readonly<Record<string, Schema.Json>> => ({
   installation_id: "install-1",
   session_id: "parent-session-1",
   thread_id: makeThreadId(),
-  turn_id: makeTurnId(),
+  turn_id: makeTurnId(turnIndex),
   window_id: "window-1",
   request_kind: "turn",
   parent_thread_id: "parent-thread-1",
   subagent_kind: "caara",
   sandbox: "workspace-write",
-  workspaces: {
-    [projectRoot]: {
-      latest_git_commit_hash: "abcdef0",
-      has_changes: true,
-    },
-  },
+  workspaces: Object.fromEntries(
+    [projectRoot]
+      .filter(() => includeWorkspace)
+      .map((workspacePath) => [
+        workspacePath,
+        {
+          latest_git_commit_hash: "abcdef0",
+          has_changes: true,
+        },
+      ]),
+  ),
   turn_started_at_unix_ms: 1,
 });
 
 /** Builds Codex headers for the first-turn Claude driver test. */
-const makeHeaders = (): Readonly<Record<string, string>> => ({
+const makeHeaders = ({
+  turnIndex,
+  includeWorkspace,
+}: {
+  readonly turnIndex: number;
+  readonly includeWorkspace: boolean;
+}): Readonly<Record<string, string>> => ({
   "session-id": "parent-session-1",
   "thread-id": makeThreadId(),
-  "x-client-request-id": makeTurnId(),
+  "x-client-request-id": makeTurnId(turnIndex),
   "x-codex-parent-thread-id": "parent-thread-1",
-  "x-codex-turn-metadata": Schema.encodeSync(Schema.UnknownFromJsonString)(makeTurnMetadata()),
+  "x-codex-turn-metadata": Schema.encodeSync(Schema.UnknownFromJsonString)(
+    makeTurnMetadata({ turnIndex, includeWorkspace }),
+  ),
   "x-codex-window-id": "window-1",
   "x-openai-subagent": "caara",
   originator: "codex_cli_rs",
 });
 
 /** Builds a Codex-shaped streaming Responses request body for the fake Claude turn. */
-const makeBody = (): Schema.Json => ({
-  model: "claude/haiku",
-  input: makeInput(),
+const makeBody = ({
+  turnIndex,
+  model,
+  includeCwd,
+}: {
+  readonly turnIndex: number;
+  readonly model: string;
+  readonly includeCwd: boolean;
+}): Schema.Json => ({
+  model,
+  input: makeInput(turnIndex),
   stream: true,
   client_metadata: {
     thread_id: makeThreadId(),
-    turn_id: makeTurnId(),
+    turn_id: makeTurnId(turnIndex),
   },
-  metadata: {
-    cwd: projectRoot,
-  },
+  metadata: Object.fromEntries([projectRoot].filter(() => includeCwd).map((cwd) => ["cwd", cwd])),
 });
 
 /** Applies the Codex header fixture to one outgoing request. */
 const setHeaders = ({
   request,
+  turnIndex,
+  includeWorkspace,
 }: {
   readonly request: HttpClientRequest.HttpClientRequest;
+  readonly turnIndex: number;
+  readonly includeWorkspace: boolean;
 }): HttpClientRequest.HttpClientRequest => {
   let nextRequest = request;
-  for (const [name, value] of Object.entries(makeHeaders())) {
+  for (const [name, value] of Object.entries(makeHeaders({ turnIndex, includeWorkspace }))) {
     nextRequest = nextRequest.pipe(HttpClientRequest.setHeader(name, value));
   }
   return nextRequest;
@@ -292,12 +322,19 @@ const readTextFile = Effect.fnUntraced(function* ({ filePath }: { readonly fileP
   });
 });
 
-/** Reads the argv fixture written by the fake Claude executable. */
-const readArgvFile = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
+/** Reads the argv JSONL fixture written by the fake Claude executable. */
+const readArgvLog = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
   const content = yield* readTextFile({ filePath });
-  return yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(
-    content,
-  ).pipe(Effect.mapError((cause) => claudeCodeDriverTestError(cause)));
+  return yield* Effect.forEach(
+    content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+    (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(line).pipe(
+        Effect.mapError((cause) => claudeCodeDriverTestError(cause)),
+      ),
+  );
 });
 
 /** Reads the persisted Caara binding for the fake Claude turn. */
@@ -324,7 +361,7 @@ const readPersistedBinding = Effect.fnUntraced(function* ({
 });
 
 describe("Claude Code driver integration", () => {
-  it.effect("drives a first Claude Code turn and stores a durable session binding", () =>
+  it.effect("drives first and resumed Claude Code turns through one durable session", () =>
     Effect.gen(function* () {
       const testDir = yield* makeTestDir();
       const fakeClaudePath = yield* writeFakeClaudeExecutable({ testDir });
@@ -342,13 +379,15 @@ describe("Claude Code driver integration", () => {
         CAARA_FAKE_CLAUDE_PROMPT_FILE: promptFile,
       };
 
-      const request = setHeaders({
+      const firstRequest = setHeaders({
         request: yield* HttpClientRequest.bodyJson(
           HttpClientRequest.post("/v1/responses?effort=low&max_budget_usd=0.02&tools=disabled"),
-          makeBody(),
+          makeBody({ turnIndex: 1, model: "claude/haiku", includeCwd: true }),
         ),
+        turnIndex: 1,
+        includeWorkspace: true,
       });
-      const response = yield* HttpClient.execute(request).pipe(
+      const firstResponse = yield* HttpClient.execute(firstRequest).pipe(
         Effect.provide(
           providerLayer({
             stateDir,
@@ -360,20 +399,16 @@ describe("Claude Code driver integration", () => {
           }),
         ),
       );
-      const frames = yield* decodeResponseSseFrames(response.stream);
-      const argv = yield* readArgvFile({ filePath: argvFile });
-      const cwd = yield* readTextFile({ filePath: cwdFile });
-      const prompt = yield* readTextFile({ filePath: promptFile });
-      const binding = yield* readPersistedBinding({ stateDir });
-      const sessionIdIndex = argv.indexOf("--session-id") + 1;
-      const sessionId = argv.at(sessionIdIndex);
+      const firstFrames = yield* decodeResponseSseFrames(firstResponse.stream);
+      const firstArgv = (yield* readArgvLog({ filePath: argvFile })).at(0);
+      assert.ok(firstArgv, "fake Claude must record first argv");
+      const sessionIdIndex = firstArgv.indexOf("--session-id") + 1;
+      const sessionId = firstArgv.at(sessionIdIndex);
 
-      assert.strictEqual(response.status, 200);
-      assert.strictEqual(assistantTextFromFrames(frames), makeFakeAssistantText());
-      assert.strictEqual(cwd, projectRoot);
-      assert.strictEqual(prompt, makePromptText());
+      assert.strictEqual(firstResponse.status, 200);
+      assert.strictEqual(assistantTextFromFrames(firstFrames), makeFakeAssistantText(1));
       assert.ok(sessionId, "driver must generate --session-id for first turns");
-      assert.deepStrictEqual(argv, [
+      assert.deepStrictEqual(firstArgv, [
         "-p",
         "--verbose",
         "--output-format",
@@ -388,33 +423,73 @@ describe("Claude Code driver integration", () => {
         "0.02",
         "--tools",
         "",
-        makePromptText(),
+        makePromptText(1),
       ]);
+
+      const secondRequest = setHeaders({
+        request: yield* HttpClientRequest.bodyJson(
+          HttpClientRequest.post("/v1/responses?effort=max&max_budget_usd=0.03&tools=default"),
+          makeBody({ turnIndex: 2, model: "claude/sonnet", includeCwd: false }),
+        ),
+        turnIndex: 2,
+        includeWorkspace: false,
+      });
+      const secondResponse = yield* HttpClient.execute(secondRequest).pipe(
+        Effect.provide(
+          providerLayer({
+            stateDir,
+            fakeClaudePath,
+            fakeEnv,
+            inputs,
+            diagnostics,
+            relayEvents,
+          }),
+        ),
+      );
+      const secondFrames = yield* decodeResponseSseFrames(secondResponse.stream);
+      const argvLog = yield* readArgvLog({ filePath: argvFile });
+      const secondArgv = argvLog.at(1);
+      const cwdLog = (yield* readTextFile({ filePath: cwdFile })).trim().split("\n");
+      const promptLog = (yield* readTextFile({ filePath: promptFile })).trim().split("\n");
+      assert.ok(secondArgv, "fake Claude must record second argv");
+      assert.strictEqual(secondResponse.status, 200);
+      assert.strictEqual(assistantTextFromFrames(secondFrames), makeFakeAssistantText(2));
+      assert.deepStrictEqual(secondArgv, [
+        "-p",
+        "--verbose",
+        "--output-format",
+        "stream-json",
+        "--resume",
+        sessionId,
+        "--model",
+        "sonnet",
+        "--effort",
+        "max",
+        "--max-budget-usd",
+        "0.03",
+        "--tools",
+        "default",
+        makePromptText(2),
+      ]);
+      assert.deepStrictEqual(cwdLog, [projectRoot, projectRoot]);
+      assert.deepStrictEqual(promptLog, [makePromptText(1), makePromptText(2)]);
+
+      const binding = yield* readPersistedBinding({ stateDir });
       const durableSession = yield* Schema.decodeUnknownEffect(DurableExternalSession)(
         binding.externalSession,
       ).pipe(Effect.mapError((cause) => claudeCodeDriverTestError(cause)));
       assert.strictEqual(durableSession.externalSessionId, sessionId);
       assert.strictEqual(binding.cwd, projectRoot);
-      assert.strictEqual(binding.requestedModel, "claude/haiku");
-      assert.strictEqual(binding.externalModelSpecifier, "haiku");
+      assert.strictEqual(binding.requestedModel, "claude/sonnet");
+      assert.strictEqual(binding.externalModelSpecifier, "sonnet");
       assert.deepStrictEqual(binding.rawDriverOptions, {
-        effort: "low",
-        max_budget_usd: "0.02",
-        tools: "disabled",
+        effort: "max",
+        max_budget_usd: "0.03",
+        tools: "default",
       });
-      assert.deepStrictEqual(inputs, [makeInput()]);
-      assert.strictEqual(diagnostics.length, 1);
-      assert.deepStrictEqual(
-        relayEvents.map((event) => event._tag),
-        [
-          "TurnAccepted",
-          "TargetSelected",
-          "TurnInFlightAcquired",
-          "DriverStarted",
-          "RuntimeEventRelayed",
-          "TurnCompleted",
-        ],
-      );
+      assert.deepStrictEqual(inputs, [makeInput(1), makeInput(2)]);
+      assert.strictEqual(diagnostics.length, 2);
+      assert.strictEqual(relayEvents.filter((event) => event._tag === "TurnCompleted").length, 2);
     }),
   );
 });
