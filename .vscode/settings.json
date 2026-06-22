@@ -1,0 +1,11 @@
+{
+  "typescript.native-preview.tsdk": "node_modules/@typescript/native-preview",
+  "typescript.experimental.useTsgo": true,
+  "js/ts.experimental.useTsgo": true,
+  "yaml.schemas": {
+    "docs/assets/config-schemas/service-config.schema.json": [
+      "data/julian/config.yaml",
+      "data/julian/config.example.yaml"
+    ]
+  }
+}

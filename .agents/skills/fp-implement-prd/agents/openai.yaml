@@ -1,0 +1,4 @@
+interface:
+  display_name: "FP Implement PRD"
+  short_description: "Implement an fp PRD issue and all child issues."
+  default_prompt: "[$fp-implement-prd](/Volumes/Projects/Software/julian/.agents/skills/fp-implement-prd/SKILL.md) JUL-ipjxnqrs"

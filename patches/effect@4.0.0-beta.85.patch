@@ -1,0 +1,51 @@
+diff --git a/dist/unstable/rpc/RpcServer.js b/dist/unstable/rpc/RpcServer.js
+index d7e022f20895fe7bb29d7d7d121577d0b740680f..d764957790ab09f0abcd3adb3892e5c9d45d59f6 100644
+--- a/dist/unstable/rpc/RpcServer.js
++++ b/dist/unstable/rpc/RpcServer.js
+@@ -695,12 +695,22 @@ export const makeProtocolWithHttpEffect = /*#__PURE__*/Effect.gen(function* () {
+     yield* writeRequest(id, constEof);
+     if (!includesFraming) {
+       const responses = yield* Queue.collect(queue);
++      if (responses.length === 0) {
++        return HttpServerResponse.empty({
++          status: 204
++        });
++      }
+       return HttpServerResponse.text(parser.encode(responses), {
+         contentType: serialization.contentType
+       });
+     }
+     const initialChunk = yield* Queue.takeAll(queue);
+     if (queue.state._tag === "Done") {
++      if (initialChunk.length === 0) {
++        return HttpServerResponse.empty({
++          status: 204
++        });
++      }
+       return HttpServerResponse.uint8Array(mergeUint8Arrays(initialChunk), {
+         contentType: serialization.contentType
+       });
+diff --git a/src/unstable/rpc/RpcServer.ts b/src/unstable/rpc/RpcServer.ts
+index b45c87119bafb9ac56a1b06eed01af339ac18d3f..f91097f77b2f1eddcb2df5866e6bdb4335819d38 100644
+--- a/src/unstable/rpc/RpcServer.ts
++++ b/src/unstable/rpc/RpcServer.ts
+@@ -1062,6 +1062,9 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
+ 
+     if (!includesFraming) {
+       const responses = yield* Queue.collect(queue)
++      if (responses.length === 0) {
++        return HttpServerResponse.empty({ status: 204 })
++      }
+       return HttpServerResponse.text(parser.encode(responses) as string, {
+         contentType: serialization.contentType
+       })
+@@ -1069,6 +1072,9 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
+ 
+     const initialChunk = yield* Queue.takeAll(queue) as any as Effect.Effect<NonEmptyReadonlyArray<Uint8Array>>
+     if (queue.state._tag === "Done") {
++      if (initialChunk.length === 0) {
++        return HttpServerResponse.empty({ status: 204 })
++      }
+       return HttpServerResponse.uint8Array(mergeUint8Arrays(initialChunk), {
+         contentType: serialization.contentType
+       })

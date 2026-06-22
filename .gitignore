@@ -1,0 +1,17 @@
+.env
+node_modules
+*.tsbuildinfo
+temp.local/
+.local-artifacts/
+src/**/__experiments__/
+
+/data/**
+!/data/**/
+!/data/**/*.example.yaml
+!/data/**/*.example.yml
+!/data/**/*.sample.yaml
+!/data/**/*.sample.yml
+
+# Fiberplane local issue tracking
+.fp/*
+!.fp/extensions/

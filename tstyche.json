@@ -1,0 +1,7 @@
+{
+  "checkDeclarationFiles": true,
+  "checkSuppressedErrors": true,
+  "failFast": false,
+  "testFileMatch": ["src/**/*.tst.*", "src/**/__typetests__/*.test.*", "src/**/typetests/*.test.*"],
+  "tsconfig": "findup"
+}

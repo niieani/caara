@@ -1,0 +1,33 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "extends": ["@catenarycloud/linteffect"],
+  "files": {
+    "includes": [
+      "src/**/*.ts",
+      "!src/**/__experiments__",
+      "!temp.local",
+      "!data",
+      "!references",
+      "!node_modules",
+      "!coverage",
+      "!dist",
+      "!build",
+    ],
+  },
+  "linter": {
+    "rules": {
+      "suspicious": {
+        "useIterableCallbackReturn": {
+          "level": "error",
+          "options": {
+            // falsely flags Effect's Sink.forEach callbacks which return Effects
+            "checkForEach": false,
+          },
+        },
+      },
+    },
+  },
+  "formatter": {
+    "enabled": false,
+  },
+}
