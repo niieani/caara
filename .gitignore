@@ -15,3 +15,6 @@ src/**/__experiments__/
 # Fiberplane local issue tracking
 .fp/*
 !.fp/extensions/
+
+*.local.*
+*.local
