@@ -1,8 +1,9 @@
-This project ("caarra") an OpenAI-compatible Responses API wrapper for other code agents (Claude Code, Antigravity) designed to enable spawning those agents as Codex's subagents.
+This project ("caara") an OpenAI-compatible Responses API wrapper for other code agents (Claude Code, Antigravity) designed to enable spawning those agents as Codex's subagents.
 
 Context on project + vocabulary in: `./CONTEXT.md`
 Decisions in `./docs/adr/`
-The spec in `./docs/runtime.md`
+The spec in `./docs/caara.md`
+Codex subagent smoke flow in `./docs/agents/smoke-testing.md`
 
 Lint: `bun lint` (biome + oxlint)
 Format: `bun fmt` (oxfmt)
@@ -31,143 +32,6 @@ AVOID making assumptions about APIs. Whenever working with a library, ALWAYS con
 - `references/vitest/docs/{guide,api}/*` - docs and reference for Vitest
 - Do not assume CLI flags/args; verify with `--help` or run the command.
 
-# Effect v4
-
-Full source code and docs available in `references/effect/*`. Review patterns from there to understand how to write Effect v4 code.
-
-v4 has some differences from the previous major versions:
-
-Functionality that was spread across `@effect/platform`, `@effect/rpc`, `@effect/cluster`, and others now lives directly inside `effect`
-
-Packages that remain separate are platform-specific, provider-specific, or technology-specific implementations:
-
-- `@effect/platform-*` — platform packages
-- `@effect/sql-*` — SQL driver packages
-- `@effect/ai-*` — AI provider packages
-- `@effect/opentelemetry` — OpenTelemetry integration
-- `@effect/atom-*` — framework-specific atom bindings
-- `@effect/vitest` — Vitest testing utilities
-
-Effect AI MCP no-arg tools exposed to Codex/OpenAI need raw JSON Schema parameters:
-`{ type: "object", properties: {}, additionalProperties: false }`. `Schema.Struct({})` advertises
-an object-or-array union, and `Tool.EmptyParams` omits explicit `properties`.
-
-## Prefer `Effect.fnUntraced` over functions that return `Effect.gen`
-
-Instead of writing:
-
-```ts
-const fn = (param: string) =>
-  Effect.gen(function*() {
-    // ...
-  })
-```
-
-Prefer:
-
-```ts
-const fn = Effect.fnUntraced(function*(param: string) {
-  // ...
-})
-```
-
-## Using `Context.Service`
-
-Prefer the class syntax when working with `Context.Service`. For example:
-
-```ts
-import { Context } from "effect"
-
-class MyService extends Context.Service<MyService, {
-  readonly doSomething: (input: string) => number
-}>()("MyService") {}
-```
-
-## Never use async / await or try / catch
-
-Instead use `Effect` apis like `Effect.fnUntraced`, `Effect.gen`,
-`Effect.tryPromise` etc.
-
-Look at existing code in the repository to learn and follow established patterns
-
-## Never use Date.now or new Date
-
-Instead use the `Clock` module, and `TestClock` for adjusting time in tests.
-
-## Effect Library Development Patterns
-
-### NEVER: try-catch in Effect.gen
-
-**REASON**: Effect generators handle errors through the Effect type system, not JavaScript exceptions.
-
-```typescript
-// ❌ WRONG - This will cause runtime errors
-Effect.gen(function*() {
-  try {
-    const result = yield* someEffect
-    return result
-  } catch (error) {
-    // This will never be reached and breaks Effect semantics
-    console.error(error)
-  }
-})
-
-// ✅ CORRECT - Use Effect's built-in error handling
-Effect.gen(function*() {
-  const result = yield* Effect.result(someEffect)
-  if (result._tag === "Failure") {
-    // Handle error case properly
-    console.error("Effect failed:", result.cause)
-    return yield* Effect.fail("Handled error")
-  }
-  return result.value
-})
-```
-
-### return yield* Pattern for Errors
-
-**CRITICAL**: Always use `return yield*` when yielding terminal effects.
-
-```typescript
-// ✅ CORRECT - Makes termination explicit
-Effect.gen(function*() {
-  if (invalidCondition) {
-    return yield* Effect.fail("Validation failed")
-  }
-
-  if (shouldInterrupt) {
-    return yield* Effect.interrupt
-  }
-
-  // Continue with normal flow
-  const result = yield* someOtherEffect
-  return result
-})
-
-// ❌ WRONG - Missing return keyword leads to unreachable code
-Effect.gen(function*() {
-  if (invalidCondition) {
-    yield* Effect.fail("Validation failed") // Missing return!
-    // Unreachable code after error!
-  }
-})
-```
-
-#### When to Use What
-
-**Use `Effect.gen`** when:
-
-- Writing inline effect composition
-- One-off operations that don't need to be reused
-- Inside other functions already being traced
-
-**Use `Effect.fnUntraced`** when:
-
-- Building library implementations
-- Performance is critical (hot paths)
-- Function is called many times per operation
-- Tracing overhead is unacceptable
-
 ## Validation and testing
 
 Test files: `*.test.ts`; no `__tests__` directories. Type tests: `*.tst.ts`.
@@ -181,6 +45,7 @@ Treat typecheck suggestions TS377* as blocking and resolve any issues before fin
 
 Read docs/agents/testing-patterns.md before writing or modifying tests; it is authoritative.
 Runtime lane = service-process integration tests under `src/runtime`, split into concurrent and serial Vitest projects. Non-runtime lane = in-process unit/integration tests outside `src/runtime`.
+For manual Codex subagent smoke tests, follow docs/agents/smoke-testing.md.
 
 ### Type level tests
 
@@ -239,3 +104,142 @@ Triage roles use the default label vocabulary. See `docs/agents/triage-labels.md
 ### Domain docs
 
 This is a single-context repo: read root `CONTEXT.md` and root `docs/adr/` when present. See `docs/agents/domain.md`.
+
+## Effect v4
+
+Full source code and docs available in `references/effect/*`. Review patterns from there to understand how to write Effect v4 code.
+
+v4 has some differences from the previous major versions:
+
+Functionality that was spread across `@effect/platform`, `@effect/rpc`, `@effect/cluster`, and others now lives directly inside `effect`
+
+Packages that remain separate are platform-specific, provider-specific, or technology-specific implementations:
+
+- `@effect/platform-*` — platform packages
+- `@effect/sql-*` — SQL driver packages
+- `@effect/ai-*` — AI provider packages
+- `@effect/opentelemetry` — OpenTelemetry integration
+- `@effect/atom-*` — framework-specific atom bindings
+- `@effect/vitest` — Vitest testing utilities
+
+If any dependency is missing, install it, use matching version with the rest of `effect` if possible.
+
+Effect AI MCP no-arg tools exposed to Codex/OpenAI need raw JSON Schema parameters:
+`{ type: "object", properties: {}, additionalProperties: false }`. `Schema.Struct({})` advertises
+an object-or-array union, and `Tool.EmptyParams` omits explicit `properties`.
+
+### Prefer `Effect.fnUntraced` over functions that return `Effect.gen`
+
+Instead of writing:
+
+```ts
+const fn = (param: string) =>
+  Effect.gen(function*() {
+    // ...
+  })
+```
+
+Prefer:
+
+```ts
+const fn = Effect.fnUntraced(function*(param: string) {
+  // ...
+})
+```
+
+### Using `Context.Service`
+
+Prefer the class syntax when working with `Context.Service`. For example:
+
+```ts
+import { Context } from "effect"
+
+class MyService extends Context.Service<MyService, {
+  readonly doSomething: (input: string) => number
+}>()("MyService") {}
+```
+
+### Never use async / await or try / catch
+
+Instead use `Effect` apis like `Effect.fnUntraced`, `Effect.gen`,
+`Effect.tryPromise` etc.
+
+Look at existing code in the repository to learn and follow established patterns
+
+### Never use Date.now or new Date
+
+Instead use the `Clock` module, and `TestClock` for adjusting time in tests.
+
+### Effect Library Development Patterns
+
+#### NEVER: try-catch in Effect.gen
+
+**REASON**: Effect generators handle errors through the Effect type system, not JavaScript exceptions.
+
+```typescript
+// ❌ WRONG - This will cause runtime errors
+Effect.gen(function*() {
+  try {
+    const result = yield* someEffect
+    return result
+  } catch (error) {
+    // This will never be reached and breaks Effect semantics
+    console.error(error)
+  }
+})
+
+// ✅ CORRECT - Use Effect's built-in error handling
+Effect.gen(function*() {
+  const result = yield* Effect.result(someEffect)
+  if (result._tag === "Failure") {
+    // Handle error case properly
+    console.error("Effect failed:", result.cause)
+    return yield* Effect.fail("Handled error")
+  }
+  return result.value
+})
+```
+
+#### return yield* Pattern for Errors
+
+**CRITICAL**: Always use `return yield*` when yielding terminal effects.
+
+```typescript
+// ✅ CORRECT - Makes termination explicit
+Effect.gen(function*() {
+  if (invalidCondition) {
+    return yield* Effect.fail("Validation failed")
+  }
+
+  if (shouldInterrupt) {
+    return yield* Effect.interrupt
+  }
+
+  // Continue with normal flow
+  const result = yield* someOtherEffect
+  return result
+})
+
+// ❌ WRONG - Missing return keyword leads to unreachable code
+Effect.gen(function*() {
+  if (invalidCondition) {
+    yield* Effect.fail("Validation failed") // Missing return!
+    // Unreachable code after error!
+  }
+})
+```
+
+#### When to Use What
+
+**Use `Effect.gen`** when:
+
+- Writing inline effect composition
+- One-off operations that don't need to be reused
+- Inside other functions already being traced
+
+**Use `Effect.fnUntraced`** when:
+
+- Building library implementations
+- Performance is critical (hot paths)
+- Function is called many times per operation
+- Tracing overhead is unacceptable

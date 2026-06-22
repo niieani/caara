@@ -13,6 +13,7 @@
       "devDependencies": {
         "@biomejs/biome": "^2.5.0",
         "@catenarycloud/linteffect": "^0.0.6",
+        "@effect/ai-openai": "4.0.0-beta.85",
         "@effect/openapi-generator": "4.0.0-beta.85",
         "@effect/platform-node": "4.0.0-beta.85",
         "@effect/tsgo": "0.14.5",
@@ -55,6 +56,8 @@
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.0", "", { "os": "win32", "cpu": "x64" }, "sha512-VT/lF+GId+67j8aDfLkxdxNoVApsPSTbyAtB3jJq0IWTrY77WXfbPfpngxq0bA6JCEv/7k8C9qWjDRKRznDlyw=="],
 
     "@catenarycloud/linteffect": ["@catenarycloud/linteffect@0.0.6", "", { "dependencies": { "@biomejs/biome": "^2.4.15" }, "bin": { "linteffect": "bin/linteffect.mjs" } }, "sha512-iQ4+2disNYH4euHVYC8AOelDcYmJkEUU1cqC218Mj7SspJZCOa4K2EYgNtzLV/kcPO025u7hOGKdAe0xlmYsCw=="],
+
+    "@effect/ai-openai": ["@effect/ai-openai@4.0.0-beta.85", "", { "peerDependencies": { "effect": "^4.0.0-beta.85" } }, "sha512-fKio37ue7LL9gI8+QpUFPPsusbgXXGN1OFQ0lY02ApkdrnP8LExfnnFI9OV7fBLYkLgZKNXCq2l/9rkDm+SjZQ=="],
 
     "@effect/openapi-generator": ["@effect/openapi-generator@4.0.0-beta.85", "", { "dependencies": { "swagger2openapi": "^7.0.8" }, "peerDependencies": { "@effect/platform-node": "^4.0.0-beta.85", "effect": "^4.0.0-beta.85" }, "bin": { "openapigen": "dist/bin.js" } }, "sha512-bl1d9AH0lBuDuKCMu757UXqRAMNDVd++LvR4mTDHWUx44Ug233FauE4ouyQbSvHNk8YXVckxy8PBt9VZQSM4PQ=="],
 

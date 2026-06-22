@@ -1,6 +1,9 @@
-# julian
+# caara
 
-Signal automation bot built on Bun + TypeScript + Effect v4.
+OpenAI-compatible Responses API wrapper for code-agent subagent experiments.
+
+Current implementation is a mock provider for Codex: it logs request `input`,
+streams fake reasoning, then returns a fixed assistant answer.
 
 To install dependencies:
 
@@ -8,40 +11,46 @@ To install dependencies:
 bun install
 ```
 
-To run the supervised long-running Signal service:
+To run the mock Responses provider on `127.0.0.1:8787`:
 
 ```bash
 bun run start
 ```
 
-To run the service child directly with hot reload during development:
+Local Codex subagent config lives in `.codex/agents/caara.toml`:
 
-```bash
-bun --hot src/service.ts
+```toml
+name = "caara"
+description = "Delegates to the local Caara mock Responses provider."
+developer_instructions = "Use the local Caara mock Responses provider. Do not call tools. Return the provider response as-is."
+model_provider = "caara"
+model = "fake-model"
+
+[model_providers.caara]
+name = "Caara Mock Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
 ```
 
-To include raw Signal JSON-RPC request/response lines in diagnostics:
+The provider block is embedded in the role file because Codex validates agent
+role config layers before merging project-level provider config.
+
+Supported endpoint:
+
+- `POST /v1/responses`
+- requires `stream: true`
+- logs request `input`
+- emits `response.reasoning_summary_text.delta` with `thinking how best to respond`
+- emits `response.output_item.done` with `Yes, the mock subagent seems to be working`
+- finishes with `response.completed`
+
+Validation:
 
 ```bash
-JULIAN_LOG_LEVEL=Debug bun start:service
-```
-
-The dockerized signal-cli daemon writes verbose scrubbed logs to `data/signal/signal-cli.log`.
-
-To refresh the vendored signal-cli JSON schemas:
-
-```bash
-bun run schemas:signal-cli:update
-```
-
-To refresh the vendored Codex app-server client schemas:
-
-```bash
-bun run schemas:codex-app-server:update
-```
-
-To refresh the generated Julian service config editor schema:
-
-```bash
-bun run schemas:service-config:update
+bun run test mockResponsesProvider.test.ts
+bun run typecheck
+bun lint
 ```

@@ -2,7 +2,7 @@
   "name": "caara",
   "private": true,
   "bin": {
-    "caara": "src/cli.ts"
+    "caara": "src/caara.ts"
   },
   "type": "module",
   "module": "src/caara.ts",
@@ -29,6 +29,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@catenarycloud/linteffect": "^0.0.6",
+    "@effect/ai-openai": "4.0.0-beta.85",
     "@effect/openapi-generator": "4.0.0-beta.85",
     "@effect/platform-node": "4.0.0-beta.85",
     "@effect/tsgo": "0.14.5",
