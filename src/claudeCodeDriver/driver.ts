@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Effect, Layer, Match, Option, Result, Stream } from "effect";
 
-import {
-  buildClaudeCodePrintInvocation,
-  type ClaudeCodePrintInvocationOptions,
-} from "../claudeCodeContract/invocation.ts";
+import type { ClaudeCodePrintInvocationOptions } from "../claudeCodeContract/invocation.ts";
 import { parseClaudeCodeStreamLine } from "../claudeCodeContract/streamEvents.ts";
 import type { ClaudeCodeContractEvent } from "../claudeCodeContract/streamTypes.ts";
 import {
@@ -14,24 +11,30 @@ import {
   type AgentCancellationOutcome,
   type AgentDriver,
   type AgentDriverTurn,
+  type AgentDriverTurnResult,
   type AgentRuntimeEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
+import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import { parseClaudeCodeDriverOptions } from "./options.ts";
+import {
+  cancelReadableStream,
+  type ClaudeCodeChildProcess,
+  driverError,
+  readFirstStdoutLine,
+  spawnClaudeCode,
+  stdoutStreamFromChildProcess,
+  stdoutStreamFromReadableStream,
+  teeChildProcessStdout,
+  waitForClaudeCodeExit,
+} from "./process.ts";
 import { extractClaudeCodePrompt } from "./prompt.ts";
-
-/** Bun subprocess handle for one Claude Code print-mode invocation. */
-type ClaudeCodeChildProcess = ReturnType<typeof Bun.spawn>;
 
 /** Runtime configuration for the Claude Code process driver. */
 export interface ClaudeCodeAgentDriverConfig {
   readonly command?: string;
   readonly env?: NodeJS.ProcessEnv;
 }
-
-/** Converts an unknown process or stream failure into an AgentDriverError. */
-const driverError = (cause: unknown): AgentDriverError =>
-  new AgentDriverError({ message: String(cause) });
 
 /** Extracts a durable Claude session id from prior external session state. */
 const durableSessionIdOption = (turn: AgentDriverTurn): Option.Option<string> =>
@@ -71,70 +74,6 @@ const turnInvocationOptions = Effect.fnUntraced(function* ({
     sessionId: newSessionId,
     resumeSessionId,
   } satisfies ClaudeCodePrintInvocationOptions;
-});
-
-/** Spawns the Claude Code process for one prepared invocation. */
-const spawnClaudeCode = Effect.fnUntraced(function* ({
-  command,
-  env,
-  invocationOptions,
-}: {
-  readonly command: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly invocationOptions: ClaudeCodePrintInvocationOptions;
-}) {
-  const invocation = buildClaudeCodePrintInvocation(invocationOptions);
-  return yield* Effect.tryPromise({
-    try: () =>
-      Promise.resolve(
-        Bun.spawn({
-          cmd: [command, ...invocation.args],
-          cwd: invocation.cwd,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      ),
-    catch: driverError,
-  });
-});
-
-/** Returns true when a stdio handle is a readable byte stream. */
-const isReadableByteStream = (value: unknown): value is ReadableStream<Uint8Array<ArrayBuffer>> =>
-  value instanceof ReadableStream;
-
-/** Extracts a readable byte stream from one child process stdio handle. */
-const readableByteStreamOption = (
-  value: unknown,
-): Option.Option<ReadableStream<Uint8Array<ArrayBuffer>>> =>
-  Option.fromUndefinedOr([value].filter(isReadableByteStream).at(0));
-
-/** Builds a stream from the child process stdout pipe. */
-const stdoutStreamFromChildProcess = (
-  childProcess: ClaudeCodeChildProcess,
-): Stream.Stream<Uint8Array, AgentDriverError> =>
-  Option.match(readableByteStreamOption(childProcess.stdout), {
-    onNone: () =>
-      Stream.fail(new AgentDriverError({ message: "Claude Code stdout is not piped." })),
-    onSome: (stdout) =>
-      Stream.fromReadableStream({
-        evaluate: () => stdout,
-        onError: driverError,
-      }),
-  });
-
-/** Reads stderr from the child process when it is piped. */
-const stderrTextFromChildProcess = Effect.fnUntraced(function* (
-  childProcess: ClaudeCodeChildProcess,
-) {
-  return yield* Option.match(readableByteStreamOption(childProcess.stderr), {
-    onNone: () => new AgentDriverError({ message: "Claude Code stderr is not piped." }),
-    onSome: (stderr) =>
-      Effect.tryPromise({
-        try: () => new Response(stderr).text(),
-        catch: driverError,
-      }),
-  });
 });
 
 /** Converts one Claude Code event into a normalized Caara runtime event when applicable. */
@@ -204,36 +143,76 @@ const parseClaudeCodeDriverStreamLine = Effect.fnUntraced(function* (line: strin
   );
 });
 
-/** Checks the process exit status after stdout has been consumed. */
-const waitForClaudeCodeExit = Effect.fnUntraced(function* ({
+/** Formats a Claude Code terminal result into a driver-facing failure message. */
+const failureMessageFromClaudeResult = (
+  result: Extract<ClaudeCodeContractEvent, { readonly _tag: "Result" }>,
+): string =>
+  result.resultText ?? result.errors.at(0) ?? `Claude Code failed with subtype ${result.subtype}.`;
+
+/** Returns true when Claude reports that the stored session id cannot be resumed. */
+const isUnresumableClaudeSessionResult = (
+  event: ClaudeCodeContractEvent,
+): event is Extract<ClaudeCodeContractEvent, { readonly _tag: "Result" }> =>
+  event._tag === "Result" &&
+  event.isError &&
+  [event.resultText, ...event.errors]
+    .filter((message): message is string => message !== undefined)
+    .some((message) => /No conversation found with session ID/i.test(message));
+
+/** Finds the first terminal Claude failure in a collected process event list. */
+const failedClaudeResultOption = (
+  events: readonly ClaudeCodeContractEvent[],
+): Option.Option<Extract<ClaudeCodeContractEvent, { readonly _tag: "Result" }>> =>
+  Option.fromUndefinedOr(
+    events
+      .filter(
+        (event): event is Extract<ClaudeCodeContractEvent, { readonly _tag: "Result" }> =>
+          event._tag === "Result" && event.isError,
+      )
+      .at(0),
+  );
+
+/** Drains a Claude process into parsed events and fails on terminal process failure. */
+const collectClaudeCodeEvents = Effect.fnUntraced(function* ({
   childProcess,
 }: {
   readonly childProcess: ClaudeCodeChildProcess;
 }) {
-  const stderr = yield* stderrTextFromChildProcess(childProcess);
-  const exitCode = yield* Effect.tryPromise({
-    try: () => childProcess.exited,
-    catch: driverError,
-  });
-  return yield* Option.match(
-    Option.fromUndefinedOr([exitCode].filter((code) => code !== 0).at(0)),
-    {
-      onNone: () => Effect.void,
-      onSome: (code) =>
-        new AgentDriverError({
-          message: `Claude Code exited with code ${code}: ${stderr}`,
-        }),
-    },
+  const events = yield* stdoutStreamFromChildProcess(childProcess).pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.trim().length > 0),
+    Stream.mapEffect(parseClaudeCodeDriverStreamLine),
+    Stream.runCollect,
+    Effect.map((collected) => [...collected]),
   );
+  const exitResult = yield* Effect.result(waitForClaudeCodeExit({ childProcess }));
+  const failedResult = failedClaudeResultOption(events);
+
+  return yield* Option.match(failedResult, {
+    onNone: () =>
+      Result.match(exitResult, {
+        onFailure: (error) => Effect.fail(error),
+        onSuccess: () => Effect.succeed(events),
+      }),
+    onSome: (result) =>
+      Effect.fail(new AgentDriverError({ message: failureMessageFromClaudeResult(result) })),
+  });
 });
 
 /** Builds the runtime event stream from one Claude Code child process stdout. */
 const runtimeEventsFromClaudeProcess = ({
   childProcess,
+  stdout,
 }: {
   readonly childProcess: ClaudeCodeChildProcess;
+  readonly stdout?: ReadableStream<Uint8Array<ArrayBuffer>>;
 }): Stream.Stream<AgentRuntimeEvent, AgentDriverError> => {
-  const stdoutEvents = stdoutStreamFromChildProcess(childProcess).pipe(
+  const stdoutStream = Option.match(Option.fromUndefinedOr(stdout), {
+    onNone: () => stdoutStreamFromChildProcess(childProcess),
+    onSome: stdoutStreamFromReadableStream,
+  });
+  const stdoutEvents = stdoutStream.pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.filter((line) => line.trim().length > 0),
@@ -244,6 +223,147 @@ const runtimeEventsFromClaudeProcess = ({
 
   return stdoutEvents.pipe(Stream.concat(exitCheck));
 };
+
+/** Builds the prompt used to create a fresh recovery session after failed resume. */
+const recoveryPrompt = (): string =>
+  `Reply with exactly this text and nothing else:\n\n${lostSessionRecoveryAssistantText}`;
+
+/** Builds a reusable turn result around one live Claude process. */
+const claudeProcessTurnResult = ({
+  childProcess,
+  stdout,
+  sessionId,
+}: {
+  readonly childProcess: ClaudeCodeChildProcess;
+  readonly stdout?: ReadableStream<Uint8Array<ArrayBuffer>>;
+  readonly sessionId: string;
+}): AgentDriverTurnResult => ({
+  runtimeEvents: runtimeEventsFromClaudeProcess({ childProcess, stdout }),
+  externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
+  cancel: Effect.fnUntraced(function* () {
+    yield* Effect.sync(() => childProcess.kill("SIGINT"));
+    const exitResult = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => childProcess.exited,
+        catch: driverError,
+      }).pipe(Effect.timeoutOption("1 second")),
+    );
+
+    return Result.match(exitResult, {
+      onFailure: () =>
+        ({
+          _tag: "Terminated",
+          sessionReusable: false,
+        }) satisfies AgentCancellationOutcome,
+      onSuccess: (exitOption) =>
+        Option.match(exitOption, {
+          onNone: () =>
+            ({
+              _tag: "Abandoned",
+              sessionReusable: false,
+            }) satisfies AgentCancellationOutcome,
+          onSome: () =>
+            ({
+              _tag: "Interrupted",
+              sessionReusable: true,
+            }) satisfies AgentCancellationOutcome,
+        }),
+    });
+  }),
+});
+
+/** Builds a completed recovery reply after a fresh Claude session has been created. */
+const recoveredClaudeTurnResult = ({
+  sessionId,
+}: {
+  readonly sessionId: string;
+}): AgentDriverTurnResult => ({
+  runtimeEvents: Stream.fromIterable([
+    {
+      _tag: "AssistantMessage",
+      text: lostSessionRecoveryAssistantText,
+    } satisfies AgentRuntimeEvent,
+  ]),
+  externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
+  cancel: Effect.fnUntraced(function* () {
+    yield* Effect.void;
+    return {
+      _tag: "Interrupted",
+      sessionReusable: true,
+    } satisfies AgentCancellationOutcome;
+  }),
+});
+
+/** Starts a fresh Claude session and returns the canonical lost-context recovery reply. */
+const recoverUnresumableClaudeSession = Effect.fnUntraced(function* ({
+  turn,
+  command,
+  env,
+}: {
+  readonly turn: AgentDriverTurn;
+  readonly command: string;
+  readonly env: NodeJS.ProcessEnv;
+}) {
+  const recoverySessionId = randomUUID();
+  const invocationOptions = yield* turnInvocationOptions({
+    turn,
+    prompt: recoveryPrompt(),
+    sessionId: recoverySessionId,
+    resumeSessionId: undefined,
+  });
+  const childProcess = yield* spawnClaudeCode({ command, env, invocationOptions });
+  const freshStartResult = yield* Effect.result(collectClaudeCodeEvents({ childProcess }));
+
+  return yield* Result.match(freshStartResult, {
+    onFailure: (error) =>
+      Effect.fail(
+        new AgentDriverError({
+          message: `Claude Code could not resume prior session or start a fresh external session: ${error.message}`,
+        }),
+      ),
+    onSuccess: () => Effect.succeed(recoveredClaudeTurnResult({ sessionId: recoverySessionId })),
+  });
+});
+
+/** Starts a resumed Claude turn, falling back to fresh-session recovery on missing sessions. */
+const startResumedClaudeTurn = Effect.fnUntraced(function* ({
+  turn,
+  command,
+  env,
+  prompt,
+  sessionId,
+}: {
+  readonly turn: AgentDriverTurn;
+  readonly command: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly prompt: string;
+  readonly sessionId: string;
+}) {
+  const invocationOptions = yield* turnInvocationOptions({
+    turn,
+    prompt,
+    sessionId,
+    resumeSessionId: sessionId,
+  });
+  const childProcess = yield* spawnClaudeCode({ command, env, invocationOptions });
+  const { previewStdout, runtimeStdout } = yield* teeChildProcessStdout(childProcess);
+  const firstLine = yield* readFirstStdoutLine({ stdout: previewStdout });
+  const firstEvent = yield* parseClaudeCodeDriverStreamLine(firstLine);
+
+  return yield* Option.match(
+    Option.fromUndefinedOr([firstEvent].filter(isUnresumableClaudeSessionResult).at(0)),
+    {
+      onNone: () =>
+        Effect.succeed(claudeProcessTurnResult({ childProcess, stdout: runtimeStdout, sessionId })),
+      onSome: () =>
+        Effect.gen(function* () {
+          yield* cancelReadableStream(runtimeStdout);
+          yield* Effect.result(waitForClaudeCodeExit({ childProcess }));
+          return yield* recoverUnresumableClaudeSession({ turn, command, env });
+        }),
+    },
+  );
+});
 
 /** Builds a Claude Code agent driver for one process configuration. */
 const createClaudeCodeAgentDriver = ({
@@ -260,25 +380,20 @@ const createClaudeCodeAgentDriver = ({
       onNone: () => randomUUID(),
       onSome: (existingSessionId) => existingSessionId,
     });
-    const invocationOptions = yield* turnInvocationOptions({
-      turn,
-      prompt,
-      sessionId,
-      resumeSessionId,
+    return yield* Option.match(Option.fromUndefinedOr(resumeSessionId), {
+      onNone: () =>
+        Effect.gen(function* () {
+          const invocationOptions = yield* turnInvocationOptions({
+            turn,
+            prompt,
+            sessionId,
+            resumeSessionId,
+          });
+          const childProcess = yield* spawnClaudeCode({ command, env, invocationOptions });
+          return claudeProcessTurnResult({ childProcess, sessionId });
+        }),
+      onSome: () => startResumedClaudeTurn({ turn, command, env, prompt, sessionId }),
     });
-    const childProcess = yield* spawnClaudeCode({ command, env, invocationOptions });
-
-    return {
-      runtimeEvents: runtimeEventsFromClaudeProcess({ childProcess }),
-      externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
-      cancel: Effect.fnUntraced(function* () {
-        yield* Effect.sync(() => childProcess.kill("SIGINT"));
-        return {
-          _tag: "Interrupted",
-          sessionReusable: true,
-        } satisfies AgentCancellationOutcome;
-      }),
-    };
   }),
 });
 

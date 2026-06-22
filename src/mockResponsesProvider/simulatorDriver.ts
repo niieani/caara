@@ -10,14 +10,14 @@ import {
   type AgentRuntimeEvent,
 } from "./agentDriver.ts";
 import { DurableExternalSession } from "./sessionDirectory.ts";
+import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
 
 /** Stable simulator output and failure fixtures used by driver and transport tests. */
 export const simulatorDriverFixture = {
   reasoningText: "simulator driver received claude/test",
   assistantText: "Simulator driver completed claude/test",
   resumedAssistantText: "Simulator driver resumed prior session with previous target",
-  recoveryAssistantText:
-    "I couldn't resume the previous external agent session, so I lost the prior context of this subagent conversation. Please send me the relevant past context and restate the question.",
+  recoveryAssistantText: lostSessionRecoveryAssistantText,
   startFailureMessage: "simulator driver failed before runtime events",
   unrecoverableSessionFailureMessage:
     "simulator driver could not resume prior session or start a fresh external session",
