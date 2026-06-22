@@ -18,6 +18,7 @@ import {
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
+import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Stable project root used as a realistic Codex workspace path in transport tests. */
 const projectRoot = process.cwd();
@@ -160,6 +161,7 @@ const makeProviderTestLayer = (
     Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
     Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
     Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );
 };
@@ -277,6 +279,7 @@ function streamsFakeReasoningAndFinalAnswer() {
       [
         "TurnAccepted",
         "TargetSelected",
+        "TurnInFlightAcquired",
         "DriverStarted",
         "RuntimeEventRelayed",
         "RuntimeEventRelayed",
@@ -389,7 +392,7 @@ function logsSimulatorDriverFailures() {
     assert.match(String(getField(getField(responseBody, "error"), "message")), /simulator/i);
     assert.deepStrictEqual(
       relayEvents.map((event) => event._tag),
-      ["TurnAccepted", "TargetSelected", "DriverStarted", "TurnFailed"],
+      ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted", "TurnFailed"],
     );
     assert.deepStrictEqual(relayEvents.at(-1), {
       _tag: "TurnFailed",

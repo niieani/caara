@@ -15,9 +15,14 @@ import {
   createResponsesRequestDiagnostics,
   RequestDiagnosticsLogger,
 } from "./requestDiagnosticsLogger.ts";
-import { createResponseEventsFromRuntimeEvents } from "./responseEvents.ts";
-import { completeSessionBinding, prepareSessionBinding } from "./sessionDirectory.ts";
-import { encodeSseStream } from "./sse.ts";
+import { createResponseEventStreamFromRuntimeEvents } from "./responseEvents.ts";
+import {
+  completeSessionBinding,
+  prepareSessionBinding,
+  SessionDirectory,
+} from "./sessionDirectory.ts";
+import { encodeSseEventStream } from "./sse.ts";
+import { TurnConcurrency, type TurnConcurrencyConflict } from "./turnConcurrency.ts";
 
 /** Converts a validation failure into an OpenAI-shaped JSON error response. */
 export const invalidResponsesRequestResponse = (error: InvalidResponsesRequest) =>
@@ -41,6 +46,18 @@ export const driverErrorResponse = (error: AgentDriverError) =>
       },
     },
     { status: 500 },
+  );
+
+/** Converts an overlapping-turn conflict into an OpenAI-shaped JSON error response. */
+export const turnConcurrencyConflictResponse = (error: TurnConcurrencyConflict) =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      error: {
+        type: "server_error",
+        message: error.message,
+      },
+    },
+    { status: 409 },
   );
 
 /** Reads and validates a Codex-shaped streaming Responses request body. */
@@ -75,6 +92,8 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   const logger = yield* InputLogger;
   const relayLogger = yield* RelayLogger;
   const driverRegistry = yield* AgentDriverRegistry;
+  const sessionDirectory = yield* SessionDirectory;
+  const turnConcurrency = yield* TurnConcurrency;
 
   yield* relayLogger.log({
     _tag: "TurnAccepted",
@@ -96,6 +115,35 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     target: responsesRequest.target,
   });
   const driver = yield* driverRegistry.resolve(responsesRequest.target);
+  const lease = yield* turnConcurrency
+    .acquire({
+      key: {
+        externalAgentKind: responsesRequest.target.externalAgentKind,
+        codexThreadId: responsesRequest.codex.threadId,
+      },
+      turnId: responsesRequest.codex.turnId,
+    })
+    .pipe(
+      Effect.catchTag("TurnConcurrencyConflict", (error) =>
+        Effect.gen(function* () {
+          yield* relayLogger.log({
+            _tag: "TurnConcurrencyConflict",
+            externalAgentKind: error.externalAgentKind,
+            codexThreadId: error.codexThreadId,
+            incomingTurnId: error.incomingTurnId,
+            runningTurnId: error.runningTurnId,
+          });
+          return yield* error;
+        }),
+      ),
+    );
+  yield* relayLogger.log({
+    _tag: "TurnInFlightAcquired",
+    externalAgentKind: responsesRequest.target.externalAgentKind,
+    codexThreadId: responsesRequest.codex.threadId,
+    turnId: responsesRequest.codex.turnId,
+  });
+
   const previousTarget = Option.match(Option.fromUndefinedOr(preparedSession.previousTarget), {
     onNone: () => undefined,
     onSome: (target) => ({
@@ -147,55 +195,59 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
             turnId: responsesRequest.codex.turnId,
             message: error.message,
           });
+          yield* lease.release;
           return yield* error;
         }),
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);
-  const runtimeEvents = [...(yield* Stream.runCollect(driverTurnResult.runtimeEvents))];
-  yield* Effect.forEach(runtimeEvents, (runtimeEvent) =>
-    relayLogger.log({
-      _tag: "RuntimeEventRelayed",
-      threadId: responsesRequest.codex.threadId,
-      turnId: responsesRequest.codex.turnId,
-      runtimeEventTag: runtimeEvent._tag,
-    }),
-  );
-  yield* relayLogger.log({
-    _tag: "TurnCompleted",
-    threadId: responsesRequest.codex.threadId,
-    turnId: responsesRequest.codex.turnId,
-  });
-  yield* completeSessionBinding({
-    codex: responsesRequest.codex,
-    target: responsesRequest.target,
-    prepared: preparedSession,
-    externalSession: driverTurnResult.externalSession,
-  });
-
-  return HttpServerResponse.stream(
-    encodeSseStream(
-      createResponseEventsFromRuntimeEvents({
-        request: responsesRequest.responses,
-        runtimeEvents,
+  const runtimeEvents = driverTurnResult.runtimeEvents.pipe(
+    Stream.tap((runtimeEvent) =>
+      relayLogger.log({
+        _tag: "RuntimeEventRelayed",
+        threadId: responsesRequest.codex.threadId,
+        turnId: responsesRequest.codex.turnId,
+        runtimeEventTag: runtimeEvent._tag,
       }),
     ),
-    {
-      contentType: "text/event-stream",
-      headers: {
-        "cache-control": "no-cache",
-        "x-accel-buffering": "no",
-      },
-    },
   );
+  const finalizeTurn = Effect.gen(function* () {
+    yield* relayLogger.log({
+      _tag: "TurnCompleted",
+      threadId: responsesRequest.codex.threadId,
+      turnId: responsesRequest.codex.turnId,
+    });
+    yield* completeSessionBinding({
+      codex: responsesRequest.codex,
+      target: responsesRequest.target,
+      prepared: preparedSession,
+      externalSession: driverTurnResult.externalSession,
+    }).pipe(Effect.provideService(SessionDirectory, sessionDirectory));
+    yield* lease.release;
+  }).pipe(Effect.ignore({ log: true, message: "Failed while finalizing Caara turn stream." }));
+  const responseEventStream = createResponseEventStreamFromRuntimeEvents({
+    request: responsesRequest.responses,
+    runtimeEvents,
+  }).pipe(Stream.ensuring(finalizeTurn));
+
+  return HttpServerResponse.stream(encodeSseEventStream(responseEventStream), {
+    contentType: "text/event-stream",
+    headers: {
+      "cache-control": "no-cache",
+      "x-accel-buffering": "no",
+    },
+  });
 });
 
 /** HTTP route layer for the mock Responses provider. */
 export const mockResponsesRoutesLayer = HttpRouter.add("POST", "/v1/responses", (request) =>
   handleResponsesCreate(request).pipe(
     Effect.catchTags({
-      InvalidResponsesRequest: (error) => Effect.succeed(invalidResponsesRequestResponse(error)),
-      AgentDriverError: (error) => Effect.succeed(driverErrorResponse(error)),
+      InvalidResponsesRequest: (error: InvalidResponsesRequest) =>
+        Effect.succeed(invalidResponsesRequestResponse(error)),
+      AgentDriverError: (error: AgentDriverError) => Effect.succeed(driverErrorResponse(error)),
+      TurnConcurrencyConflict: (error: TurnConcurrencyConflict) =>
+        Effect.succeed(turnConcurrencyConflictResponse(error)),
     }),
   ),
 );

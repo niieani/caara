@@ -56,6 +56,23 @@ export interface TurnFailedRelayEvent {
   readonly message: string;
 }
 
+/** Relay event recorded when an overlapping turn is rejected for a session key. */
+export interface TurnConcurrencyConflictRelayEvent {
+  readonly _tag: "TurnConcurrencyConflict";
+  readonly externalAgentKind: string;
+  readonly codexThreadId: string;
+  readonly incomingTurnId: string;
+  readonly runningTurnId: string;
+}
+
+/** Relay event recorded after a turn acquires in-flight ownership for a session key. */
+export interface TurnInFlightAcquiredRelayEvent {
+  readonly _tag: "TurnInFlightAcquired";
+  readonly externalAgentKind: string;
+  readonly codexThreadId: string;
+  readonly turnId: string;
+}
+
 /** Structured relay event emitted around Codex-to-driver turn processing. */
 export type RelayLogEvent =
   | TurnAcceptedRelayEvent
@@ -63,7 +80,9 @@ export type RelayLogEvent =
   | DriverStartedRelayEvent
   | RuntimeEventRelayedRelayEvent
   | TurnCompletedRelayEvent
-  | TurnFailedRelayEvent;
+  | TurnFailedRelayEvent
+  | TurnConcurrencyConflictRelayEvent
+  | TurnInFlightAcquiredRelayEvent;
 
 /** Logs structured relay events for observability and test artifact capture. */
 export class RelayLogger extends Context.Service<

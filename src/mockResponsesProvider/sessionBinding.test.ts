@@ -18,6 +18,7 @@ import {
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionBindingFilePath, sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
+import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for filesystem setup and persisted binding inspection. */
 class SessionBindingTestError extends Schema.TaggedErrorClass<SessionBindingTestError>()(
@@ -171,6 +172,7 @@ const providerLayer = ({
     Layer.provideMerge(diagnosticsLoggerLayer(diagnostics)),
     Layer.provideMerge(relayLoggerLayer(relayEvents)),
     Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );
 

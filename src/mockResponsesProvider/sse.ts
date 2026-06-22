@@ -23,3 +23,8 @@ export const encodeSseEvent = ({ event, data }: SseEvent): string =>
 /** Converts an event sequence into an Effect stream of UTF-8 SSE bytes. */
 export const encodeSseStream = (events: readonly SseEvent[]): Stream.Stream<Uint8Array> =>
   Stream.fromIterable(events.map(encodeSseEvent)).pipe(Stream.encodeText);
+
+/** Converts a stream of events into a stream of UTF-8 SSE bytes. */
+export const encodeSseEventStream = <E, R>(
+  events: Stream.Stream<SseEvent, E, R>,
+): Stream.Stream<Uint8Array, E, R> => events.pipe(Stream.map(encodeSseEvent), Stream.encodeText);

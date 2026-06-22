@@ -10,6 +10,7 @@ import { requestDiagnosticsLoggerLive } from "./mockResponsesProvider/requestDia
 import { mockResponsesServerLayer } from "./mockResponsesProvider/server.ts";
 import { sessionDirectoryFromEnvironmentLive } from "./mockResponsesProvider/sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive } from "./mockResponsesProvider/simulatorDriver.ts";
+import { turnConcurrencyLive } from "./mockResponsesProvider/turnConcurrency.ts";
 
 /** Default TCP port for the local mock Responses provider. */
 export const defaultMockResponsesPort = 8787;
@@ -20,6 +21,7 @@ export const mainLayer = mockResponsesServerLayer.pipe(
   Layer.provideMerge(relayLoggerLive),
   Layer.provideMerge(requestDiagnosticsLoggerLive),
   Layer.provideMerge(sessionDirectoryFromEnvironmentLive),
+  Layer.provideMerge(turnConcurrencyLive),
   Layer.provideMerge(simulatorAgentDriverRegistryLive),
   Layer.provideMerge(
     HttpServer.withLogAddress(BunHttpServer.layer({ port: defaultMockResponsesPort })),

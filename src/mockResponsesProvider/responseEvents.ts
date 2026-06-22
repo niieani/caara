@@ -1,4 +1,5 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
+import { Match, Stream } from "effect";
 
 import type { AgentRuntimeEvent } from "./agentDriver.ts";
 import { mockResponsesFixture, type ResponsesCreateRequest } from "./protocol.ts";
@@ -123,6 +124,13 @@ interface RuntimeMessageItem {
 /** Concrete output item union emitted by the runtime event encoder. */
 type RuntimeOutputItem = RuntimeReasoningItem | RuntimeMessageItem;
 
+/** Stateful encoder position for streaming runtime event conversion. */
+interface RuntimeResponseState {
+  readonly sequenceNumber: number;
+  readonly outputIndex: number;
+  readonly output: readonly RuntimeOutputItem[];
+}
+
 /** Builds a stable item id for a runtime event output item. */
 const runtimeItemId = ({
   prefix,
@@ -147,8 +155,32 @@ const createRuntimeResponse = ({
   output,
 });
 
-/** Appends Responses SSE frames for one normalized runtime event. */
-const appendRuntimeResponseEvents = ({
+/** Builds the initial Responses created event and streaming encoder state. */
+const initialRuntimeResponseState = ({
+  request,
+}: {
+  readonly request: ResponsesCreateRequest;
+}): {
+  readonly state: RuntimeResponseState;
+  readonly createdEvent: SseEvent;
+} => ({
+  state: {
+    sequenceNumber: 1,
+    outputIndex: 0,
+    output: [],
+  },
+  createdEvent: {
+    event: "response.created",
+    data: {
+      type: "response.created",
+      response: createRuntimeResponse({ request, output: [] }),
+      sequence_number: 0,
+    } satisfies OpenAiSchema.ResponseStreamEvent,
+  },
+});
+
+/** Appends Responses SSE frames for one reasoning runtime event. */
+const appendReasoningResponseEvents = ({
   events,
   output,
   runtimeEvent,
@@ -157,68 +189,136 @@ const appendRuntimeResponseEvents = ({
 }: {
   readonly events: SseEvent[];
   readonly output: RuntimeOutputItem[];
-  readonly runtimeEvent: AgentRuntimeEvent;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ReasoningDelta" }>;
   readonly outputIndex: number;
   readonly sequenceNumber: number;
 }): number => {
-  switch (runtimeEvent._tag) {
-    case "ReasoningDelta": {
-      const reasoningItem = {
-        id: runtimeItemId({ prefix: "rs", outputIndex }),
-        type: "reasoning",
-        summary: [],
-      } as const satisfies RuntimeReasoningItem;
-      events.push({
-        event: "response.output_item.added",
-        data: {
-          type: "response.output_item.added",
-          output_index: outputIndex,
-          sequence_number: sequenceNumber,
-          item: reasoningItem,
-        } satisfies OpenAiSchema.ResponseStreamEvent,
-      });
-      events.push({
-        event: "response.reasoning_summary_text.delta",
-        data: {
-          type: "response.reasoning_summary_text.delta",
-          item_id: reasoningItem.id,
-          output_index: outputIndex,
-          summary_index: 0,
-          delta: runtimeEvent.text,
-          sequence_number: sequenceNumber + 1,
-        } satisfies OpenAiSchema.ResponseStreamEvent,
-      });
-      output.push(reasoningItem);
-      return sequenceNumber + 2;
-    }
-    case "AssistantMessage": {
-      const messageItem = {
-        id: runtimeItemId({ prefix: "msg", outputIndex }),
-        type: "message",
-        status: "completed",
-        role: "assistant",
-        content: [
-          {
-            type: "output_text",
-            text: runtimeEvent.text,
-            annotations: [],
-          },
-        ],
-      } as const satisfies RuntimeMessageItem;
-      events.push({
-        event: "response.output_item.done",
-        data: {
-          type: "response.output_item.done",
-          output_index: outputIndex,
-          sequence_number: sequenceNumber,
-          item: messageItem,
-        } satisfies OpenAiSchema.ResponseStreamEvent,
-      });
-      output.push(messageItem);
-      return sequenceNumber + 1;
-    }
-  }
+  const reasoningItem = {
+    id: runtimeItemId({ prefix: "rs", outputIndex }),
+    type: "reasoning",
+    summary: [],
+  } as const satisfies RuntimeReasoningItem;
+  events.push({
+    event: "response.output_item.added",
+    data: {
+      type: "response.output_item.added",
+      output_index: outputIndex,
+      sequence_number: sequenceNumber,
+      item: reasoningItem,
+    } satisfies OpenAiSchema.ResponseStreamEvent,
+  });
+  events.push({
+    event: "response.reasoning_summary_text.delta",
+    data: {
+      type: "response.reasoning_summary_text.delta",
+      item_id: reasoningItem.id,
+      output_index: outputIndex,
+      summary_index: 0,
+      delta: runtimeEvent.text,
+      sequence_number: sequenceNumber + 1,
+    } satisfies OpenAiSchema.ResponseStreamEvent,
+  });
+  output.push(reasoningItem);
+  return sequenceNumber + 2;
 };
+
+/** Appends Responses SSE frames for one assistant-message runtime event. */
+const appendAssistantMessageResponseEvents = ({
+  events,
+  output,
+  runtimeEvent,
+  outputIndex,
+  sequenceNumber,
+}: {
+  readonly events: SseEvent[];
+  readonly output: RuntimeOutputItem[];
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "AssistantMessage" }>;
+  readonly outputIndex: number;
+  readonly sequenceNumber: number;
+}): number => {
+  const messageItem = {
+    id: runtimeItemId({ prefix: "msg", outputIndex }),
+    type: "message",
+    status: "completed",
+    role: "assistant",
+    content: [
+      {
+        type: "output_text",
+        text: runtimeEvent.text,
+        annotations: [],
+      },
+    ],
+  } as const satisfies RuntimeMessageItem;
+  events.push({
+    event: "response.output_item.done",
+    data: {
+      type: "response.output_item.done",
+      output_index: outputIndex,
+      sequence_number: sequenceNumber,
+      item: messageItem,
+    } satisfies OpenAiSchema.ResponseStreamEvent,
+  });
+  output.push(messageItem);
+  return sequenceNumber + 1;
+};
+
+/** Appends Responses SSE frames for one normalized runtime event. */
+const appendRuntimeResponseEvents = (input: {
+  readonly events: SseEvent[];
+  readonly output: RuntimeOutputItem[];
+  readonly runtimeEvent: AgentRuntimeEvent;
+  readonly outputIndex: number;
+  readonly sequenceNumber: number;
+}): number =>
+  Match.valueTags(input.runtimeEvent, {
+    ReasoningDelta: (runtimeEvent) => appendReasoningResponseEvents({ ...input, runtimeEvent }),
+    AssistantMessage: (runtimeEvent) =>
+      appendAssistantMessageResponseEvents({ ...input, runtimeEvent }),
+  });
+
+/** Converts one runtime event plus encoder state into SSE frames and next state. */
+const runtimeEventToSseEvents = ({
+  state,
+  runtimeEvent,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: AgentRuntimeEvent;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
+  const events: SseEvent[] = [];
+  const output = [...state.output];
+  const sequenceNumber = appendRuntimeResponseEvents({
+    events,
+    output,
+    runtimeEvent,
+    outputIndex: state.outputIndex,
+    sequenceNumber: state.sequenceNumber,
+  });
+
+  return [
+    {
+      sequenceNumber,
+      outputIndex: state.outputIndex + 1,
+      output,
+    },
+    events,
+  ] as const;
+};
+
+/** Builds the terminal completed event from final stream encoder state. */
+const completedEventFromState = ({
+  request,
+  state,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+}): SseEvent => ({
+  event: "response.completed",
+  data: {
+    type: "response.completed",
+    response: createRuntimeResponse({ request, output: state.output }),
+    sequence_number: state.sequenceNumber,
+  } satisfies OpenAiSchema.ResponseStreamEvent,
+});
 
 /** Builds Responses-compatible SSE frames from normalized driver runtime events. */
 export const createResponseEventsFromRuntimeEvents = ({
@@ -263,4 +363,25 @@ export const createResponseEventsFromRuntimeEvents = ({
   });
 
   return events;
+};
+
+/** Streams Responses-compatible SSE frames from normalized driver runtime events. */
+export const createResponseEventStreamFromRuntimeEvents = <E, R>({
+  request,
+  runtimeEvents,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, E, R>;
+}): Stream.Stream<SseEvent, E, R> => {
+  const initial = initialRuntimeResponseState({ request });
+  const runtimeResponseEvents = runtimeEvents.pipe(
+    Stream.mapAccum(
+      () => initial.state,
+      (state, runtimeEvent) => runtimeEventToSseEvents({ state, runtimeEvent }),
+      {
+        onHalt: (state) => [completedEventFromState({ request, state })],
+      },
+    ),
+  );
+  return Stream.fromIterable([initial.createdEvent]).pipe(Stream.concat(runtimeResponseEvents));
 };

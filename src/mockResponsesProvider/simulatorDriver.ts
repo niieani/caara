@@ -53,13 +53,26 @@ const simulatorStartFailureOption = (turn: AgentDriverTurn): Option.Option<strin
     Option.filter((failureMode) => failureMode === "start"),
   );
 
+/** Returns a hold-open marker when simulator options request a never-ending turn. */
+const simulatorHoldOpenOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_hold).pipe(
+    Option.filter((holdMode) => holdMode === "open"),
+  );
+
+/** Builds the simulator runtime event stream for held-open or normal turns. */
+const simulatorRuntimeEventStream = (turn: AgentDriverTurn): Stream.Stream<AgentRuntimeEvent> =>
+  Option.match(simulatorHoldOpenOption(turn), {
+    onNone: () => Stream.fromIterable(createSimulatorEvents(turn)),
+    onSome: () => Stream.never,
+  });
+
 /** Deterministic driver used to exercise Caara transport and relay behavior. */
 export const simulatorAgentDriver: AgentDriver = {
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Option.match(simulatorStartFailureOption(turn), {
       onNone: () =>
         Effect.succeed({
-          runtimeEvents: Stream.fromIterable(createSimulatorEvents(turn)),
+          runtimeEvents: simulatorRuntimeEventStream(turn),
           externalSession: simulatorExternalSession(turn),
         }),
       onSome: () =>
