@@ -179,7 +179,7 @@ Treat typecheck suggestions TS377* as blocking and resolve any issues before fin
 
 ### Testing patterns
 
-Read .patterns/testing-patterns.md before writing or modifying tests; it is authoritative.
+Read docs/agents/testing-patterns.md before writing or modifying tests; it is authoritative.
 Runtime lane = service-process integration tests under `src/runtime`, split into concurrent and serial Vitest projects. Non-runtime lane = in-process unit/integration tests outside `src/runtime`.
 
 ### Type level tests
