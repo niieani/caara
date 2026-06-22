@@ -6,6 +6,7 @@ import {
   type AgentCancellationOutcome,
   type AgentDriver,
   type AgentDriverTurn,
+  type AgentDriverTurnResult,
   type AgentRuntimeEvent,
 } from "./agentDriver.ts";
 import { DurableExternalSession } from "./sessionDirectory.ts";
@@ -15,8 +16,13 @@ export const simulatorDriverFixture = {
   reasoningText: "simulator driver received claude/test",
   assistantText: "Simulator driver completed claude/test",
   resumedAssistantText: "Simulator driver resumed prior session with previous target",
+  recoveryAssistantText:
+    "I couldn't resume the previous external agent session, so I lost the prior context of this subagent conversation. Please send me the relevant past context and restate the question.",
   startFailureMessage: "simulator driver failed before runtime events",
+  unrecoverableSessionFailureMessage:
+    "simulator driver could not resume prior session or start a fresh external session",
   externalSessionId: "simulator-session-codex-thread-session-binding",
+  recoveredExternalSessionId: "simulator-session-recovered-codex-thread-session-binding",
 } as const;
 
 /** Builds the deterministic simulator runtime event sequence for a successful turn. */
@@ -38,6 +44,14 @@ const createSimulatorEvents = (turn: AgentDriverTurn): readonly AgentRuntimeEven
   ];
 };
 
+/** Builds the deterministic recovery reply when a durable simulator session cannot be resumed. */
+const createSimulatorRecoveryEvents = (): readonly AgentRuntimeEvent[] => [
+  {
+    _tag: "AssistantMessage",
+    text: simulatorDriverFixture.recoveryAssistantText,
+  },
+];
+
 /** Returns the existing durable simulator session or creates a first-turn session state. */
 const simulatorExternalSession = (turn: AgentDriverTurn) =>
   Option.match(Option.fromUndefinedOr(turn.externalSession), {
@@ -48,10 +62,29 @@ const simulatorExternalSession = (turn: AgentDriverTurn) =>
     onSome: (externalSession) => externalSession,
   });
 
+/** Builds a fresh durable simulator session after recovery from an unresumable prior session. */
+const recoveredSimulatorExternalSession = () =>
+  new DurableExternalSession({
+    externalSessionId: simulatorDriverFixture.recoveredExternalSessionId,
+  });
+
 /** Returns a start failure marker when the simulator options request one. */
 const simulatorStartFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
   Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_failure).pipe(
     Option.filter((failureMode) => failureMode === "start"),
+  );
+
+/** Returns a resume-failure marker when an existing simulator session should be unrecoverable. */
+const simulatorResumeFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_resume).pipe(
+    Option.filter((resumeMode) => resumeMode === "unresumable"),
+    Option.filter(() => turn.externalSession !== undefined),
+  );
+
+/** Returns a fresh-start failure marker when recovery should be unrecoverable. */
+const simulatorFreshStartFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_fresh_start).pipe(
+    Option.filter((failureMode) => failureMode === "failure"),
   );
 
 /** Returns a hold-open marker when simulator options request a never-ending turn. */
@@ -107,19 +140,52 @@ const simulatorCancellationOutcome = (turn: AgentDriverTurn): AgentCancellationO
     ),
   );
 
+/** Builds the normal simulator turn result for first-turn and successful resume paths. */
+const simulatorTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
+  runtimeEvents: simulatorRuntimeEventStream(turn),
+  externalSession: simulatorExternalSession(turn),
+  cancel: Effect.fnUntraced(function* () {
+    yield* Effect.void;
+    return simulatorCancellationOutcome(turn);
+  }),
+});
+
+/** Builds the simulator recovery turn result after a failed durable resume. */
+const simulatorRecoveryTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
+  runtimeEvents: Stream.fromIterable(createSimulatorRecoveryEvents()),
+  externalSession: recoveredSimulatorExternalSession(),
+  cancel: Effect.fnUntraced(function* () {
+    yield* Effect.void;
+    return simulatorCancellationOutcome(turn);
+  }),
+});
+
+/** Recovers an unresumable simulator session by starting a fresh durable session when possible. */
+const recoverUnresumableSimulatorSession = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
+  return yield* Option.match(simulatorFreshStartFailureOption(turn), {
+    onNone: () => Effect.succeed(simulatorRecoveryTurnResult(turn)),
+    onSome: () =>
+      Effect.fail(
+        new AgentDriverError({
+          message: simulatorDriverFixture.unrecoverableSessionFailureMessage,
+        }),
+      ),
+  });
+});
+
+/** Starts or resumes the simulator turn, including the durable-session recovery policy. */
+const startSimulatorTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
+  return yield* Option.match(simulatorResumeFailureOption(turn), {
+    onNone: () => Effect.succeed(simulatorTurnResult(turn)),
+    onSome: () => recoverUnresumableSimulatorSession(turn),
+  });
+});
+
 /** Deterministic driver used to exercise Caara transport and relay behavior. */
 export const simulatorAgentDriver: AgentDriver = {
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Option.match(simulatorStartFailureOption(turn), {
-      onNone: () =>
-        Effect.succeed({
-          runtimeEvents: simulatorRuntimeEventStream(turn),
-          externalSession: simulatorExternalSession(turn),
-          cancel: Effect.fnUntraced(function* () {
-            yield* Effect.void;
-            return simulatorCancellationOutcome(turn);
-          }),
-        }),
+      onNone: () => startSimulatorTurn(turn),
       onSome: () =>
         Effect.fail(
           new AgentDriverError({
