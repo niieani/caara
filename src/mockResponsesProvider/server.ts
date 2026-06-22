@@ -9,6 +9,10 @@ import {
 import { InvalidResponsesRequest } from "./errors.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { decodeResponsesCreateRequest } from "./protocol.ts";
+import {
+  createResponsesRequestDiagnostics,
+  RequestDiagnosticsLogger,
+} from "./requestDiagnosticsLogger.ts";
 import { createMockResponseEvents } from "./responseEvents.ts";
 import { encodeSseStream } from "./sse.ts";
 
@@ -36,6 +40,9 @@ export const readResponsesCreateRequest = Effect.fnUntraced(function* (
         }),
     ),
   );
+
+  const diagnosticsLogger = yield* RequestDiagnosticsLogger;
+  yield* diagnosticsLogger.logRequest(createResponsesRequestDiagnostics({ request, body }));
 
   return yield* decodeResponsesCreateRequest(body).pipe(
     Effect.mapError(

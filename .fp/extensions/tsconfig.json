@@ -6,8 +6,12 @@
     "strict": true,
     "noEmit": true,
     "paths": {
-      "@fiberplane/extensions": ["/Users/bbrzoska/.fiberplane/extensions/types"]
+      "@fiberplane/extensions": [
+        "/Users/bbrzoska/.fiberplane/extensions/types"
+      ]
     }
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts"
+  ]
 }

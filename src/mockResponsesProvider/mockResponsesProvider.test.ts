@@ -1,5 +1,5 @@
-import { BunHttpServer } from "@effect/platform-bun";
 import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
+import { BunHttpServer } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
@@ -7,6 +7,10 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { InputLogger } from "./inputLogger.ts";
 import { mockResponsesFixture } from "./protocol.ts";
+import {
+  RequestDiagnosticsLogger,
+  type ResponsesRequestDiagnostics,
+} from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 
 /** Codex-style request body used to verify the mock provider's public contract. */
@@ -23,6 +27,9 @@ const requestBody = {
   tools: [],
   tool_choice: "auto",
   store: false,
+  metadata: {
+    cwd: "/Volumes/Projects/Software/code-agents-as-responses-api",
+  },
 } as const satisfies Schema.Json;
 
 /** Codex-style unsupported request body used to verify explicit hard failure. */
@@ -45,11 +52,25 @@ const makeCaptureLoggerLayer = (loggedInputs: Array<Schema.Json>) =>
     }),
   });
 
+/** Builds a per-test diagnostics logger layer that records request diagnostics in order. */
+const makeCaptureDiagnosticsLoggerLayer = (loggedDiagnostics: Array<ResponsesRequestDiagnostics>) =>
+  Layer.succeed(RequestDiagnosticsLogger, {
+    logRequest: Effect.fnUntraced(function* (diagnostics: ResponsesRequestDiagnostics) {
+      yield* Effect.sync(() => {
+        loggedDiagnostics.push(diagnostics);
+      });
+    }),
+  });
+
 /** Builds the full scoped provider test layer for one test's captured logs. */
-const makeProviderTestLayer = (loggedInputs: Array<Schema.Json>) =>
+const makeProviderTestLayer = (
+  loggedInputs: Array<Schema.Json>,
+  loggedDiagnostics: Array<ResponsesRequestDiagnostics>,
+) =>
   mockResponsesServerLayer.pipe(
     Layer.provideMerge(BunHttpServer.layerTest),
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
+    Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
   );
 
 /** Parsed Responses SSE frame decoded through Effect's OpenAI stream-event schema. */
@@ -120,12 +141,13 @@ const decodeCompletedEvent = Schema.decodeUnknownSync(
 /** Test program for the happy-path streaming Responses contract. */
 function streamsFakeReasoningAndFinalAnswer() {
   const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
 
   return Effect.gen(function* () {
-    const request = yield* HttpClientRequest.bodyJson(
+    const request = (yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post("/v1/responses"),
       requestBody,
-    );
+    )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret"));
 
     const response = yield* HttpClient.execute(request);
     const frames = yield* decodeResponseSseFrames(response.stream);
@@ -140,24 +162,36 @@ function streamsFakeReasoningAndFinalAnswer() {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.headers["content-type"], "text/event-stream");
     assert.deepStrictEqual(loggedInputs, [requestBody.input]);
+    assert.strictEqual(loggedDiagnostics.length, 1);
+    const diagnostics = loggedDiagnostics[0];
+    assert.ok(diagnostics, "request diagnostics must be logged");
+    assert.strictEqual(diagnostics.method, "POST");
+    assert.strictEqual(diagnostics.url, "/v1/responses");
+    assert.strictEqual(diagnostics.headers["content-type"], "application/json");
+    assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
+    assert.deepStrictEqual(diagnostics.body, requestBody);
+    assert.deepStrictEqual(diagnostics.cwdCandidates, [
+      "/Volumes/Projects/Software/code-agents-as-responses-api",
+    ]);
     assert.strictEqual(reasoningData.delta, mockResponsesFixture.reasoningText);
     assert.strictEqual(messageData.item.type, "message");
     assert.deepStrictEqual(messageData.item.content, [
       { type: "output_text", text: mockResponsesFixture.assistantText, annotations: [] },
     ]);
     assert.strictEqual(completedData.type, "response.completed");
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs)));
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
 }
 
 /** Test program for the unsupported non-streaming Responses request contract. */
 function rejectsNonStreamingRequest() {
   const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
 
   return Effect.gen(function* () {
-    const request = yield* HttpClientRequest.bodyJson(
+    const request = (yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post("/v1/responses"),
       nonStreamingRequestBody,
-    );
+    )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret"));
 
     const response = yield* HttpClient.execute(request);
     const body = yield* response.json;
@@ -165,7 +199,16 @@ function rejectsNonStreamingRequest() {
     assert.strictEqual(response.status, 400);
     assert.deepStrictEqual(loggedInputs, []);
     assert.strictEqual(getField(getField(body, "error"), "type"), "invalid_request_error");
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs)));
+    assert.strictEqual(loggedDiagnostics.length, 1);
+    const diagnostics = loggedDiagnostics[0];
+    assert.ok(diagnostics, "request diagnostics must be logged before validation failure");
+    assert.strictEqual(diagnostics.method, "POST");
+    assert.strictEqual(diagnostics.url, "/v1/responses");
+    assert.strictEqual(diagnostics.headers["content-type"], "application/json");
+    assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
+    assert.deepStrictEqual(diagnostics.body, nonStreamingRequestBody);
+    assert.deepStrictEqual(diagnostics.cwdCandidates, []);
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
 }
 
 describe("mock Responses provider", () => {
