@@ -13,9 +13,57 @@ import {
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 
+/** Stable project root used as a realistic Codex workspace path in transport tests. */
+const projectRoot = process.cwd();
+
+/** Stable Codex turn id used by the valid transport fixture. */
+const makeTurnId = (): string => "turn-http-1";
+
+/** Builds Codex turn metadata with optional field overrides. */
+const makeTurnMetadata = (
+  overrides: Readonly<Record<string, Schema.Json>> = {},
+): Readonly<Record<string, Schema.Json>> => ({
+  installation_id: "install-1",
+  session_id: "parent-session-1",
+  thread_id: "codex-thread-1",
+  turn_id: makeTurnId(),
+  window_id: "window-1",
+  request_kind: "turn",
+  parent_thread_id: "parent-thread-1",
+  subagent_kind: "caara",
+  sandbox: "workspace-write",
+  workspaces: {
+    [projectRoot]: {
+      latest_git_commit_hash: "abcdef0",
+      has_changes: true,
+    },
+  },
+  turn_started_at_unix_ms: 1,
+  ...overrides,
+});
+
+/** Builds complete Codex request headers for one HTTP request. */
+const makeCodexHeaders = ({
+  metadata = makeTurnMetadata(),
+  overrides = {},
+}: {
+  readonly metadata?: Readonly<Record<string, Schema.Json>>;
+  readonly overrides?: Readonly<Record<string, string>>;
+} = {}): Readonly<Record<string, string>> => ({
+  "session-id": "parent-session-1",
+  "thread-id": "codex-thread-1",
+  "x-client-request-id": makeTurnId(),
+  "x-codex-parent-thread-id": "parent-thread-1",
+  "x-codex-turn-metadata": Schema.encodeSync(Schema.UnknownFromJsonString)(metadata),
+  "x-codex-window-id": "window-1",
+  "x-openai-subagent": "caara",
+  originator: "codex_cli_rs",
+  ...overrides,
+});
+
 /** Codex-style request body used to verify the mock provider's public contract. */
 const requestBody = {
-  model: "fake-model",
+  model: "claude/test",
   input: [
     {
       type: "message",
@@ -27,20 +75,41 @@ const requestBody = {
   tools: [],
   tool_choice: "auto",
   store: false,
+  client_metadata: {
+    thread_id: "codex-thread-1",
+    turn_id: makeTurnId(),
+  },
   metadata: {
-    cwd: "/Volumes/Projects/Software/code-agents-as-responses-api",
+    cwd: projectRoot,
   },
 } as const satisfies Schema.Json;
 
 /** Codex-style unsupported request body used to verify explicit hard failure. */
 const nonStreamingRequestBody = {
-  model: "fake-model",
+  model: "claude/test",
   input: requestBody.input,
   stream: false,
   tools: [],
   tool_choice: "auto",
   store: false,
+  client_metadata: requestBody.client_metadata,
+  metadata: requestBody.metadata,
 } as const satisfies Schema.Json;
+
+/** Applies a stable set of Codex headers to one outgoing test request. */
+const setCodexHeaders = ({
+  request,
+  headers = makeCodexHeaders(),
+}: {
+  readonly request: HttpClientRequest.HttpClientRequest;
+  readonly headers?: Readonly<Record<string, string>>;
+}): HttpClientRequest.HttpClientRequest => {
+  let nextRequest = request;
+  for (const [name, value] of Object.entries(headers)) {
+    nextRequest = nextRequest.pipe(HttpClientRequest.setHeader(name, value));
+  }
+  return nextRequest;
+};
 
 /** Builds a per-test logger layer that records logged inputs in insertion order. */
 const makeCaptureLoggerLayer = (loggedInputs: Array<Schema.Json>) =>
@@ -144,10 +213,12 @@ function streamsFakeReasoningAndFinalAnswer() {
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
 
   return Effect.gen(function* () {
-    const request = (yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post("/v1/responses"),
-      requestBody,
-    )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret"));
+    const request = setCodexHeaders({
+      request: (yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post("/v1/responses?effort=max"),
+        requestBody,
+      )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret")),
+    });
 
     const response = yield* HttpClient.execute(request);
     const frames = yield* decodeResponseSseFrames(response.stream);
@@ -166,13 +237,11 @@ function streamsFakeReasoningAndFinalAnswer() {
     const diagnostics = loggedDiagnostics[0];
     assert.ok(diagnostics, "request diagnostics must be logged");
     assert.strictEqual(diagnostics.method, "POST");
-    assert.strictEqual(diagnostics.url, "/v1/responses");
+    assert.strictEqual(diagnostics.url, "/v1/responses?effort=max");
     assert.strictEqual(diagnostics.headers["content-type"], "application/json");
     assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
     assert.deepStrictEqual(diagnostics.body, requestBody);
-    assert.deepStrictEqual(diagnostics.cwdCandidates, [
-      "/Volumes/Projects/Software/code-agents-as-responses-api",
-    ]);
+    assert.deepStrictEqual(diagnostics.cwdCandidates, [projectRoot]);
     assert.strictEqual(reasoningData.delta, mockResponsesFixture.reasoningText);
     assert.strictEqual(messageData.item.type, "message");
     assert.deepStrictEqual(messageData.item.content, [
@@ -188,10 +257,12 @@ function rejectsNonStreamingRequest() {
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
 
   return Effect.gen(function* () {
-    const request = (yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post("/v1/responses"),
-      nonStreamingRequestBody,
-    )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret"));
+    const request = setCodexHeaders({
+      request: (yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post("/v1/responses"),
+        nonStreamingRequestBody,
+      )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret")),
+    });
 
     const response = yield* HttpClient.execute(request);
     const body = yield* response.json;
@@ -207,7 +278,38 @@ function rejectsNonStreamingRequest() {
     assert.strictEqual(diagnostics.headers["content-type"], "application/json");
     assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
     assert.deepStrictEqual(diagnostics.body, nonStreamingRequestBody);
-    assert.deepStrictEqual(diagnostics.cwdCandidates, []);
+    assert.deepStrictEqual(diagnostics.cwdCandidates, [projectRoot]);
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
+}
+
+/** Test program for OpenAI-shaped invalid request responses at the HTTP boundary. */
+function rejectsInvalidCodexRequest({
+  body,
+  url = "/v1/responses",
+  headers = makeCodexHeaders(),
+  expectedMessage,
+}: {
+  readonly body: Schema.Json;
+  readonly url?: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly expectedMessage: RegExp;
+}) {
+  const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+
+  return Effect.gen(function* () {
+    const request = setCodexHeaders({
+      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post(url), body),
+      headers,
+    });
+    const response = yield* HttpClient.execute(request);
+    const responseBody = yield* response.json;
+
+    assert.strictEqual(response.status, 400);
+    assert.deepStrictEqual(loggedInputs, []);
+    assert.strictEqual(getField(getField(responseBody, "error"), "type"), "invalid_request_error");
+    assert.match(String(getField(getField(responseBody, "error"), "message")), expectedMessage);
+    assert.strictEqual(loggedDiagnostics.length, 1);
   }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics)));
 }
 
@@ -218,4 +320,69 @@ describe("mock Responses provider", () => {
   );
 
   it.effect("rejects non-streaming requests without logging input", rejectsNonStreamingRequest);
+
+  it.effect("rejects malformed model strings with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: {
+        ...requestBody,
+        model: "claude",
+      },
+      expectedMessage: /model/i,
+    }),
+  );
+
+  it.effect("rejects unknown external agent kinds with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: {
+        ...requestBody,
+        model: "gemini/pro",
+      },
+      expectedMessage: /unknown external agent kind/i,
+    }),
+  );
+
+  it.effect("rejects duplicate provider query params with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: requestBody,
+      url: "/v1/responses?effort=max&effort=low",
+      expectedMessage: /duplicate provider query param/i,
+    }),
+  );
+
+  it.effect("rejects malformed turn metadata with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: requestBody,
+      headers: makeCodexHeaders({
+        overrides: {
+          "x-codex-turn-metadata": "{not-json",
+        },
+      }),
+      expectedMessage: /turn metadata/i,
+    }),
+  );
+
+  it.effect("rejects conflicting identity fields with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: requestBody,
+      headers: makeCodexHeaders({
+        overrides: {
+          "thread-id": "different-thread",
+        },
+      }),
+      expectedMessage: /conflict/i,
+    }),
+  );
+
+  it.effect("rejects missing cwd for a new binding with an OpenAI-shaped error", () =>
+    rejectsInvalidCodexRequest({
+      body: {
+        ...requestBody,
+        metadata: {},
+      },
+      headers: makeCodexHeaders({
+        metadata: makeTurnMetadata({ workspaces: {} }),
+      }),
+      expectedMessage: /cwd/i,
+    }),
+  );
 });

@@ -6,9 +6,9 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 
+import { decodeCodexTurnRequest } from "./codexTurnContext.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 import { InputLogger } from "./inputLogger.ts";
-import { decodeResponsesCreateRequest } from "./protocol.ts";
 import {
   createResponsesRequestDiagnostics,
   RequestDiagnosticsLogger,
@@ -28,7 +28,7 @@ export const invalidResponsesRequestResponse = (error: InvalidResponsesRequest) 
     { status: 400 },
   );
 
-/** Reads and validates the supported streaming Responses request body. */
+/** Reads and validates a Codex-shaped streaming Responses request body. */
 export const readResponsesCreateRequest = Effect.fnUntraced(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
@@ -44,14 +44,12 @@ export const readResponsesCreateRequest = Effect.fnUntraced(function* (
   const diagnosticsLogger = yield* RequestDiagnosticsLogger;
   yield* diagnosticsLogger.logRequest(createResponsesRequestDiagnostics({ request, body }));
 
-  return yield* decodeResponsesCreateRequest(body).pipe(
-    Effect.mapError(
-      () =>
-        new InvalidResponsesRequest({
-          message: "Responses request must include model, input, and stream: true.",
-        }),
-    ),
-  );
+  return yield* decodeCodexTurnRequest({
+    headers: request.headers,
+    url: request.url,
+    body,
+    requireCwd: true,
+  });
 });
 
 /** Handles `POST /v1/responses` for the mock provider. */
@@ -61,10 +59,10 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   const responsesRequest = yield* readResponsesCreateRequest(request);
   const logger = yield* InputLogger;
 
-  yield* logger.logInput(responsesRequest.input);
+  yield* logger.logInput(responsesRequest.responses.input);
 
   return HttpServerResponse.stream(
-    encodeSseStream(createMockResponseEvents({ request: responsesRequest })),
+    encodeSseStream(createMockResponseEvents({ request: responsesRequest.responses })),
     {
       contentType: "text/event-stream",
       headers: {
