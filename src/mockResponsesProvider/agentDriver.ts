@@ -1,6 +1,7 @@
 import { Context, Effect, Option, Schema, Stream } from "effect";
 
 import type { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
+import { EphemeralExternalSession, type ExternalSessionState } from "./sessionDirectory.ts";
 
 /** Normalized prompt data sent from Caara transport into an external agent driver. */
 export interface AgentTurnInput {
@@ -12,6 +13,9 @@ export interface AgentDriverTurn {
   readonly codex: CodexTurnContext;
   readonly target: AgentTarget;
   readonly prompt: AgentTurnInput;
+  readonly cwd: string;
+  readonly previousTarget: AgentTarget | undefined;
+  readonly externalSession: ExternalSessionState | undefined;
 }
 
 /** Driver runtime event carrying incremental reasoning text. */
@@ -29,6 +33,12 @@ export interface AgentAssistantMessage {
 /** Normalized runtime event emitted by an external agent driver. */
 export type AgentRuntimeEvent = AgentReasoningDelta | AgentAssistantMessage;
 
+/** Driver start result containing runtime events and durable external session state. */
+export interface AgentDriverTurnResult {
+  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent>;
+  readonly externalSession: ExternalSessionState;
+}
+
 /** Driver failure surfaced to the Responses transport as a server error. */
 export class AgentDriverError extends Schema.TaggedErrorClass<AgentDriverError>()(
   "AgentDriverError",
@@ -44,7 +54,12 @@ export const agentDriverStartShape = Effect.fnUntraced(function* (_turn: AgentDr
     onNone: () => Effect.void,
     onSome: (error) => error,
   });
-  return Stream.fromIterable<AgentRuntimeEvent>([]);
+  const externalSessionChoices: readonly ExternalSessionState[] = [new EphemeralExternalSession()];
+  const externalSession = Option.getOrThrow(Option.fromUndefinedOr(externalSessionChoices.at(0)));
+  return {
+    runtimeEvents: Stream.fromIterable<AgentRuntimeEvent>([]),
+    externalSession,
+  } satisfies AgentDriverTurnResult;
 });
 
 /** Driver implementation selected for one external agent kind. */

@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+
 import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { BunHttpServer } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
@@ -13,6 +16,7 @@ import {
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
+import { sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 
 /** Stable project root used as a realistic Codex workspace path in transport tests. */
@@ -148,14 +152,17 @@ const makeProviderTestLayer = (
   loggedInputs: Array<Schema.Json>,
   loggedDiagnostics: Array<ResponsesRequestDiagnostics>,
   relayEvents: Array<RelayLogEvent>,
-) =>
-  mockResponsesServerLayer.pipe(
+) => {
+  const stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`);
+  return mockResponsesServerLayer.pipe(
     Layer.provideMerge(BunHttpServer.layerTest),
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
     Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
     Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
+    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );
+};
 
 /** Parsed Responses SSE frame decoded through Effect's OpenAI stream-event schema. */
 interface ResponseSseFrame {
@@ -329,11 +336,13 @@ function rejectsInvalidCodexRequest({
   url = "/v1/responses",
   headers = makeCodexHeaders(),
   expectedMessage,
+  expectedRelayTags = [],
 }: {
   readonly body: Schema.Json;
   readonly url?: string;
   readonly headers?: Readonly<Record<string, string>>;
   readonly expectedMessage: RegExp;
+  readonly expectedRelayTags?: readonly string[];
 }) {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
@@ -352,7 +361,10 @@ function rejectsInvalidCodexRequest({
     assert.strictEqual(getField(getField(responseBody, "error"), "type"), "invalid_request_error");
     assert.match(String(getField(getField(responseBody, "error"), "message")), expectedMessage);
     assert.strictEqual(loggedDiagnostics.length, 1);
-    assert.deepStrictEqual(relayEvents, []);
+    assert.deepStrictEqual(
+      relayEvents.map((event) => event._tag),
+      expectedRelayTags,
+    );
   }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
 }
 
@@ -460,6 +472,7 @@ describe("mock Responses provider", () => {
         metadata: makeTurnMetadata({ workspaces: {} }),
       }),
       expectedMessage: /cwd/i,
+      expectedRelayTags: ["TurnAccepted", "TargetSelected"],
     }),
   );
 

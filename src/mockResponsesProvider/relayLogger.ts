@@ -24,6 +24,13 @@ export interface DriverStartedRelayEvent {
   readonly threadId: string;
   readonly turnId: string;
   readonly externalAgentKind: string;
+  readonly externalSessionId?: string;
+  readonly previousTarget?: {
+    readonly requestedModel: string;
+    readonly externalAgentKind: string;
+    readonly externalModelSpecifier: string;
+    readonly rawDriverOptions: Readonly<Record<string, string>>;
+  };
 }
 
 /** Relay event recorded for each normalized driver runtime event. */

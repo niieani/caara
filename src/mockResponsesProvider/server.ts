@@ -1,4 +1,4 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -16,6 +16,7 @@ import {
   RequestDiagnosticsLogger,
 } from "./requestDiagnosticsLogger.ts";
 import { createResponseEventsFromRuntimeEvents } from "./responseEvents.ts";
+import { completeSessionBinding, prepareSessionBinding } from "./sessionDirectory.ts";
 import { encodeSseStream } from "./sse.ts";
 
 /** Converts a validation failure into an OpenAI-shaped JSON error response. */
@@ -62,7 +63,7 @@ export const readResponsesCreateRequest = Effect.fnUntraced(function* (
     headers: request.headers,
     url: request.url,
     body,
-    requireCwd: true,
+    requireCwd: false,
   });
 });
 
@@ -90,20 +91,52 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     rawDriverOptions: responsesRequest.target.rawDriverOptions,
   });
 
+  const preparedSession = yield* prepareSessionBinding({
+    codex: responsesRequest.codex,
+    target: responsesRequest.target,
+  });
   const driver = yield* driverRegistry.resolve(responsesRequest.target);
+  const previousTarget = Option.match(Option.fromUndefinedOr(preparedSession.previousTarget), {
+    onNone: () => undefined,
+    onSome: (target) => ({
+      requestedModel: target.requestedModel,
+      externalAgentKind: target.externalAgentKind,
+      externalModelSpecifier: target.externalModelSpecifier,
+      rawDriverOptions: target.rawDriverOptions,
+    }),
+  });
+  const externalSessionId = Option.getOrUndefined(
+    Option.fromUndefinedOr(
+      [preparedSession.binding?.externalSession]
+        .filter(
+          (
+            externalSession,
+          ): externalSession is { readonly _tag: "Durable"; readonly externalSessionId: string } =>
+            externalSession?._tag === "Durable",
+        )
+        .map((externalSession) => externalSession.externalSessionId)
+        .at(0),
+    ),
+  );
+
   yield* relayLogger.log({
     _tag: "DriverStarted",
     threadId: responsesRequest.codex.threadId,
     turnId: responsesRequest.codex.turnId,
     externalAgentKind: responsesRequest.target.externalAgentKind,
+    externalSessionId,
+    previousTarget,
   });
-  const runtimeEventStream = yield* driver
+  const driverTurnResult = yield* driver
     .startOrResumeTurn({
       codex: responsesRequest.codex,
       target: responsesRequest.target,
       prompt: {
         input: responsesRequest.responses.input,
       },
+      cwd: preparedSession.cwd,
+      previousTarget: preparedSession.previousTarget,
+      externalSession: preparedSession.binding?.externalSession,
     })
     .pipe(
       Effect.catchTag("AgentDriverError", (error) =>
@@ -119,7 +152,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);
-  const runtimeEvents = [...(yield* Stream.runCollect(runtimeEventStream))];
+  const runtimeEvents = [...(yield* Stream.runCollect(driverTurnResult.runtimeEvents))];
   yield* Effect.forEach(runtimeEvents, (runtimeEvent) =>
     relayLogger.log({
       _tag: "RuntimeEventRelayed",
@@ -132,6 +165,12 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     _tag: "TurnCompleted",
     threadId: responsesRequest.codex.threadId,
     turnId: responsesRequest.codex.turnId,
+  });
+  yield* completeSessionBinding({
+    codex: responsesRequest.codex,
+    target: responsesRequest.target,
+    prepared: preparedSession,
+    externalSession: driverTurnResult.externalSession,
   });
 
   return HttpServerResponse.stream(

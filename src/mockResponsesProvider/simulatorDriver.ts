@@ -7,25 +7,45 @@ import {
   type AgentDriverTurn,
   type AgentRuntimeEvent,
 } from "./agentDriver.ts";
+import { DurableExternalSession } from "./sessionDirectory.ts";
 
 /** Stable simulator output and failure fixtures used by driver and transport tests. */
 export const simulatorDriverFixture = {
   reasoningText: "simulator driver received claude/test",
   assistantText: "Simulator driver completed claude/test",
+  resumedAssistantText: "Simulator driver resumed prior session with previous target",
   startFailureMessage: "simulator driver failed before runtime events",
+  externalSessionId: "simulator-session-codex-thread-session-binding",
 } as const;
 
 /** Builds the deterministic simulator runtime event sequence for a successful turn. */
-const createSimulatorEvents = (_turn: AgentDriverTurn): readonly AgentRuntimeEvent[] => [
-  {
-    _tag: "ReasoningDelta",
-    text: simulatorDriverFixture.reasoningText,
-  },
-  {
-    _tag: "AssistantMessage",
-    text: simulatorDriverFixture.assistantText,
-  },
-];
+const createSimulatorEvents = (turn: AgentDriverTurn): readonly AgentRuntimeEvent[] => {
+  const assistantText = Option.match(Option.fromUndefinedOr(turn.previousTarget), {
+    onNone: () => simulatorDriverFixture.assistantText,
+    onSome: () => simulatorDriverFixture.resumedAssistantText,
+  });
+
+  return [
+    {
+      _tag: "ReasoningDelta",
+      text: simulatorDriverFixture.reasoningText,
+    },
+    {
+      _tag: "AssistantMessage",
+      text: assistantText,
+    },
+  ];
+};
+
+/** Returns the existing durable simulator session or creates a first-turn session state. */
+const simulatorExternalSession = (turn: AgentDriverTurn) =>
+  Option.match(Option.fromUndefinedOr(turn.externalSession), {
+    onNone: () =>
+      new DurableExternalSession({
+        externalSessionId: simulatorDriverFixture.externalSessionId,
+      }),
+    onSome: (externalSession) => externalSession,
+  });
 
 /** Returns a start failure marker when the simulator options request one. */
 const simulatorStartFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
@@ -37,7 +57,11 @@ const simulatorStartFailureOption = (turn: AgentDriverTurn): Option.Option<strin
 export const simulatorAgentDriver: AgentDriver = {
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Option.match(simulatorStartFailureOption(turn), {
-      onNone: () => Effect.succeed(Stream.fromIterable(createSimulatorEvents(turn))),
+      onNone: () =>
+        Effect.succeed({
+          runtimeEvents: Stream.fromIterable(createSimulatorEvents(turn)),
+          externalSession: simulatorExternalSession(turn),
+        }),
       onSome: () =>
         Effect.fail(
           new AgentDriverError({
