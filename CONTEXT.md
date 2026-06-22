@@ -58,6 +58,35 @@ _Avoid_: Agent route, backend config
 The adapter role for one external agent family, such as Claude Code or an ACP-speaking agent.
 _Avoid_: Backend, provider, client
 
+**Session durability**:
+An external agent capability to preserve conversation state across Caara turns through an agent
+session or equivalent resume handle.
+_Avoid_: Driver residency, idle TTL, persistence
+
+**Driver residency**:
+A driver capability to keep a live external harness available between turns for the same Caara
+session key.
+_Avoid_: Session durability, persistence, resume support
+
+**Driver option change support**:
+A driver capability to apply changed driver options between turns for an existing session binding.
+_Avoid_: Session reset, route change
+
+**Residency TTL**:
+The optional idle timeout after which Caara may dispose a resident driver handle without deleting
+the session binding.
+_Avoid_: Session expiry, binding deletion
+
+**Codex context reconstruction**:
+The future process of building prior subagent context from Codex thread logs so a non-durable
+external agent can receive enough context for the next turn.
+_Avoid_: Asking the managing agent for context, relay log replay
+
+**Turn abandonment**:
+A cancellation outcome where Caara stops relaying a turn while the external harness may continue
+running outside the Codex response stream.
+_Avoid_: Safe cancellation, detach
+
 **Codex thread**:
 The stable Codex identity for one subagent across turns.
 _Avoid_: Session when referring to the Codex subagent key
@@ -67,7 +96,7 @@ One request from Codex to Caara within a Codex thread.
 _Avoid_: Message, invocation
 
 **Agent session**:
-The durable conversation identity owned by an external agent.
+The conversation identity owned by an external agent when that agent supports session durability.
 _Avoid_: Codex thread, Codex session
 
 **Session recovery prompt**:
@@ -81,8 +110,8 @@ one.
 _Avoid_: Lost context, recovery prompt
 
 **Session binding**:
-The association between one external agent kind, one Codex thread, and one external agent session.
-Requested model and driver options are mutable binding state.
+The association between one external agent kind, one Codex thread, and the driver state Caara keeps
+for that pair. Requested model and driver options are mutable binding state.
 _Avoid_: Session map entry, cache entry, thread-only mapping
 
 **Caara session key**:
@@ -94,7 +123,8 @@ The user-local durable storage area where Caara keeps runtime state.
 _Avoid_: Project repo, workspace directory, temp directory
 
 **Session directory**:
-The durable collection of session bindings Caara uses to resume external agent sessions.
+The durable collection of session bindings Caara uses to resume external agent sessions when the
+selected driver supports session durability.
 _Avoid_: Session cache, registry, transcript store
 
 **Relay log**:

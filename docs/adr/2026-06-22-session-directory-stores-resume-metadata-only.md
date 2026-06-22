@@ -1,5 +1,6 @@
 # Session directory stores resume metadata only
 
-Caara will persist external session ids and binding metadata, not a transcript or event log for
-replay. External agents own conversation durability, while Caara relay logs are observability data
-rather than the source of truth for resuming a session.
+Caara will persist binding metadata and external session ids when a driver supports session
+durability, not a transcript or event log for replay. Durable external agents own conversation
+durability, while Caara relay logs are observability data rather than the source of truth for
+resuming a session.

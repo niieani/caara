@@ -176,16 +176,16 @@ interface AgentTarget {
 Caara should persist a session binding keyed by external agent kind and Codex thread id. Codex
 thread id is stable across follow-up turns for one subagent; parent session id is shared by multiple
 subagents and is not a Caara session key. Requested model and driver options are mutable desired
-state for that external agent session, not durable identity.
+state for that driver binding, not durable identity.
 
-Session bindings live in Caara's user-state directory, not in the project repository. They contain
-external session ids and runtime state that should survive Caara restarts but should not become
-source-controlled project artifacts.
+Session bindings live in Caara's user-state directory, not in the project repository. For durable
+drivers, they contain external session ids and runtime state that should survive Caara restarts but
+should not become source-controlled project artifacts.
 
 The session directory stores resume metadata only. Caara does not persist transcript or event replay
-state in the session directory for v1; external agents own their own conversation durability. Caara
-may write relay logs for observability, but those logs are not a source of truth for resuming or
-replaying a session.
+state in the session directory for v1; durable external agents own their own conversation
+durability. Caara may write relay logs for observability, but those logs are not a source of truth
+for resuming or replaying a session.
 
 Recommended state directory resolution:
 
@@ -212,6 +212,10 @@ interface CaaraSessionKey {
 Recommended session binding shape:
 
 ```ts
+type ExternalSessionState =
+  | { readonly _tag: "Durable"; readonly externalSessionId: string }
+  | { readonly _tag: "Ephemeral" };
+
 interface CaaraSessionBinding {
   readonly codexThreadId: string;
   readonly parentCodexSessionId: string;
@@ -219,7 +223,7 @@ interface CaaraSessionBinding {
   readonly requestedModel: string;
   readonly externalModelSpecifier: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
-  readonly externalSessionId: string;
+  readonly externalSession: ExternalSessionState;
   readonly cwd: string;
   readonly createdFromTurnId: string;
   readonly lastTurnId: string;
@@ -232,6 +236,14 @@ state to the driver. Drivers that support model or option changes should apply t
 the turn. Drivers that cannot apply a requested change should log a warning and continue with the
 existing external agent session.
 
+Drivers that do not support session durability use `ExternalSessionState._tag === "Ephemeral"`.
+Caara may still keep a binding for target diffing, cwd reuse, and observability, but it must not
+pretend the external agent has retained prior conversation state.
+
+Ephemeral drivers are out of scope for the initial Claude Code driver. Future ephemeral support
+requires Codex context reconstruction from Codex thread logs; Caara should not ask the managing
+agent to restate context for ordinary ephemeral-driver turns.
+
 Recommended cwd resolution:
 
 1. Use persisted cwd for an existing Codex thread.
@@ -241,10 +253,10 @@ Recommended cwd resolution:
 
 ### Session Recovery
 
-If a driver cannot resume the external session id stored in a binding, Caara should keep the Codex
-turn flow alive when the driver can start a fresh external session. Caara logs a warning, updates
-the binding to the fresh external session id, and returns an assistant message asking the managing
-agent to provide the lost context and restate the question.
+If a durable driver cannot resume the external session id stored in a binding, Caara should keep the
+Codex turn flow alive when the driver can start a fresh external session. Caara logs a warning,
+updates the binding to the fresh external session id, and returns an assistant message asking the
+managing agent to provide the lost context and restate the question.
 
 Recommended recovery message:
 
@@ -275,15 +287,51 @@ If Codex disconnects the Responses SSE stream while a turn is in flight, Caara t
 as turn cancellation. Caara asks the driver to cancel the current turn and logs the cancellation
 with the session key and turn id.
 
-Drivers own the safe cancellation mechanism for their external agent kind. If a driver supports
-interrupting the turn without damaging the external session, it should do so. If it cannot cancel
-safely, it should log a warning and let the external turn finish detached. Caara should only kill an
-external process or discard an external session when the driver explicitly marks that action safe.
+Drivers own the cancellation mechanism for their external agent kind. If a driver supports
+interrupting the turn without damaging the external session, it should do so. If it cannot interrupt
+safely, it returns a cancellation outcome that tells Caara whether the external session is still
+reusable.
+
+Turn abandonment means Caara stops relaying to Codex while the external harness may continue
+running. This is not safe cancellation by itself. If abandoned work can mutate a durable external
+session in a way Codex never observes, the driver must report the session as not reusable so Caara
+does not resume into hidden context.
 
 ### Driver Seam
 
 The driver-facing module should expose one deep entrypoint for a Codex turn, not separate public
 start/resume/send lifecycle operations.
+
+Drivers declare whether they support session durability and driver residency. These capabilities are
+separate:
+
+- A durable, non-resident driver may spawn the external harness for every turn and resume with an
+  external session id.
+- A resident driver may keep a live harness between turns for performance.
+- An ephemeral driver has no external session to resume and handles each turn without claiming prior
+  external-agent context.
+
+Residency TTL applies only to drivers that explicitly opt into driver residency. Non-resident
+drivers are torn down after each turn and do not need idle reaping.
+
+Suggested capability shape:
+
+```ts
+interface DriverCapabilities {
+  readonly sessionDurability: "durable" | "ephemeral";
+  readonly supportsResidency: boolean;
+  readonly supportsOptionChanges: boolean;
+}
+```
+
+Suggested cancellation outcome shape:
+
+```ts
+type DriverCancellationOutcome =
+  | { readonly _tag: "Interrupted"; readonly sessionReusable: true }
+  | { readonly _tag: "Abandoned"; readonly sessionReusable: boolean }
+  | { readonly _tag: "Terminated"; readonly sessionReusable: false };
+```
 
 Recommended interface:
 
@@ -297,9 +345,9 @@ startOrResumeTurn({
 }) -> Stream<AgentRuntimeEvent>
 ```
 
-The driver implementation owns process/session reuse and external agent session ids. One driver
-might keep a process warm, another might respawn a CLI with a resume id, and another might use an
-SDK session object. Callers should not know which lifecycle policy is active.
+The driver implementation owns process reuse and external agent session ids when available. One
+driver might keep a process warm, another might respawn a CLI with a resume id, and another might
+start a fresh harness every turn. Callers should not know which lifecycle policy is active.
 
 The caller owns target selection, Codex turn context decoding, and relaying normalized agent runtime
 events back onto the Responses transport.
