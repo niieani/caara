@@ -73,6 +73,16 @@ export interface TurnInFlightAcquiredRelayEvent {
   readonly turnId: string;
 }
 
+/** Relay event recorded after a disconnected stream cancels an in-flight turn. */
+export interface TurnCancelledRelayEvent {
+  readonly _tag: "TurnCancelled";
+  readonly externalAgentKind: string;
+  readonly codexThreadId: string;
+  readonly turnId: string;
+  readonly outcomeTag: string;
+  readonly sessionReusable: boolean;
+}
+
 /** Structured relay event emitted around Codex-to-driver turn processing. */
 export type RelayLogEvent =
   | TurnAcceptedRelayEvent
@@ -82,7 +92,8 @@ export type RelayLogEvent =
   | TurnCompletedRelayEvent
   | TurnFailedRelayEvent
   | TurnConcurrencyConflictRelayEvent
-  | TurnInFlightAcquiredRelayEvent;
+  | TurnInFlightAcquiredRelayEvent
+  | TurnCancelledRelayEvent;
 
 /** Logs structured relay events for observability and test artifact capture. */
 export class RelayLogger extends Context.Service<

@@ -67,6 +67,7 @@ export class SessionDirectory extends Context.Service<
     readonly save: (
       binding: CaaraSessionBinding,
     ) => ReturnType<typeof saveSessionBindingEffectShape>;
+    readonly delete: (key: SessionBindingKey) => ReturnType<typeof deleteSessionBindingEffectShape>;
   }
 >()("@caara/SessionDirectory") {}
 
@@ -94,6 +95,17 @@ export const getSessionBindingEffectShape = Effect.fnUntraced(function* (_key: S
 /** Type-shape function for session binding write effects. */
 export const saveSessionBindingEffectShape = Effect.fnUntraced(function* (
   _binding: CaaraSessionBinding,
+) {
+  const shapeFailure = Option.none<SessionDirectoryError>();
+  yield* Option.match(shapeFailure, {
+    onNone: () => Effect.void,
+    onSome: (error) => error,
+  });
+});
+
+/** Type-shape function for session binding delete effects. */
+export const deleteSessionBindingEffectShape = Effect.fnUntraced(function* (
+  _key: SessionBindingKey,
 ) {
   const shapeFailure = Option.none<SessionDirectoryError>();
   yield* Option.match(shapeFailure, {
@@ -168,6 +180,18 @@ const writeBindingFile = Effect.fnUntraced(function* ({
   });
 });
 
+/** Deletes a binding file when cancellation makes its external session unusable. */
+const deleteBindingFile = Effect.fnUntraced(function* ({
+  filePath,
+}: {
+  readonly filePath: string;
+}) {
+  yield* Effect.tryPromise({
+    try: () => fs.rm(filePath, { force: true }),
+    catch: sessionDirectoryError,
+  });
+});
+
 /** Builds a filesystem-backed session directory layer rooted at a Caara state directory. */
 export const sessionDirectoryLive = ({ stateDir }: { readonly stateDir: string }) =>
   Layer.succeed(SessionDirectory, {
@@ -183,6 +207,9 @@ export const sessionDirectoryLive = ({ stateDir }: { readonly stateDir: string }
         }),
         binding,
       });
+    }),
+    delete: Effect.fnUntraced(function* (key: SessionBindingKey) {
+      yield* deleteBindingFile({ filePath: sessionBindingFilePath({ stateDir, ...key }) });
     }),
   });
 
@@ -293,4 +320,19 @@ export const completeSessionBinding = Effect.fnUntraced(function* ({
   });
   yield* directory.save(binding);
   return binding;
+});
+
+/** Deletes a session binding after a driver reports the external session is not reusable. */
+export const deleteSessionBinding = Effect.fnUntraced(function* ({
+  codex,
+  target,
+}: {
+  readonly codex: CodexTurnContext;
+  readonly target: AgentTarget;
+}) {
+  const directory = yield* SessionDirectory;
+  yield* directory.delete({
+    externalAgentKind: target.externalAgentKind,
+    codexThreadId: codex.threadId,
+  });
 });

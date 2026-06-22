@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, Exit, Layer, Option, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -18,6 +18,7 @@ import {
 import { createResponseEventStreamFromRuntimeEvents } from "./responseEvents.ts";
 import {
   completeSessionBinding,
+  deleteSessionBinding,
   prepareSessionBinding,
   SessionDirectory,
 } from "./sessionDirectory.ts";
@@ -211,7 +212,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       }),
     ),
   );
-  const finalizeTurn = Effect.gen(function* () {
+  const completeTurn = Effect.gen(function* () {
     yield* relayLogger.log({
       _tag: "TurnCompleted",
       threadId: responsesRequest.codex.threadId,
@@ -223,12 +224,53 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       prepared: preparedSession,
       externalSession: driverTurnResult.externalSession,
     }).pipe(Effect.provideService(SessionDirectory, sessionDirectory));
-    yield* lease.release;
-  }).pipe(Effect.ignore({ log: true, message: "Failed while finalizing Caara turn stream." }));
+  }).pipe(Effect.ensuring(lease.release));
+  const cancelTurn = Effect.gen(function* () {
+    const cancellation = yield* driverTurnResult.cancel();
+    yield* relayLogger.log({
+      _tag: "TurnCancelled",
+      externalAgentKind: responsesRequest.target.externalAgentKind,
+      codexThreadId: responsesRequest.codex.threadId,
+      turnId: responsesRequest.codex.turnId,
+      outcomeTag: cancellation._tag,
+      sessionReusable: cancellation.sessionReusable,
+    });
+    const reusableCancellation = Option.fromUndefinedOr(
+      [cancellation].filter((outcome) => outcome.sessionReusable).at(0),
+    );
+    yield* Option.match(reusableCancellation, {
+      onNone: () =>
+        deleteSessionBinding({
+          codex: responsesRequest.codex,
+          target: responsesRequest.target,
+        }).pipe(Effect.provideService(SessionDirectory, sessionDirectory)),
+      onSome: () =>
+        completeSessionBinding({
+          codex: responsesRequest.codex,
+          target: responsesRequest.target,
+          prepared: preparedSession,
+          externalSession: driverTurnResult.externalSession,
+        }).pipe(Effect.provideService(SessionDirectory, sessionDirectory), Effect.asVoid),
+    });
+  }).pipe(Effect.ensuring(lease.release));
+  /** Selects interrupted exits, which represent disconnected client streams. */
+  const interruptedExitOption = (exit: Exit.Exit<unknown>): Option.Option<Exit.Exit<unknown>> =>
+    Option.fromUndefinedOr([exit].filter(Exit.hasInterrupts).at(0));
+  const releaseFailedTurn = lease.release;
+  /** Finalizes a streamed turn according to normal completion, cancellation, or failure cleanup. */
+  const finalizeTurn = (exit: Exit.Exit<unknown>) =>
+    Exit.match(exit, {
+      onSuccess: () => completeTurn,
+      onFailure: () =>
+        Option.match(interruptedExitOption(exit), {
+          onNone: () => releaseFailedTurn,
+          onSome: () => cancelTurn,
+        }),
+    }).pipe(Effect.ignore({ log: true, message: "Failed while finalizing Caara turn stream." }));
   const responseEventStream = createResponseEventStreamFromRuntimeEvents({
     request: responsesRequest.responses,
     runtimeEvents,
-  }).pipe(Stream.ensuring(finalizeTurn));
+  }).pipe(Stream.onExit(finalizeTurn));
 
   return HttpServerResponse.stream(encodeSseEventStream(responseEventStream), {
     contentType: "text/event-stream",

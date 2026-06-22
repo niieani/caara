@@ -1,8 +1,9 @@
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, Layer, Match, Option, Stream } from "effect";
 
 import {
   AgentDriverError,
   AgentDriverRegistry,
+  type AgentCancellationOutcome,
   type AgentDriver,
   type AgentDriverTurn,
   type AgentRuntimeEvent,
@@ -66,6 +67,46 @@ const simulatorRuntimeEventStream = (turn: AgentDriverTurn): Stream.Stream<Agent
     onSome: () => Stream.never,
   });
 
+/** Returns the simulator cancellation mode requested by driver options. */
+const simulatorCancellationMode = (turn: AgentDriverTurn): string =>
+  turn.target.rawDriverOptions.simulator_cancel ?? "interrupted";
+
+/** Builds the simulator cancellation outcome for one in-flight turn. */
+const simulatorCancellationOutcome = (turn: AgentDriverTurn): AgentCancellationOutcome =>
+  Match.value(simulatorCancellationMode(turn)).pipe(
+    Match.when(
+      "abandoned_reusable",
+      () =>
+        ({
+          _tag: "Abandoned",
+          sessionReusable: true,
+        }) satisfies AgentCancellationOutcome,
+    ),
+    Match.when(
+      "abandoned_nonreusable",
+      () =>
+        ({
+          _tag: "Abandoned",
+          sessionReusable: false,
+        }) satisfies AgentCancellationOutcome,
+    ),
+    Match.when(
+      "terminated",
+      () =>
+        ({
+          _tag: "Terminated",
+          sessionReusable: false,
+        }) satisfies AgentCancellationOutcome,
+    ),
+    Match.orElse(
+      () =>
+        ({
+          _tag: "Interrupted",
+          sessionReusable: true,
+        }) satisfies AgentCancellationOutcome,
+    ),
+  );
+
 /** Deterministic driver used to exercise Caara transport and relay behavior. */
 export const simulatorAgentDriver: AgentDriver = {
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
@@ -74,6 +115,10 @@ export const simulatorAgentDriver: AgentDriver = {
         Effect.succeed({
           runtimeEvents: simulatorRuntimeEventStream(turn),
           externalSession: simulatorExternalSession(turn),
+          cancel: Effect.fnUntraced(function* () {
+            yield* Effect.void;
+            return simulatorCancellationOutcome(turn);
+          }),
         }),
       onSome: () =>
         Effect.fail(

@@ -33,10 +33,47 @@ export interface AgentAssistantMessage {
 /** Normalized runtime event emitted by an external agent driver. */
 export type AgentRuntimeEvent = AgentReasoningDelta | AgentAssistantMessage;
 
+/** Cancellation outcome for a turn interrupted before hidden session mutation. */
+export interface AgentCancellationInterrupted {
+  readonly _tag: "Interrupted";
+  readonly sessionReusable: true;
+}
+
+/** Cancellation outcome for a turn abandoned while the driver may still be running. */
+export interface AgentCancellationAbandoned {
+  readonly _tag: "Abandoned";
+  readonly sessionReusable: boolean;
+}
+
+/** Cancellation outcome for a turn whose external harness was terminated. */
+export interface AgentCancellationTerminated {
+  readonly _tag: "Terminated";
+  readonly sessionReusable: false;
+}
+
+/** Driver-reported outcome after Caara asks an in-flight turn to stop. */
+export type AgentCancellationOutcome =
+  | AgentCancellationInterrupted
+  | AgentCancellationAbandoned
+  | AgentCancellationTerminated;
+
+/** Default cancellation outcome for drivers whose test shape has no custom cancellation behavior. */
+const defaultCancellationOutcome = (): AgentCancellationOutcome => ({
+  _tag: "Interrupted",
+  sessionReusable: true,
+});
+
+/** Type-shape function for cancelling one driver-owned in-flight turn. */
+export const agentDriverCancelShape = Effect.fnUntraced(function* () {
+  yield* Effect.void;
+  return defaultCancellationOutcome();
+});
+
 /** Driver start result containing runtime events and durable external session state. */
 export interface AgentDriverTurnResult {
   readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent>;
   readonly externalSession: ExternalSessionState;
+  readonly cancel: typeof agentDriverCancelShape;
 }
 
 /** Driver failure surfaced to the Responses transport as a server error. */
@@ -59,6 +96,7 @@ export const agentDriverStartShape = Effect.fnUntraced(function* (_turn: AgentDr
   return {
     runtimeEvents: Stream.fromIterable<AgentRuntimeEvent>([]),
     externalSession,
+    cancel: agentDriverCancelShape,
   } satisfies AgentDriverTurnResult;
 });
 
