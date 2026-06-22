@@ -1,8 +1,8 @@
 # Smoke Testing
 
-Use this flow to verify the local Caara mock provider through Codex's real subagent path.
+Use this flow to verify the local Caara provider through Codex's real subagent path.
 
-## Caara Subagent Flow
+## Claude Code Subagent Flow
 
 1. Start the local provider:
 
@@ -18,27 +18,44 @@ Listening on http://localhost:8787
 
 2. Spawn a Codex subagent with `agent_type = "caara"`.
 
-Do not pass a `model` override; the role sets `model = "fake-model"`.
+Do not pass a `model` override; the role sets `model = "claude/haiku"` and points at
+`http://127.0.0.1:8787/v1`. No provider query parameters are required for the standard smoke.
 
-Example prompt:
+First-turn prompt:
 
 ```text
-Smoke test prompt: return whatever the provider returns.
+Please verify your working directory and read one specific source line.
+
+1. Report your current working directory.
+2. Read line 5 of README.md in that working directory.
+3. Reply with exactly two fields: cwd=<your cwd> and readme_line_5=<the exact line 5 text>.
+4. Do not edit files.
 ```
 
 3. Wait for completion.
 
-Expected subagent final response:
+Expected first-turn response includes:
 
 ```text
-Yes, the mock subagent seems to be working
+cwd=/Volumes/Projects/Software/code-agents-as-responses-api
+readme_line_5=Current implementation is a mock provider for Codex: it logs request `input`,
 ```
 
-4. Check the provider terminal output.
+4. Send a follow-up prompt on the same subagent handle:
 
-Expected observation: the provider logs the full Responses `input` JSON sent by Codex.
+```text
+What did I just ask you to verify? Answer from this subagent conversation context. Mention the working directory check and the README.md line number.
+```
 
-5. Close the spawned agent handle and stop the local provider.
+Expected follow-up response: the Claude-backed subagent identifies the previous cwd check and
+`README.md` line 5 request from the same external Claude Code session.
+
+5. Start a long-running turn on the same handle, then close the spawned agent while it is running.
+
+Expected observation: Caara logs `TurnCancelled` with the `claude` session key and the driver
+reports whether the session remains reusable.
+
+6. Stop the local provider.
 
 ## Troubleshooting
 

@@ -122,6 +122,23 @@ interface ByteStreamReader {
   readonly cancel: () => Promise<void>;
 }
 
+/** Releases the preview reader after discovering the first stdout line. */
+const resolveFirstLineAndReleaseReader = ({
+  reader,
+  buffered,
+  newlineIndex,
+}: {
+  readonly reader: ByteStreamReader;
+  readonly buffered: string;
+  readonly newlineIndex: number;
+}): Promise<string> => {
+  void reader.cancel().then(
+    () => undefined,
+    () => undefined,
+  );
+  return Promise.resolve(buffered.slice(0, newlineIndex).trim());
+};
+
 /** Continues first-line reading after receiving one stdout byte chunk. */
 const continueFirstLineRead = ({
   reader,
@@ -140,7 +157,7 @@ const continueFirstLineRead = ({
     {
       onNone: () => readFirstLineFromReader({ reader, decoder, buffered: nextBuffered }),
       onSome: (newlineIndex) =>
-        reader.cancel().then(() => nextBuffered.slice(0, newlineIndex).trim()),
+        resolveFirstLineAndReleaseReader({ reader, buffered: nextBuffered, newlineIndex }),
     },
   );
 };

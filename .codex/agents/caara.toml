@@ -1,11 +1,11 @@
 name = "caara"
-description = "Delegates to the local Caara mock Responses provider."
-developer_instructions = "Use the local Caara mock Responses provider. Do not call tools. Return the provider response as-is."
+description = "Delegates to the local Caara Responses provider backed by Claude Code."
+developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"
-model = "fake-model"
+model = "claude/haiku"
 
 [model_providers.caara]
-name = "Caara Mock Responses"
+name = "Caara Responses"
 base_url = "http://127.0.0.1:8787/v1"
 wire_api = "responses"
 requires_openai_auth = false

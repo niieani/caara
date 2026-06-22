@@ -200,11 +200,6 @@ const validateIdentityConsistency = Effect.fnUntraced(function* ({
     actual: metadata.window_id,
   });
   yield* requireMatchingIdentity({
-    label: "subagent_kind",
-    expected: headers["x-openai-subagent"],
-    actual: metadata.subagent_kind,
-  });
-  yield* requireMatchingIdentity({
     label: "client_metadata.thread_id",
     expected: headers["thread-id"],
     actual: bodyMetadata?.thread_id,
@@ -335,7 +330,7 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
       parentThreadId: decodedHeaders["x-codex-parent-thread-id"],
       windowId: decodedHeaders["x-codex-window-id"],
       requestKind: metadata.request_kind,
-      subagentKind: decodedHeaders["x-openai-subagent"],
+      subagentKind: metadata.subagent_kind,
       originator: decodedHeaders.originator,
       requestedModel: responses.model,
       workspacePaths,

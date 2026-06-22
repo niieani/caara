@@ -203,6 +203,23 @@ describe("Codex turn context decoder", () => {
     }),
   );
 
+  it.effect("allows observed Codex subagent header and metadata kind to differ", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeCodexTurnRequest({
+        headers: makeHeaders({
+          metadata: makeTurnMetadata({ subagent_kind: "thread_spawn" }),
+          overrides: { "x-openai-subagent": "collab_spawn" },
+        }),
+        url: "/v1/responses",
+        body: makeBody(),
+        requireCwd: true,
+      });
+
+      assert.strictEqual(decoded.codex.subagentKind, "thread_spawn");
+      assert.strictEqual(decoded.target.requestedModel, "claude/test");
+    }),
+  );
+
   it.effect("requires cwd for new external code-agent bindings", () =>
     Effect.gen(function* () {
       const metadataWithoutWorkspace = makeTurnMetadata({ workspaces: {} });
