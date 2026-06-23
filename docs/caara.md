@@ -158,27 +158,30 @@ interface AgentTarget {
 }
 ```
 
-## Claude Code Driver
+## Claude Agent SDK Driver
 
-The Claude Code driver is the only production driver in v1.
+The Claude Agent SDK driver is the only production driver in v1.
 
 Driver options accepted from provider query parameters:
 
 - `effort`
 - `max_budget_usd`
 - `tools`
-- `debug_file`
+- `allowed_tools`
+- `disallowed_tools`
 - `include_partial_messages`
 
 Unsupported option names and invalid option values fail the turn explicitly.
 
-For a first turn, the driver starts `claude` in print mode with a generated durable session id. For a
-follow-up turn, it resumes the stored Claude Code session id. The prompt extractor selects the latest
-Codex user `input_text` from the full Responses message history so previous assistant `output_text`
-does not become a new Claude prompt.
+For a first turn, the driver starts an SDK `query()` with a generated durable session id. For a
+follow-up turn, it passes the stored Claude SDK resume cursor to `query()`. The prompt extractor
+selects the latest Codex user `input_text` from the full Responses message history so previous
+assistant `output_text` does not become a new Claude prompt.
 
-Claude Code stdout is parsed as JSONL contract events. Assistant text and reasoning deltas are
-translated into Caara runtime events. Terminal Claude Code failures become driver errors.
+Caara does not hand-build Claude CLI argv or parse Claude stdout for normal turns. Claude Agent SDK
+messages are translated into Caara runtime events. Assistant text, displayable reasoning, permission
+denials, and terminal SDK results stay behind the driver/runtime boundary. Terminal SDK failures
+become driver errors.
 
 ## Session Directory
 

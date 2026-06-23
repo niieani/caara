@@ -150,7 +150,6 @@ Target:
 Test seam:
 
 - `claudeAgentSdkPermissionPolicy.test.ts` covers SDK permission callbacks, dialog cancellation, reserved-tool validation, and `permission_denied` runtime mapping.
-- `claudeCodePermissionPolicy.test.ts` and `claudeCodeContract.test.ts` cover CLI defaults and reserved-tool validation.
 - `agentRegistryRouting.test.ts` covers relay logging and response completion for `PermissionDenied` runtime events.
 
 ## Completed Slice: CAARA-sbvkyfbv
@@ -172,4 +171,23 @@ Test seam:
 
 - `sessionDirectoryPlatformServices.test.ts` proves fake `FileSystem` injection is used and empty env fails explicitly.
 - `codexTurnContext.test.ts` proves workspace path filtering uses injected `Path`.
-- Provider/session/Claude Code harness tests prove Bun platform services are supplied at integration edges.
+- Provider/session tests prove Bun platform services are supplied at integration edges.
+
+## Completed Slice: CAARA-exzcerfi
+
+Problem:
+
+- Retired Claude CLI adapter files still encoded the old production shape: argv construction, `Bun.spawn`, stdout JSONL parsing, handwritten stream message unions, and fake executable tests.
+- User-facing docs still described Claude stdout parsing as current behavior.
+
+Target:
+
+- Remove `src/claudeCodeDriver` and `src/claudeCodeContract` source and tests.
+- Keep production routing on `claudeAgentSdkDriverLive`.
+- Add an architecture regression proving retired Claude CLI source and direct `Bun.spawn` do not return.
+- Update current docs to describe SDK `query()` execution and imported SDK message boundaries.
+
+Test seam:
+
+- `claudeCliRetirement.test.ts` fails if retired `claudeCodeDriver`/`claudeCodeContract` files or direct `Bun.spawn` calls reappear under `src`.
+- Existing SDK driver, cancellation, recovery, permission-policy, and provider routing tests cover the replacement SDK query seam.
