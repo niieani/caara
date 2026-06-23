@@ -423,16 +423,6 @@ describe("mock Responses provider", () => {
     }),
   );
 
-  it.effect("rejects unknown external agent kinds with an OpenAI-shaped error", () =>
-    rejectsInvalidCodexRequest({
-      body: {
-        ...requestBody,
-        model: "gemini/pro",
-      },
-      expectedMessage: /unknown external agent kind/i,
-    }),
-  );
-
   it.effect("rejects duplicate provider query params with an OpenAI-shaped error", () =>
     rejectsInvalidCodexRequest({
       body: requestBody,

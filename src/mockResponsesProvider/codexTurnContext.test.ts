@@ -135,19 +135,34 @@ describe("Codex turn context decoder", () => {
     }),
   );
 
-  it.effect("rejects unknown external agent kinds", () =>
+  it.effect("accepts open lowercase external agent kinds before registry resolution", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeCodexTurnRequest({
+        headers: makeHeaders(),
+        url: "/v1/responses",
+        body: makeBody({ model: "gemini/pro" }),
+        requireCwd: true,
+      });
+
+      assert.strictEqual(decoded.target.requestedModel, "gemini/pro");
+      assert.strictEqual(decoded.target.externalAgentKind, "gemini");
+      assert.strictEqual(decoded.target.externalModelSpecifier, "pro");
+    }),
+  );
+
+  it.effect("rejects malformed external agent kind syntax", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
         decodeCodexTurnRequest({
           headers: makeHeaders(),
           url: "/v1/responses",
-          body: makeBody({ model: "gemini/pro" }),
+          body: makeBody({ model: "Gemini/pro" }),
           requireCwd: true,
         }),
       );
       const message = invalidRequestMessageFromResult(result);
 
-      assert.match(message, /unknown external agent kind/i);
+      assert.match(message, /lowercase slug/i);
     }),
   );
 

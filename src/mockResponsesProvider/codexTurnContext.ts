@@ -6,8 +6,8 @@ import { InvalidResponsesRequest } from "./errors.ts";
 import { decodeResponsesCreateRequest, type ResponsesCreateRequest } from "./protocol.ts";
 import { extractCwdCandidates } from "./requestDiagnosticsLogger.ts";
 
-/** Allowed external agent kind prefixes accepted by Caara v1. */
-const supportedExternalAgentKinds = new Set(["claude"]);
+/** Open external agent kind syntax accepted before registry-owned availability checks. */
+const externalAgentKindPattern = /^[a-z][a-z0-9-]*$/u;
 
 /** Metadata for one workspace path observed in Codex turn metadata. */
 const codexWorkspaceMetadataSchema = Schema.Struct({
@@ -224,7 +224,7 @@ const parseProviderQueryParams = Effect.fnUntraced(function* (url: string) {
   });
 });
 
-/** Parses the Responses model string into a supported external agent target. */
+/** Parses the Responses model string into an open external agent target. */
 const parseAgentTarget = Effect.fnUntraced(function* ({
   requestedModel,
   rawDriverOptions,
@@ -246,12 +246,15 @@ const parseAgentTarget = Effect.fnUntraced(function* ({
 
   const externalAgentKind = requestedModel.slice(0, separatorIndex);
   const externalModelSpecifier = requestedModel.slice(separatorIndex + 1);
-  const unknownExternalAgentKind = [externalAgentKind]
-    .filter((kind) => !supportedExternalAgentKinds.has(kind))
+  const invalidExternalAgentKind = [externalAgentKind]
+    .filter((kind) => !externalAgentKindPattern.test(kind))
     .at(0);
-  yield* Option.match(Option.fromUndefinedOr(unknownExternalAgentKind), {
+  yield* Option.match(Option.fromUndefinedOr(invalidExternalAgentKind), {
     onNone: () => Effect.void,
-    onSome: (kind) => Effect.fail(invalidRequest(`Unknown external agent kind: ${kind}.`)),
+    onSome: (kind) =>
+      Effect.fail(
+        invalidRequest(`External agent kind must be a lowercase slug, received ${kind}.`),
+      ),
   });
 
   return new AgentTarget({

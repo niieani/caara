@@ -94,6 +94,14 @@ export class AgentDriverError extends Schema.TaggedErrorClass<AgentDriverError>(
   },
 ) {}
 
+/** Builds an explicit registry failure for an unavailable external agent kind. */
+export const unsupportedExternalAgentKindError = ({
+  externalAgentKind,
+}: {
+  readonly externalAgentKind: string;
+}): AgentDriverError =>
+  new AgentDriverError({ message: `Unsupported external agent kind: ${externalAgentKind}.` });
+
 /** Contract for starting or resuming one driver-owned turn. */
 export type AgentDriverStart = (
   turn: AgentDriverTurn,

@@ -13,6 +13,7 @@ import {
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEvent,
+  unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
 import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
@@ -403,5 +404,12 @@ export const claudeCodeAgentDriverRegistryLive = ({
   env = process.env,
 }: ClaudeCodeAgentDriverConfig = {}) =>
   Layer.succeed(AgentDriverRegistry, {
-    resolve: () => Effect.succeed(createClaudeCodeAgentDriver({ command, env })),
+    resolve: Effect.fnUntraced(function* (target) {
+      return yield* Match.value(target.externalAgentKind).pipe(
+        Match.when("claude", () => Effect.succeed(createClaudeCodeAgentDriver({ command, env }))),
+        Match.orElse((externalAgentKind) =>
+          Effect.fail(unsupportedExternalAgentKindError({ externalAgentKind })),
+        ),
+      );
+    }),
   });

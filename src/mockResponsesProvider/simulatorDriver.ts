@@ -8,6 +8,7 @@ import {
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEvent,
+  unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
 import { DurableExternalSession } from "./sessionDirectory.ts";
 import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
@@ -245,7 +246,14 @@ export const simulatorAgentDriver: AgentDriver = {
   }),
 };
 
-/** Registry layer that routes currently supported Claude targets to the simulator driver. */
+/** Registry layer that routes supported Claude targets to the simulator driver. */
 export const simulatorAgentDriverRegistryLive = Layer.succeed(AgentDriverRegistry, {
-  resolve: () => Effect.succeed(simulatorAgentDriver),
+  resolve: Effect.fnUntraced(function* (target) {
+    return yield* Match.value(target.externalAgentKind).pipe(
+      Match.when("claude", () => Effect.succeed(simulatorAgentDriver)),
+      Match.orElse((externalAgentKind) =>
+        Effect.fail(unsupportedExternalAgentKindError({ externalAgentKind })),
+      ),
+    );
+  }),
 });

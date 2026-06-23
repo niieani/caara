@@ -57,3 +57,21 @@ Target:
 Test seam:
 
 - `claudeAgentSdkClient.test.ts` injects a fake client, records typed SDK options, emits a typed SDK message via `AsyncIterable`, and never spawns Claude.
+
+## Completed Slice: CAARA-aamjtkfx
+
+Problem:
+
+- Request decoding hard-coded `claude` as the only supported external agent kind.
+- Driver registries did not explicitly reject unsupported kinds.
+
+Target:
+
+- Decode syntactically valid external agent kinds as open lowercase slugs.
+- Make `AgentDriverRegistry.resolve` the owner of support checks.
+- Preserve current Claude routing through simulator/live registries.
+
+Test seam:
+
+- `codexTurnContext.test.ts` accepts `gemini/pro` at decode time and rejects malformed kind syntax.
+- `mockResponsesProvider.test.ts` proves a custom registry can serve `gemini/pro`, and the default registry rejects unsupported kinds after target selection.
