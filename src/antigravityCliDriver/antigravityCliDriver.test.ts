@@ -95,15 +95,21 @@ const makeHeaders = ({
 });
 
 /** Builds a Codex-shaped streaming Responses request body for one Antigravity turn. */
-const makeBody = ({ turnId }: { readonly turnId: string }): Schema.Json => ({
-  model: "agy/gemini-3.5-flash",
-  input: [
+const makeBody = ({
+  turnId,
+  input = [
     {
       type: "message",
       role: "user",
       content: [{ type: "input_text", text: `turn ${turnId}` }],
     },
   ],
+}: {
+  readonly turnId: string;
+  readonly input?: Schema.Json;
+}): Schema.Json => ({
+  model: "agy/gemini-3.5-flash",
+  input,
   stream: true,
   client_metadata: {
     thread_id: "codex-thread-agy",
@@ -112,6 +118,36 @@ const makeBody = ({ turnId }: { readonly turnId: string }): Schema.Json => ({
   metadata: {
     cwd: projectRoot,
   },
+});
+
+/** Builds the developer message that Codex Desktop sends before workspace user context. */
+const developerMessage = (): Schema.Json => ({
+  type: "message",
+  role: "developer",
+  content: [{ type: "input_text", text: "Use Codex developer instructions." }],
+});
+
+/** Builds the AGENTS/environment prelude user message observed in real Codex subagent input. */
+const codexPreludeMessage = (): Schema.Json => ({
+  type: "message",
+  role: "user",
+  content: [
+    {
+      type: "input_text",
+      text: "# AGENTS.md instructions for /workspace/project\n\n<INSTRUCTIONS>\nUse Bun.\n</INSTRUCTIONS>",
+    },
+    {
+      type: "input_text",
+      text: "<environment_context>\n  <cwd>/workspace/project</cwd>\n</environment_context>",
+    },
+  ],
+});
+
+/** Builds one current managing-agent user request message. */
+const currentUserMessage = (text: string): Schema.Json => ({
+  type: "message",
+  role: "user",
+  content: [{ type: "input_text", text }],
 });
 
 /** Applies the Codex header fixture to a test HTTP request. */
@@ -244,6 +280,7 @@ const runTurn = ({
   invocationLogPath,
   fakeMode,
   queryString,
+  input,
   relayEvents,
 }: {
   readonly stateDir: string;
@@ -252,6 +289,7 @@ const runTurn = ({
   readonly invocationLogPath: string;
   readonly fakeMode: string;
   readonly queryString?: string;
+  readonly input?: Schema.Json;
   readonly relayEvents: Array<RelayLogEvent>;
 }) =>
   Effect.gen(function* () {
@@ -259,7 +297,7 @@ const runTurn = ({
     const request = setHeaders({
       request: yield* HttpClientRequest.bodyJson(
         HttpClientRequest.post(url),
-        makeBody({ turnId: "turn-1" }),
+        makeBody({ turnId: "turn-1", input }),
       ),
       headers: makeHeaders({ turnId: "turn-1" }),
     });
@@ -393,6 +431,37 @@ describe("Antigravity CLI driver", () => {
       assert.strictEqual(
         decoded.externalSession.driverResumeCursor.conversationId,
         fakeAgyFixture.conversationId,
+      );
+    }),
+  );
+
+  it.effect("passes only normalized current-turn text to fake agy for real Codex input", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
+      const result = yield* runTurn({
+        ...fixture,
+        fakeMode: "success",
+        input: [
+          developerMessage(),
+          codexPreludeMessage(),
+          currentUserMessage("Read README.md line 5."),
+        ],
+        relayEvents,
+      });
+
+      assert.deepStrictEqual(result, { _tag: "Success", text: fakeAgyFixture.finalAnswer });
+      const invocation = yield* readFakeInvocation({
+        invocationLogPath: fixture.invocationLogPath,
+      });
+      assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "Read README.md line 5."]);
+      assert.strictEqual(invocation.prompt, "Read README.md line 5.");
+      assert.strictEqual(invocation.prompt.includes("Use Codex developer instructions"), false);
+      assert.strictEqual(invocation.prompt.includes("AGENTS.md instructions"), false);
+      assert.strictEqual(invocation.prompt.includes("<environment_context>"), false);
+      assert.deepStrictEqual(
+        relayEvents.slice(0, 4).map((event) => event._tag),
+        ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted"],
       );
     }),
   );

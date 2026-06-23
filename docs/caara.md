@@ -3,11 +3,11 @@
 Caara is a Codex subagent bridge for running external code agents while Codex still speaks the
 Responses-compatible subagent transport it already supports.
 
-The current v1 implementation supports Claude Code through the Claude Agent SDK and an
-always-available Diagnostic driver for smoke testing. Codex sends a normal streaming
-`POST /v1/responses` request to Caara, Caara resolves `model = "<external-agent>/<external-model>"`,
-starts or resumes the matching driver session, and relays normalized runtime events back as OpenAI
-Responses SSE events.
+The current v1 implementation supports Claude Code through the Claude Agent SDK, Antigravity
+through the `agy` CLI, and an always-available Diagnostic driver for smoke testing. Codex sends a
+normal streaming `POST /v1/responses` request to Caara, Caara resolves
+`model = "<external-agent>/<external-model>"`, starts or resumes the matching driver session, and
+relays normalized runtime events back as OpenAI Responses SSE events.
 
 ## Current Behavior
 
@@ -24,6 +24,7 @@ Supported request shape:
 Implemented external agent kinds:
 
 - `claude/*`: routed to the Claude Agent SDK driver.
+- `agy/*`: routed to the Antigravity CLI driver.
 - `diagnostic/*`: routed to the always-available Diagnostic driver.
 
 For each valid streaming turn, Caara:
@@ -31,8 +32,8 @@ For each valid streaming turn, Caara:
 - decodes Codex turn identity and workspace context at the transport boundary
 - resolves the requested model into an agent target
 - prepares or loads a session binding keyed by external agent kind and Codex thread id
-- starts or resumes a Claude Code session in the resolved working directory
-- maps Claude Code output into normalized runtime events
+- starts or resumes an external agent session in the resolved working directory
+- maps external agent output into normalized runtime events
 - encodes runtime events as OpenAI Responses SSE frames
 - persists updated session metadata after successful turns
 - cancels in-flight driver work when the Codex response stream disconnects
@@ -188,7 +189,7 @@ content.
 
 ## Claude Agent SDK Driver
 
-The Claude Agent SDK driver is the only production driver in v1.
+The Claude Agent SDK driver is one real external-agent driver in v1.
 
 Driver options accepted from provider query parameters:
 
