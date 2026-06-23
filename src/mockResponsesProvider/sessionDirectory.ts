@@ -8,11 +8,124 @@ import type { Effect as EffectContract } from "effect/Effect";
 import { AgentTarget, type CodexTurnContext } from "./codexTurnContext.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 
+/** API response id persisted with the latest completed Caara turn. */
+export const ApiResponseId = Schema.NonEmptyString.pipe(Schema.brand("ApiResponseId"));
+
+/** API response id persisted with the latest completed Caara turn. */
+export type ApiResponseId = typeof ApiResponseId.Type;
+
+/** External agent kind persisted as part of the session binding identity. */
+export const ExternalAgentKind = Schema.NonEmptyString.pipe(Schema.brand("ExternalAgentKind"));
+
+/** External agent kind persisted as part of the session binding identity. */
+export type ExternalAgentKind = typeof ExternalAgentKind.Type;
+
+/** Driver instance identity persisted as part of the session binding identity. */
+export const DriverInstanceId = Schema.NonEmptyString.pipe(Schema.brand("DriverInstanceId"));
+
+/** Driver instance identity persisted as part of the session binding identity. */
+export type DriverInstanceId = typeof DriverInstanceId.Type;
+
+/** Codex thread id persisted as part of the session binding identity. */
+export const CodexThreadId = Schema.NonEmptyString.pipe(Schema.brand("CodexThreadId"));
+
+/** Codex thread id persisted as part of the session binding identity. */
+export type CodexThreadId = typeof CodexThreadId.Type;
+
+/** Codex parent session id persisted for diagnostics and future recovery policies. */
+export const CodexParentSessionId = Schema.NonEmptyString.pipe(
+  Schema.brand("CodexParentSessionId"),
+);
+
+/** Codex parent session id persisted for diagnostics and future recovery policies. */
+export type CodexParentSessionId = typeof CodexParentSessionId.Type;
+
+/** Codex turn id persisted for binding creation and latest-turn tracking. */
+export const CodexTurnId = Schema.NonEmptyString.pipe(Schema.brand("CodexTurnId"));
+
+/** Codex turn id persisted for binding creation and latest-turn tracking. */
+export type CodexTurnId = typeof CodexTurnId.Type;
+
+/** Requested Responses model string persisted as mutable binding state. */
+export const RequestedModelSpecifier = Schema.NonEmptyString.pipe(
+  Schema.brand("RequestedModelSpecifier"),
+);
+
+/** Requested Responses model string persisted as mutable binding state. */
+export type RequestedModelSpecifier = typeof RequestedModelSpecifier.Type;
+
+/** Driver-local model string persisted as mutable binding state. */
+export const ExternalModelSpecifier = Schema.NonEmptyString.pipe(
+  Schema.brand("ExternalModelSpecifier"),
+);
+
+/** Driver-local model string persisted as mutable binding state. */
+export type ExternalModelSpecifier = typeof ExternalModelSpecifier.Type;
+
+/** Opaque resume cursor owned by the selected driver. */
+export const DriverResumeCursor = Schema.NonEmptyString.pipe(Schema.brand("DriverResumeCursor"));
+
+/** Opaque resume cursor owned by the selected driver. */
+export type DriverResumeCursor = typeof DriverResumeCursor.Type;
+
+/** Brands a latest API response id after deterministic construction. */
+export const makeApiResponseId = (value: string): ApiResponseId => ApiResponseId.make(value);
+
+/** Brands an external agent kind after transport decoding or persisted decoding. */
+export const makeExternalAgentKind = (value: string): ExternalAgentKind =>
+  ExternalAgentKind.make(value);
+
+/** Brands a driver instance id after registry routing. */
+export const makeDriverInstanceId = (value: string): DriverInstanceId =>
+  DriverInstanceId.make(value);
+
+/** Brands a Codex thread id after Codex identity decoding. */
+export const makeCodexThreadId = (value: string): CodexThreadId => CodexThreadId.make(value);
+
+/** Brands a Codex parent session id after Codex identity decoding. */
+export const makeCodexParentSessionId = (value: string): CodexParentSessionId =>
+  CodexParentSessionId.make(value);
+
+/** Brands a Codex turn id after Codex metadata decoding. */
+export const makeCodexTurnId = (value: string): CodexTurnId => CodexTurnId.make(value);
+
+/** Brands a requested Responses model specifier after target parsing. */
+export const makeRequestedModelSpecifier = (value: string): RequestedModelSpecifier =>
+  RequestedModelSpecifier.make(value);
+
+/** Brands a driver-local model specifier after target parsing. */
+export const makeExternalModelSpecifier = (value: string): ExternalModelSpecifier =>
+  ExternalModelSpecifier.make(value);
+
+/** Brands an opaque driver-owned resume cursor. */
+export const makeDriverResumeCursor = (value: string): DriverResumeCursor =>
+  DriverResumeCursor.make(value);
+
+/** Stable identity key for one persisted Caara session binding. */
+export const SessionBindingKey = Schema.Struct({
+  externalAgentKind: ExternalAgentKind,
+  driverInstanceId: DriverInstanceId,
+  codexThreadId: CodexThreadId,
+});
+
+/** Stable identity key for one persisted Caara session binding. */
+export type SessionBindingKey = typeof SessionBindingKey.Type;
+
+/** Mutable requested target state stored on an existing session binding. */
+export const RequestedTargetState = Schema.Struct({
+  requestedModel: RequestedModelSpecifier,
+  externalModelSpecifier: ExternalModelSpecifier,
+  rawDriverOptions: Schema.Record(Schema.String, Schema.String),
+});
+
+/** Mutable requested target state stored on an existing session binding. */
+export type RequestedTargetState = typeof RequestedTargetState.Type;
+
 /** Durable external session state stored by Caara for resumable drivers. */
 export class DurableExternalSession extends Schema.TaggedClass<DurableExternalSession>()(
   "Durable",
   {
-    externalSessionId: Schema.String,
+    driverResumeCursor: DriverResumeCursor,
   },
 ) {}
 
@@ -33,16 +146,15 @@ export type ExternalSessionState = typeof ExternalSessionState.Type;
 
 /** Durable session binding record stored under the Caara user-state session directory. */
 export class CaaraSessionBinding extends Schema.Class<CaaraSessionBinding>("CaaraSessionBinding")({
-  codexThreadId: Schema.String,
-  parentCodexSessionId: Schema.String,
-  externalAgentKind: Schema.String,
-  requestedModel: Schema.String,
-  externalModelSpecifier: Schema.String,
-  rawDriverOptions: Schema.Record(Schema.String, Schema.String),
+  schemaVersion: Schema.Literal(2),
+  apiResponseId: ApiResponseId,
+  bindingKey: SessionBindingKey,
+  parentCodexSessionId: CodexParentSessionId,
+  requestedTarget: RequestedTargetState,
   externalSession: ExternalSessionState,
-  cwd: Schema.String,
-  createdFromTurnId: Schema.String,
-  lastTurnId: Schema.String,
+  cwd: Schema.NonEmptyString,
+  createdFromTurnId: CodexTurnId,
+  lastTurnId: CodexTurnId,
 }) {}
 
 /** Filesystem operation failure while loading or storing Caara session bindings. */
@@ -70,15 +182,12 @@ export class SessionDirectory extends Context.Service<
   }
 >()("@caara/SessionDirectory") {}
 
-/** Stable key for one external-agent-kind and Codex-thread binding. */
-export interface SessionBindingKey {
-  readonly externalAgentKind: string;
-  readonly codexThreadId: string;
-}
-
 /** Filesystem path options for one session binding file. */
-export interface SessionBindingFilePathOptions extends SessionBindingKey {
+export interface SessionBindingFilePathOptions {
   readonly stateDir: string;
+  readonly externalAgentKind: string;
+  readonly driverInstanceId: string;
+  readonly codexThreadId: string;
 }
 
 /** Contract for looking up one persisted session binding. */
@@ -103,12 +212,14 @@ const encodeSessionPathSegment = (segment: string): string => encodeURIComponent
 export const sessionBindingFilePath = ({
   stateDir,
   externalAgentKind,
+  driverInstanceId,
   codexThreadId,
 }: SessionBindingFilePathOptions): string =>
   path.join(
     stateDir,
     "sessions",
     encodeSessionPathSegment(externalAgentKind),
+    encodeSessionPathSegment(driverInstanceId),
     `${encodeSessionPathSegment(codexThreadId)}.json`,
   );
 
@@ -184,8 +295,7 @@ export const sessionDirectoryLive = ({ stateDir }: { readonly stateDir: string }
       return yield* writeBindingFile({
         filePath: sessionBindingFilePath({
           stateDir,
-          externalAgentKind: binding.externalAgentKind,
-          codexThreadId: binding.codexThreadId,
+          ...binding.bindingKey,
         }),
         binding,
       });
@@ -225,11 +335,86 @@ export const sessionDirectoryFromEnvironmentLive = sessionDirectoryLive({
 /** Reconstructs an AgentTarget from persisted mutable target state. */
 export const targetFromBinding = (binding: CaaraSessionBinding): AgentTarget =>
   new AgentTarget({
-    requestedModel: binding.requestedModel,
-    externalAgentKind: binding.externalAgentKind,
-    externalModelSpecifier: binding.externalModelSpecifier,
-    rawDriverOptions: binding.rawDriverOptions,
+    requestedModel: binding.requestedTarget.requestedModel,
+    externalAgentKind: binding.bindingKey.externalAgentKind,
+    externalModelSpecifier: binding.requestedTarget.externalModelSpecifier,
+    rawDriverOptions: binding.requestedTarget.rawDriverOptions,
   });
+
+/** Derives the prototype driver instance id for a target. */
+export const driverInstanceIdFromTarget = (target: AgentTarget): string => target.externalAgentKind;
+
+/** Builds the persisted session binding key for one selected target and Codex thread. */
+export const sessionBindingKeyFromTurn = ({
+  codex,
+  target,
+}: {
+  readonly codex: CodexTurnContext;
+  readonly target: AgentTarget;
+}): SessionBindingKey => ({
+  externalAgentKind: makeExternalAgentKind(target.externalAgentKind),
+  driverInstanceId: makeDriverInstanceId(driverInstanceIdFromTarget(target)),
+  codexThreadId: makeCodexThreadId(codex.threadId),
+});
+
+/** Builds the latest API response id persisted with a completed turn. */
+const apiResponseIdFromTurn = (codex: CodexTurnContext): ApiResponseId =>
+  makeApiResponseId(`resp_${codex.turnId}`);
+
+/** Extracts mutable requested target state from a selected target. */
+const requestedTargetStateFromTarget = (target: AgentTarget): RequestedTargetState => ({
+  requestedModel: makeRequestedModelSpecifier(target.requestedModel),
+  externalModelSpecifier: makeExternalModelSpecifier(target.externalModelSpecifier),
+  rawDriverOptions: target.rawDriverOptions,
+});
+
+/** Builds the first binding/key mismatch message, if the persisted file is inconsistent. */
+const bindingKeyMismatchMessage = ({
+  binding,
+  key,
+}: {
+  readonly binding: CaaraSessionBinding;
+  readonly key: SessionBindingKey;
+}): Option.Option<string> =>
+  Option.fromUndefinedOr(
+    [
+      {
+        label: "external agent kind",
+        expected: key.externalAgentKind,
+        actual: binding.bindingKey.externalAgentKind,
+      },
+      {
+        label: "driver instance id",
+        expected: key.driverInstanceId,
+        actual: binding.bindingKey.driverInstanceId,
+      },
+      {
+        label: "Codex thread id",
+        expected: key.codexThreadId,
+        actual: binding.bindingKey.codexThreadId,
+      },
+    ]
+      .filter((entry) => entry.actual !== entry.expected)
+      .map(
+        (entry) =>
+          `Persisted session binding ${entry.label} mismatch: expected ${entry.expected}, received ${entry.actual}.`,
+      )
+      .at(0),
+  );
+
+/** Validates that a loaded binding belongs to the selected driver/thread key. */
+const validateLoadedBinding = Effect.fnUntraced(function* ({
+  binding,
+  key,
+}: {
+  readonly binding: CaaraSessionBinding;
+  readonly key: SessionBindingKey;
+}) {
+  return yield* Option.match(bindingKeyMismatchMessage({ binding, key }), {
+    onNone: () => Effect.succeed(binding),
+    onSome: (message) => Effect.fail(new InvalidResponsesRequest({ message })),
+  });
+});
 
 /** Chooses an initial cwd for a new external agent binding. */
 const initialCwdOption = (codex: CodexTurnContext): Option.Option<string> =>
@@ -244,10 +429,8 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
   readonly target: AgentTarget;
 }) {
   const directory = yield* SessionDirectory;
-  const binding = yield* directory.get({
-    externalAgentKind: target.externalAgentKind,
-    codexThreadId: codex.threadId,
-  });
+  const key = sessionBindingKeyFromTurn({ codex, target });
+  const binding = yield* directory.get(key);
 
   return yield* Option.match(binding, {
     onNone: () =>
@@ -256,7 +439,7 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
           Effect.fail(
             new InvalidResponsesRequest({
               message:
-                "A cwd or Codex workspace path is required for a new external code-agent binding.",
+                "No existing session binding was found for this follow-up turn, and no cwd or Codex workspace path was provided for a new external code-agent binding.",
             }),
           ),
         onSome: (cwd) =>
@@ -267,11 +450,15 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
           } satisfies PreparedSessionBinding),
       }),
     onSome: (existingBinding) =>
-      Effect.succeed({
-        binding: existingBinding,
-        cwd: existingBinding.cwd,
-        previousTarget: targetFromBinding(existingBinding),
-      } satisfies PreparedSessionBinding),
+      Effect.map(
+        validateLoadedBinding({ binding: existingBinding, key }),
+        (validatedBinding) =>
+          ({
+            binding: validatedBinding,
+            cwd: validatedBinding.cwd,
+            previousTarget: targetFromBinding(validatedBinding),
+          }) satisfies PreparedSessionBinding,
+      ),
   });
 });
 
@@ -288,17 +475,17 @@ export const completeSessionBinding = Effect.fnUntraced(function* ({
   readonly externalSession: ExternalSessionState;
 }) {
   const directory = yield* SessionDirectory;
+  const bindingKey = sessionBindingKeyFromTurn({ codex, target });
   const binding = new CaaraSessionBinding({
-    codexThreadId: codex.threadId,
-    parentCodexSessionId: codex.parentSessionId,
-    externalAgentKind: target.externalAgentKind,
-    requestedModel: target.requestedModel,
-    externalModelSpecifier: target.externalModelSpecifier,
-    rawDriverOptions: target.rawDriverOptions,
+    schemaVersion: 2,
+    apiResponseId: apiResponseIdFromTurn(codex),
+    bindingKey,
+    parentCodexSessionId: makeCodexParentSessionId(codex.parentSessionId),
+    requestedTarget: requestedTargetStateFromTarget(target),
     externalSession,
     cwd: prepared.cwd,
-    createdFromTurnId: prepared.binding?.createdFromTurnId ?? codex.turnId,
-    lastTurnId: codex.turnId,
+    createdFromTurnId: prepared.binding?.createdFromTurnId ?? makeCodexTurnId(codex.turnId),
+    lastTurnId: makeCodexTurnId(codex.turnId),
   });
   yield* directory.save(binding);
   return binding;
@@ -313,8 +500,5 @@ export const deleteSessionBinding = Effect.fnUntraced(function* ({
   readonly target: AgentTarget;
 }) {
   const directory = yield* SessionDirectory;
-  yield* directory.delete({
-    externalAgentKind: target.externalAgentKind,
-    codexThreadId: codex.threadId,
-  });
+  yield* directory.delete(sessionBindingKeyFromTurn({ codex, target }));
 });

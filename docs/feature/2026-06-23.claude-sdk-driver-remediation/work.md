@@ -75,3 +75,23 @@ Test seam:
 
 - `codexTurnContext.test.ts` accepts `gemini/pro` at decode time and rejects malformed kind syntax.
 - `mockResponsesProvider.test.ts` proves a custom registry can serve `gemini/pro`, and the default registry rejects unsupported kinds after target selection.
+
+## Completed Slice: CAARA-eodhueyo
+
+Problem:
+
+- Session binding persisted one loose external session id and request target fields directly on the binding.
+- Follow-up lookup did not distinguish API response ids, driver identity, mutable requested target state, and driver-owned resume cursors.
+
+Target:
+
+- Persist session binding v2 with branded ids, a stable binding key, mutable requested target state, and opaque driver resume cursors.
+- Route binding files through external agent kind, driver instance id, and Codex thread id.
+- Let drivers own cursor encoding/decoding; core stores only the opaque cursor string.
+- Fail explicitly for missing follow-up bindings, wrong-driver bindings, and driver-rejected cursors.
+
+Test seam:
+
+- `sessionBinding.test.ts` proves first-turn creation, follow-up lookup, mutable model/options, and cursor persistence.
+- `sessionBindingV2Contract.test.ts` covers missing binding, wrong-driver binding, and invalid simulator cursor failures.
+- Claude Code policy/session tests assert durable session cursor persistence through the updated binding model.

@@ -15,7 +15,10 @@ import {
   type AgentRuntimeEvent,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
-import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
+import {
+  DurableExternalSession,
+  makeDriverResumeCursor,
+} from "../mockResponsesProvider/sessionDirectory.ts";
 import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import { parseClaudeCodeDriverOptions } from "./options.ts";
 import {
@@ -42,7 +45,7 @@ const durableSessionIdOption = (turn: AgentDriverTurn): Option.Option<string> =>
   Option.fromUndefinedOr(
     [turn.externalSession]
       .filter((session): session is DurableExternalSession => session?._tag === "Durable")
-      .map((session) => session.externalSessionId)
+      .map((session) => session.driverResumeCursor)
       .at(0),
   );
 
@@ -240,7 +243,9 @@ const claudeProcessTurnResult = ({
   readonly sessionId: string;
 }): AgentDriverTurnResult => ({
   runtimeEvents: runtimeEventsFromClaudeProcess({ childProcess, stdout }),
-  externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
+  externalSession: new DurableExternalSession({
+    driverResumeCursor: makeDriverResumeCursor(sessionId),
+  }),
   cancel: Effect.gen(function* () {
     yield* Effect.sync(() => childProcess.kill("SIGINT"));
     const exitResult = yield* Effect.result(
@@ -285,7 +290,9 @@ const recoveredClaudeTurnResult = ({
       text: lostSessionRecoveryAssistantText,
     } satisfies AgentRuntimeEvent,
   ]),
-  externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
+  externalSession: new DurableExternalSession({
+    driverResumeCursor: makeDriverResumeCursor(sessionId),
+  }),
   cancel: Effect.gen(function* () {
     yield* Effect.void;
     return {

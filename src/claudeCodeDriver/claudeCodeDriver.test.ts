@@ -349,6 +349,7 @@ const readPersistedBinding = Effect.fnUntraced(function* ({
         sessionBindingFilePath({
           stateDir,
           externalAgentKind: "claude",
+          driverInstanceId: "claude",
           codexThreadId: makeThreadId(),
         }),
         "utf8",
@@ -478,11 +479,11 @@ describe("Claude Code driver integration", () => {
       const durableSession = yield* Schema.decodeUnknownEffect(DurableExternalSession)(
         binding.externalSession,
       ).pipe(Effect.mapError((cause) => claudeCodeDriverTestError(cause)));
-      assert.strictEqual(durableSession.externalSessionId, sessionId);
+      assert.strictEqual(durableSession.driverResumeCursor, sessionId);
       assert.strictEqual(binding.cwd, projectRoot);
-      assert.strictEqual(binding.requestedModel, "claude/sonnet");
-      assert.strictEqual(binding.externalModelSpecifier, "sonnet");
-      assert.deepStrictEqual(binding.rawDriverOptions, {
+      assert.strictEqual(binding.requestedTarget.requestedModel, "claude/sonnet");
+      assert.strictEqual(binding.requestedTarget.externalModelSpecifier, "sonnet");
+      assert.deepStrictEqual(binding.requestedTarget.rawDriverOptions, {
         effort: "max",
         max_budget_usd: "0.03",
         tools: "default",

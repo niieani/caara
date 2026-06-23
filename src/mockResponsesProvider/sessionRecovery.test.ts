@@ -305,6 +305,7 @@ const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
         sessionBindingFilePath({
           stateDir,
           externalAgentKind: "claude",
+          driverInstanceId: "claude",
           codexThreadId: makeThreadId(),
         }),
         "utf8",
@@ -346,15 +347,22 @@ describe("session recovery simulator integration", () => {
       });
       assert.strictEqual(recoveryAssistantText, simulatorDriverFixture.recoveryAssistantText);
       assert.deepStrictEqual(yield* readPersistedBinding({ stateDir }), {
-        codexThreadId: makeThreadId(),
+        schemaVersion: 2,
+        apiResponseId: "resp_turn-recovery-fresh",
+        bindingKey: {
+          externalAgentKind: "claude",
+          driverInstanceId: "claude",
+          codexThreadId: makeThreadId(),
+        },
         parentCodexSessionId: "parent-session-1",
-        externalAgentKind: "claude",
-        requestedModel: "claude/test",
-        externalModelSpecifier: "test",
-        rawDriverOptions: { simulator_resume: "unresumable" },
+        requestedTarget: {
+          requestedModel: "claude/test",
+          externalModelSpecifier: "test",
+          rawDriverOptions: { simulator_resume: "unresumable" },
+        },
         externalSession: {
           _tag: "Durable",
-          externalSessionId: simulatorDriverFixture.recoveredExternalSessionId,
+          driverResumeCursor: simulatorDriverFixture.recoveredExternalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-recovery-seed",

@@ -236,6 +236,7 @@ const persistedBindingPath = ({ stateDir }: { readonly stateDir: string }): stri
   sessionBindingFilePath({
     stateDir,
     externalAgentKind: "claude",
+    driverInstanceId: "claude",
     codexThreadId: makeThreadId(),
   });
 

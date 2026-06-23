@@ -95,7 +95,7 @@ describe("Claude Code driver policies", () => {
       assert.strictEqual(recoveryText, lostSessionRecoveryAssistantText);
       assert.ok(freshSessionId, "recovery fake Claude invocation must receive fresh --session-id");
       assert.deepStrictEqual(argvLog.at(1)?.slice(4, 5), ["--resume"]);
-      assert.strictEqual(durableSession.externalSessionId, freshSessionId);
+      assert.strictEqual(durableSession.driverResumeCursor, freshSessionId);
       assert.strictEqual(binding.createdFromTurnId, "turn-recovery-seed");
       assert.strictEqual(binding.lastTurnId, "turn-recovery-fresh");
     }),

@@ -19,6 +19,7 @@ import { createResponseEventStreamFromRuntimeEvents } from "./responseEvents.ts"
 import {
   completeSessionBinding,
   deleteSessionBinding,
+  type DurableExternalSession,
   prepareSessionBinding,
   SessionDirectory,
 } from "./sessionDirectory.ts";
@@ -158,12 +159,10 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     Option.fromUndefinedOr(
       [preparedSession.binding?.externalSession]
         .filter(
-          (
-            externalSession,
-          ): externalSession is { readonly _tag: "Durable"; readonly externalSessionId: string } =>
+          (externalSession): externalSession is DurableExternalSession =>
             externalSession?._tag === "Durable",
         )
-        .map((externalSession) => externalSession.externalSessionId)
+        .map((externalSession) => externalSession.driverResumeCursor)
         .at(0),
     ),
   );

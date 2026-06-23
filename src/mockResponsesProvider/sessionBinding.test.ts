@@ -267,6 +267,7 @@ const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
         sessionBindingFilePath({
           stateDir,
           externalAgentKind: "claude",
+          driverInstanceId: "claude",
           codexThreadId: makeThreadId(),
         }),
         "utf8",
@@ -296,15 +297,22 @@ describe("session binding simulator integration", () => {
       assert.strictEqual(firstAssistantText, simulatorDriverFixture.assistantText);
       const firstBinding = yield* readPersistedBinding({ stateDir });
       assert.deepStrictEqual(firstBinding, {
-        codexThreadId: makeThreadId(),
+        schemaVersion: 2,
+        apiResponseId: "resp_turn-session-1",
+        bindingKey: {
+          externalAgentKind: "claude",
+          driverInstanceId: "claude",
+          codexThreadId: makeThreadId(),
+        },
         parentCodexSessionId: "parent-session-1",
-        externalAgentKind: "claude",
-        requestedModel: "claude/test",
-        externalModelSpecifier: "test",
-        rawDriverOptions: { effort: "max" },
+        requestedTarget: {
+          requestedModel: "claude/test",
+          externalModelSpecifier: "test",
+          rawDriverOptions: { effort: "max" },
+        },
         externalSession: {
           _tag: "Durable",
-          externalSessionId: simulatorDriverFixture.externalSessionId,
+          driverResumeCursor: simulatorDriverFixture.externalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-session-1",
@@ -325,15 +333,22 @@ describe("session binding simulator integration", () => {
       assert.strictEqual(secondAssistantText, simulatorDriverFixture.resumedAssistantText);
       const secondBinding = yield* readPersistedBinding({ stateDir });
       assert.deepStrictEqual(secondBinding, {
-        codexThreadId: makeThreadId(),
+        schemaVersion: 2,
+        apiResponseId: "resp_turn-session-2",
+        bindingKey: {
+          externalAgentKind: "claude",
+          driverInstanceId: "claude",
+          codexThreadId: makeThreadId(),
+        },
         parentCodexSessionId: "parent-session-1",
-        externalAgentKind: "claude",
-        requestedModel: "claude/sonnet",
-        externalModelSpecifier: "sonnet",
-        rawDriverOptions: { effort: "low" },
+        requestedTarget: {
+          requestedModel: "claude/sonnet",
+          externalModelSpecifier: "sonnet",
+          rawDriverOptions: { effort: "low" },
+        },
         externalSession: {
           _tag: "Durable",
-          externalSessionId: simulatorDriverFixture.externalSessionId,
+          driverResumeCursor: simulatorDriverFixture.externalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-session-1",
@@ -349,7 +364,7 @@ describe("session binding simulator integration", () => {
           threadId: makeThreadId(),
           turnId: "turn-session-2",
           externalAgentKind: "claude",
-          externalSessionId: simulatorDriverFixture.externalSessionId,
+          externalSessionId: simulatorDriverFixture.externalSessionCursor,
           previousTarget: {
             requestedModel: "claude/test",
             externalAgentKind: "claude",

@@ -1,4 +1,4 @@
-import { Effect, Layer, Match, Option, Stream } from "effect";
+import { Effect, Layer, Match, Option, Schema, Stream } from "effect";
 
 import {
   AgentDriverError,
@@ -10,7 +10,7 @@ import {
   type AgentRuntimeEvent,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
-import { DurableExternalSession } from "./sessionDirectory.ts";
+import { DurableExternalSession, makeDriverResumeCursor } from "./sessionDirectory.ts";
 import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
 
 /** Stable simulator output and failure fixtures used by driver and transport tests. */
@@ -26,7 +26,30 @@ export const simulatorDriverFixture = {
     "simulator driver could not resume prior session or start a fresh external session",
   externalSessionId: "simulator-session-codex-thread-session-binding",
   recoveredExternalSessionId: "simulator-session-recovered-codex-thread-session-binding",
+  externalSessionCursor: '{"sessionId":"simulator-session-codex-thread-session-binding"}',
+  recoveredExternalSessionCursor:
+    '{"sessionId":"simulator-session-recovered-codex-thread-session-binding"}',
 } as const;
+
+/** Driver-owned simulator resume cursor schema encoded as an opaque core string. */
+class SimulatorResumeCursor extends Schema.Class<SimulatorResumeCursor>("SimulatorResumeCursor")({
+  sessionId: Schema.NonEmptyString,
+}) {}
+
+/** Encodes a simulator session id into the driver's opaque resume cursor string. */
+const encodeSimulatorResumeCursor = (sessionId: string): string =>
+  Schema.encodeSync(Schema.UnknownFromJsonString)(new SimulatorResumeCursor({ sessionId }));
+
+/** Decodes and validates a simulator resume cursor owned by the simulator driver. */
+const decodeSimulatorResumeCursor = Effect.fnUntraced(function* (driverResumeCursor: string) {
+  return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SimulatorResumeCursor))(
+    driverResumeCursor,
+  ).pipe(
+    Effect.mapError(
+      () => new AgentDriverError({ message: "Invalid simulator driver resume cursor." }),
+    ),
+  );
+});
 
 /** Builds the deterministic simulator runtime event sequence for a successful turn. */
 const createSimulatorEvents = (turn: AgentDriverTurn): readonly AgentRuntimeEvent[] => {
@@ -55,20 +78,38 @@ const createSimulatorRecoveryEvents = (): readonly AgentRuntimeEvent[] => [
   },
 ];
 
-/** Returns the existing durable simulator session or creates a first-turn session state. */
-const simulatorExternalSession = (turn: AgentDriverTurn) =>
-  Option.match(Option.fromUndefinedOr(turn.externalSession), {
+/** Returns the existing durable simulator session after validating its driver-owned cursor. */
+const simulatorExternalSession = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
+  return yield* Option.match(Option.fromUndefinedOr(turn.externalSession), {
     onNone: () =>
-      new DurableExternalSession({
-        externalSessionId: simulatorDriverFixture.externalSessionId,
-      }),
-    onSome: (externalSession) => externalSession,
+      Effect.succeed(
+        new DurableExternalSession({
+          driverResumeCursor: makeDriverResumeCursor(
+            encodeSimulatorResumeCursor(simulatorDriverFixture.externalSessionId),
+          ),
+        }),
+      ),
+    onSome: (externalSession) =>
+      Match.value(externalSession).pipe(
+        Match.tags({
+          Durable: (durableSession) =>
+            Effect.map(
+              decodeSimulatorResumeCursor(durableSession.driverResumeCursor),
+              () => durableSession,
+            ),
+          Ephemeral: () => Effect.succeed(externalSession),
+        }),
+        Match.exhaustive,
+      ),
   });
+});
 
 /** Builds a fresh durable simulator session after recovery from an unresumable prior session. */
 const recoveredSimulatorExternalSession = () =>
   new DurableExternalSession({
-    externalSessionId: simulatorDriverFixture.recoveredExternalSessionId,
+    driverResumeCursor: makeDriverResumeCursor(
+      encodeSimulatorResumeCursor(simulatorDriverFixture.recoveredExternalSessionId),
+    ),
   });
 
 /** Returns a start failure marker when the simulator options request one. */
@@ -191,13 +232,16 @@ const simulatorCancellationOutcome = (turn: AgentDriverTurn): AgentCancellationO
   );
 
 /** Builds the normal simulator turn result for first-turn and successful resume paths. */
-const simulatorTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
-  runtimeEvents: simulatorRuntimeEventStream(turn),
-  externalSession: simulatorExternalSession(turn),
-  cancel: Effect.gen(function* () {
-    yield* Effect.void;
-    return simulatorCancellationOutcome(turn);
-  }),
+const simulatorTurnResult = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
+  const externalSession = yield* simulatorExternalSession(turn);
+  return {
+    runtimeEvents: simulatorRuntimeEventStream(turn),
+    externalSession,
+    cancel: Effect.gen(function* () {
+      yield* Effect.void;
+      return simulatorCancellationOutcome(turn);
+    }),
+  } satisfies AgentDriverTurnResult;
 });
 
 /** Builds the simulator recovery turn result after a failed durable resume. */
@@ -226,7 +270,7 @@ const recoverUnresumableSimulatorSession = Effect.fnUntraced(function* (turn: Ag
 /** Starts or resumes the simulator turn, including the durable-session recovery policy. */
 const startSimulatorTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
   return yield* Option.match(simulatorResumeFailureOption(turn), {
-    onNone: () => Effect.succeed(simulatorTurnResult(turn)),
+    onNone: () => simulatorTurnResult(turn),
     onSome: () => recoverUnresumableSimulatorSession(turn),
   });
 });

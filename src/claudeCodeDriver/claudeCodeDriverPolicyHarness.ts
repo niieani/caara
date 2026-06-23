@@ -384,7 +384,12 @@ export const readPersistedBinding = Effect.fnUntraced(function* ({
   const content = yield* Effect.tryPromise({
     try: () =>
       fs.readFile(
-        sessionBindingFilePath({ stateDir, externalAgentKind: "claude", codexThreadId: threadId }),
+        sessionBindingFilePath({
+          stateDir,
+          externalAgentKind: "claude",
+          driverInstanceId: "claude",
+          codexThreadId: threadId,
+        }),
         "utf8",
       ),
     catch: policyTestError,
