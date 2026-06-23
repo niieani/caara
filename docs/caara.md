@@ -139,6 +139,7 @@ claude/haiku
 claude/sonnet
 claude/opus
 diagnostic/basic
+diagnostic/activity
 ```
 
 Caara core parses only the first `/`. The segment before it selects the external agent kind and its
@@ -204,6 +205,7 @@ Supported v1 scenario names:
 
 - `diagnostic/basic`
 - `diagnostic/reasoning`
+- `diagnostic/activity`
 - `diagnostic/fails-before-output`
 - `diagnostic/fails-after-partial`
 - `diagnostic/hangs-until-cancel`
@@ -216,6 +218,12 @@ Driver-owned options are bounded:
 - `diagnostic_answer_text`
 - `diagnostic_chunk_count`
 - `diagnostic_delay_ms`
+
+`diagnostic/activity` emits milestone-level assistant commentary messages with
+`phase: "commentary"` followed by a final assistant message with `phase: "final_answer"`. It does
+not emit Responses function-call, custom-tool, tool-output, custom-item, annotation, raw payload,
+stdout, stderr, or JSON activity items. `diagnostic_activity=off` keeps the activity runtime
+lifecycle in relay logs while hiding commentary from the Codex-visible Responses stream.
 
 Unsupported Diagnostic option names, invalid option values, and unknown scenarios fail explicitly.
 The retired simulator driver and `simulator_*` query options are not part of the public or test

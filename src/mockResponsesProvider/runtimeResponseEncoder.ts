@@ -95,6 +95,63 @@ const outputItemDoneResult = ({
     },
   });
 
+/** Returns true when one runtime item should be emitted to the Responses stream. */
+const isResponsesVisibleRuntimeItem = (item: RuntimeItemState): boolean =>
+  item.transportVisibility === "visible";
+
+/** Returns the visible output-index increment for one runtime transport visibility. */
+const outputIndexIncrement = (item: RuntimeItemState): number =>
+  Match.value(item.transportVisibility).pipe(
+    Match.when("visible", () => 1),
+    Match.orElse(() => 0),
+  );
+
+/** Converts one visible item content delta into its Responses frame. */
+const contentDeltaForVisibleItem = ({
+  state,
+  runtimeEvent,
+  item,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ContentDelta" }>;
+  readonly item: RuntimeItemState;
+}): RuntimeResponseEncodingResult =>
+  Match.value(runtimeEvent.contentKind).pipe(
+    Match.when("assistant_text", () =>
+      appendSseEvent({
+        state,
+        event: {
+          event: "response.output_text.delta",
+          data: {
+            type: "response.output_text.delta",
+            item_id: runtimeEvent.itemId,
+            output_index: item.outputIndex,
+            content_index: runtimeEvent.contentIndex,
+            delta: runtimeEvent.text,
+            sequence_number: state.sequenceNumber,
+          } satisfies OpenAiSchema.ResponseStreamEvent,
+        },
+      }),
+    ),
+    Match.when("reasoning_summary_text", () =>
+      appendSseEvent({
+        state,
+        event: {
+          event: "response.reasoning_summary_text.delta",
+          data: {
+            type: "response.reasoning_summary_text.delta",
+            item_id: runtimeEvent.itemId,
+            output_index: item.outputIndex,
+            summary_index: runtimeEvent.contentIndex,
+            delta: runtimeEvent.text,
+            sequence_number: state.sequenceNumber,
+          } satisfies OpenAiSchema.ResponseStreamEvent,
+        },
+      }),
+    ),
+    Match.orElse(() => [state, []] as const),
+  );
+
 /** Converts one known item content delta into its Responses frame and updated item state. */
 function contentDeltaForItem({
   state,
@@ -114,42 +171,44 @@ function contentDeltaForItem({
     items: upsertRuntimeItemState({ items: state.items, item: updatedItem }),
   };
 
-  return Match.value(runtimeEvent.contentKind).pipe(
-    Match.when("assistant_text", () =>
-      appendSseEvent({
-        state: nextState,
-        event: {
-          event: "response.output_text.delta",
-          data: {
-            type: "response.output_text.delta",
-            item_id: runtimeEvent.itemId,
-            output_index: item.outputIndex,
-            content_index: runtimeEvent.contentIndex,
-            delta: runtimeEvent.text,
-            sequence_number: nextState.sequenceNumber,
-          } satisfies OpenAiSchema.ResponseStreamEvent,
-        },
-      }),
-    ),
-    Match.when("reasoning_summary_text", () =>
-      appendSseEvent({
-        state: nextState,
-        event: {
-          event: "response.reasoning_summary_text.delta",
-          data: {
-            type: "response.reasoning_summary_text.delta",
-            item_id: runtimeEvent.itemId,
-            output_index: item.outputIndex,
-            summary_index: runtimeEvent.contentIndex,
-            delta: runtimeEvent.text,
-            sequence_number: nextState.sequenceNumber,
-          } satisfies OpenAiSchema.ResponseStreamEvent,
-        },
-      }),
-    ),
-    Match.orElse(() => [nextState, []] as const),
+  return Match.value(isResponsesVisibleRuntimeItem(item)).pipe(
+    Match.when(false, () => [nextState, []] as const),
+    Match.orElse(() => contentDeltaForVisibleItem({ state: nextState, runtimeEvent, item })),
   );
 }
+
+/** Emits the in-progress Responses item for one visible runtime item. */
+const itemCreatedForVisibleItem = ({
+  state,
+  runtimeEvent,
+  item,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ItemCreated" }>;
+  readonly item: RuntimeItemState;
+}): RuntimeResponseEncodingResult =>
+  Match.value(item.itemKind).pipe(
+    Match.when("assistant_message", () =>
+      outputItemAddedResult({
+        state,
+        outputIndex: item.outputIndex,
+        item: createMessageItem({
+          itemId: runtimeEvent.itemId,
+          status: "in_progress",
+          text: "",
+          messagePhase: item.messagePhase,
+        }),
+      }),
+    ),
+    Match.when("reasoning", () =>
+      outputItemAddedResult({
+        state,
+        outputIndex: item.outputIndex,
+        item: createReasoningItem({ itemId: runtimeEvent.itemId }),
+      }),
+    ),
+    Match.exhaustive,
+  );
 
 /** Converts item creation into Responses frames and next encoder state. */
 const itemCreatedToSseEvents = ({
@@ -159,40 +218,59 @@ const itemCreatedToSseEvents = ({
   readonly state: RuntimeResponseState;
   readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ItemCreated" }>;
 }): RuntimeResponseEncodingResult => {
+  const transportVisibility = runtimeEvent.transportVisibility ?? "visible";
   const item = {
     itemId: runtimeEvent.itemId,
     itemKind: runtimeEvent.itemKind,
     outputIndex: state.nextOutputIndex,
     text: "",
+    messagePhase: runtimeEvent.messagePhase,
+    transportVisibility,
   } satisfies RuntimeItemState;
   const nextState = {
     ...state,
-    nextOutputIndex: state.nextOutputIndex + 1,
+    nextOutputIndex: state.nextOutputIndex + outputIndexIncrement(item),
     items: upsertRuntimeItemState({ items: state.items, item }),
   };
 
-  return Match.value(runtimeEvent.itemKind).pipe(
-    Match.when("assistant_message", () =>
-      outputItemAddedResult({
-        state: nextState,
-        outputIndex: item.outputIndex,
-        item: createMessageItem({
-          itemId: runtimeEvent.itemId,
-          status: "in_progress",
-          text: "",
-        }),
-      }),
-    ),
-    Match.when("reasoning", () =>
-      outputItemAddedResult({
-        state: nextState,
-        outputIndex: item.outputIndex,
-        item: createReasoningItem({ itemId: runtimeEvent.itemId }),
-      }),
-    ),
-    Match.exhaustive,
+  return Match.value(isResponsesVisibleRuntimeItem(item)).pipe(
+    Match.when(true, () => itemCreatedForVisibleItem({ state: nextState, runtimeEvent, item })),
+    Match.orElse(() => [nextState, []] as const),
   );
 };
+
+/** Converts a visible reasoning content start into a Responses frame. */
+const contentStartedForItem = ({
+  state,
+  runtimeEvent,
+  item,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ContentStarted" }>;
+  readonly item: RuntimeItemState;
+}): RuntimeResponseEncodingResult =>
+  Match.value({
+    visible: isResponsesVisibleRuntimeItem(item),
+    contentKind: runtimeEvent.contentKind,
+  }).pipe(
+    Match.when({ visible: true, contentKind: "reasoning_summary_text" }, () =>
+      appendSseEvent({
+        state,
+        event: {
+          event: "response.reasoning_summary_part.added",
+          data: {
+            type: "response.reasoning_summary_part.added",
+            item_id: runtimeEvent.itemId,
+            output_index: item.outputIndex,
+            summary_index: runtimeEvent.contentIndex,
+            sequence_number: state.sequenceNumber,
+            part: { type: "summary_text", text: "" },
+          } satisfies OpenAiSchema.ResponseStreamEvent,
+        },
+      }),
+    ),
+    Match.orElse(() => [state, []] as const),
+  );
 
 /** Converts content start events into Responses frames and next encoder state. */
 const contentStartedToSseEvents = ({
@@ -206,33 +284,7 @@ const contentStartedToSseEvents = ({
     Option.fromUndefinedOr(runtimeItemState({ items: state.items, itemId: runtimeEvent.itemId })),
     {
       onNone: () => [state, []] as const,
-      onSome: (item) =>
-        Match.value(runtimeEvent.contentKind).pipe(
-          Match.when(
-            "reasoning_summary_text",
-            () =>
-              [
-                {
-                  ...state,
-                  sequenceNumber: state.sequenceNumber + 1,
-                },
-                [
-                  {
-                    event: "response.reasoning_summary_part.added",
-                    data: {
-                      type: "response.reasoning_summary_part.added",
-                      item_id: runtimeEvent.itemId,
-                      output_index: item.outputIndex,
-                      summary_index: runtimeEvent.contentIndex,
-                      sequence_number: state.sequenceNumber,
-                      part: { type: "summary_text", text: "" },
-                    } satisfies OpenAiSchema.ResponseStreamEvent,
-                  },
-                ],
-              ] as const,
-          ),
-          Match.orElse(() => [state, []] as const),
-        ),
+      onSome: (item) => contentStartedForItem({ state, runtimeEvent, item }),
     },
   );
 
@@ -252,6 +304,39 @@ const contentDeltaToSseEvents = ({
     },
   );
 
+/** Converts a visible reasoning content completion into a Responses frame. */
+const contentCompletedForItem = ({
+  state,
+  runtimeEvent,
+  item,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ContentCompleted" }>;
+  readonly item: RuntimeItemState;
+}): RuntimeResponseEncodingResult =>
+  Match.value({
+    visible: isResponsesVisibleRuntimeItem(item),
+    contentKind: runtimeEvent.contentKind,
+  }).pipe(
+    Match.when({ visible: true, contentKind: "reasoning_summary_text" }, () =>
+      appendSseEvent({
+        state,
+        event: {
+          event: "response.reasoning_summary_part.done",
+          data: {
+            type: "response.reasoning_summary_part.done",
+            item_id: runtimeEvent.itemId,
+            output_index: item.outputIndex,
+            summary_index: runtimeEvent.contentIndex,
+            sequence_number: state.sequenceNumber,
+            part: { type: "summary_text", text: item.text },
+          } satisfies OpenAiSchema.ResponseStreamEvent,
+        },
+      }),
+    ),
+    Match.orElse(() => [state, []] as const),
+  );
+
 /** Converts content completion events into Responses frames and next encoder state. */
 const contentCompletedToSseEvents = ({
   state,
@@ -264,34 +349,39 @@ const contentCompletedToSseEvents = ({
     Option.fromUndefinedOr(runtimeItemState({ items: state.items, itemId: runtimeEvent.itemId })),
     {
       onNone: () => [state, []] as const,
-      onSome: (item) =>
-        Match.value(runtimeEvent.contentKind).pipe(
-          Match.when(
-            "reasoning_summary_text",
-            () =>
-              [
-                {
-                  ...state,
-                  sequenceNumber: state.sequenceNumber + 1,
-                },
-                [
-                  {
-                    event: "response.reasoning_summary_part.done",
-                    data: {
-                      type: "response.reasoning_summary_part.done",
-                      item_id: runtimeEvent.itemId,
-                      output_index: item.outputIndex,
-                      summary_index: runtimeEvent.contentIndex,
-                      sequence_number: state.sequenceNumber,
-                      part: { type: "summary_text", text: item.text },
-                    } satisfies OpenAiSchema.ResponseStreamEvent,
-                  },
-                ],
-              ] as const,
-          ),
-          Match.orElse(() => [state, []] as const),
-        ),
+      onSome: (item) => contentCompletedForItem({ state, runtimeEvent, item }),
     },
+  );
+
+/** Converts one visible runtime item completion into a Responses completion frame. */
+const itemCompletedForVisibleItem = ({
+  state,
+  item,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly item: RuntimeItemState;
+}): RuntimeResponseEncodingResult =>
+  Match.value(item.itemKind).pipe(
+    Match.when("assistant_message", () =>
+      outputItemDoneResult({
+        state,
+        itemState: item,
+        outputItem: createMessageItem({
+          itemId: item.itemId,
+          status: "completed",
+          text: item.text,
+          messagePhase: item.messagePhase,
+        }),
+      }),
+    ),
+    Match.when("reasoning", () =>
+      outputItemDoneResult({
+        state,
+        itemState: item,
+        outputItem: createReasoningItem({ itemId: item.itemId, text: item.text }),
+      }),
+    ),
+    Match.exhaustive,
   );
 
 /** Converts item completion into Responses frames and next encoder state. */
@@ -307,26 +397,9 @@ const itemCompletedToSseEvents = ({
     {
       onNone: () => [state, []] as const,
       onSome: (item) =>
-        Match.value(item.itemKind).pipe(
-          Match.when("assistant_message", () =>
-            outputItemDoneResult({
-              state,
-              itemState: item,
-              outputItem: createMessageItem({
-                itemId: item.itemId,
-                status: "completed",
-                text: item.text,
-              }),
-            }),
-          ),
-          Match.when("reasoning", () =>
-            outputItemDoneResult({
-              state,
-              itemState: item,
-              outputItem: createReasoningItem({ itemId: item.itemId, text: item.text }),
-            }),
-          ),
-          Match.exhaustive,
+        Match.value(isResponsesVisibleRuntimeItem(item)).pipe(
+          Match.when(true, () => itemCompletedForVisibleItem({ state, item })),
+          Match.orElse(() => [state, []] as const),
         ),
     },
   );

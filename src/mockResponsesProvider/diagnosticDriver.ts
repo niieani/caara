@@ -12,6 +12,8 @@ import {
   createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
+import { createDiagnosticActivityRuntimeEventStream } from "./diagnosticDriverActivity.ts";
+import { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
 import {
   createChunkedAssistantTextRuntimeEvents,
   withConfiguredDelay,
@@ -22,24 +24,7 @@ import {
   makeDriverResumeCursor,
 } from "./sessionDirectory.ts";
 
-/** Stable Diagnostic driver fixtures used by provider and session tests. */
-export const diagnosticDriverFixture = {
-  reasoningText: "diagnostic driver received diagnostic/reasoning",
-  basicAnswerText: "Diagnostic basic completed diagnostic/basic",
-  resumedBasicAnswerText: "Diagnostic basic resumed prior session with previous target",
-  startFailureMessage: "diagnostic driver failed before runtime events",
-  runtimeFailureBeforeOutputMessage: "diagnostic driver runtime failed before output",
-  runtimeFailureAfterPartialMessage: "diagnostic driver runtime failed after partial output",
-  unrecoverableSessionFailureMessage:
-    "diagnostic driver could not resume prior session or start a fresh external session",
-  reasoningItemId: "diagnostic-reasoning",
-  basicMessageItemId: "diagnostic-basic-message",
-  basicExternalSessionId: "diagnostic-session-codex-thread-diagnostic-basic",
-  recoveredExternalSessionId: "diagnostic-session-recovered-codex-thread-diagnostic-basic",
-  basicExternalSessionCursor: '{"sessionId":"diagnostic-session-codex-thread-diagnostic-basic"}',
-  recoveredExternalSessionCursor:
-    '{"sessionId":"diagnostic-session-recovered-codex-thread-diagnostic-basic"}',
-} as const;
+export { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
 
 /** Driver-owned Diagnostic resume cursor schema encoded as an opaque core string. */
 class DiagnosticResumeCursor extends Schema.Class<DiagnosticResumeCursor>("DiagnosticResumeCursor")(
@@ -63,6 +48,7 @@ const diagnosticOptionNames = [
   "diagnostic_cancel",
   "diagnostic_resume",
   "diagnostic_fresh_start",
+  "diagnostic_activity",
 ] as const;
 
 /** Encodes a Diagnostic session id into the driver's opaque resume cursor string. */
@@ -408,6 +394,20 @@ const diagnosticScenarioTurnResult = Effect.fnUntraced(function* ({
   } satisfies AgentDriverTurnResult;
 });
 
+/** Builds the diagnostic/activity turn result with optional Codex-visible commentary. */
+const diagnosticActivityTurnResult = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
+  yield* validateDiagnosticOptions(turn.target.rawDriverOptions);
+  const runtimeEvents = yield* createDiagnosticActivityRuntimeEventStream({
+    rawDriverOptions: turn.target.rawDriverOptions,
+  });
+  const externalSession = yield* diagnosticExternalSession(turn);
+  return {
+    runtimeEvents,
+    externalSession,
+    cancel: Effect.succeed(diagnosticCancellationOutcome(turn)),
+  } satisfies AgentDriverTurnResult;
+});
+
 /** Builds the Diagnostic recovery turn result after a failed durable resume. */
 const diagnosticRecoveryTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
   runtimeEvents: Stream.empty,
@@ -454,6 +454,7 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
         runtimeEvents: diagnosticReasoningRuntimeEventStream(turn),
       }),
     ),
+    Match.when("activity", () => diagnosticActivityTurnResult(turn)),
     Match.when("fails-before-output", () =>
       diagnosticScenarioTurnResult({
         turn,

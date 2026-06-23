@@ -1,5 +1,7 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
+import { Option } from "effect";
 
+import type { AgentRuntimeMessagePhase, AgentRuntimeTransportVisibility } from "./agentDriver.ts";
 import { mockResponsesFixture, type ResponsesCreateRequest } from "./protocol.ts";
 import type { SseEvent } from "./sse.ts";
 
@@ -29,6 +31,7 @@ export interface RuntimeMessageItem {
   readonly type: "message";
   readonly status: "in_progress" | "completed";
   readonly role: "assistant";
+  readonly phase?: AgentRuntimeMessagePhase;
   readonly content: readonly RuntimeOutputTextContent[];
 }
 
@@ -44,6 +47,8 @@ export interface RuntimeItemState {
   readonly itemKind: "assistant_message" | "reasoning";
   readonly outputIndex: number;
   readonly text: string;
+  readonly messagePhase?: AgentRuntimeMessagePhase;
+  readonly transportVisibility: AgentRuntimeTransportVisibility;
 }
 
 /** Stateful encoder position for streaming runtime event conversion. */
@@ -111,20 +116,32 @@ export const createReasoningItem = ({
     .map((summaryText) => ({ type: "summary_text", text: summaryText })),
 });
 
+/** Builds the optional message-phase field for an assistant Responses item. */
+const runtimeMessagePhaseField = (
+  messagePhase: AgentRuntimeMessagePhase | undefined,
+): Readonly<Partial<Pick<RuntimeMessageItem, "phase">>> =>
+  Option.match(Option.fromUndefinedOr(messagePhase), {
+    onNone: () => ({}),
+    onSome: (phase) => ({ phase }),
+  });
+
 /** Builds an assistant message item for Responses output. */
 export const createMessageItem = ({
   itemId,
   status,
   text,
+  messagePhase,
 }: {
   readonly itemId: string;
   readonly status: RuntimeMessageItem["status"];
   readonly text: string;
+  readonly messagePhase?: AgentRuntimeMessagePhase;
 }): RuntimeMessageItem => ({
   id: itemId,
   type: "message",
   status,
   role: "assistant",
+  ...runtimeMessagePhaseField(messagePhase),
   content: [text]
     .filter((contentText) => contentText.length > 0)
     .map((contentText) => ({

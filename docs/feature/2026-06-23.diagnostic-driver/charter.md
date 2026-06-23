@@ -36,6 +36,10 @@ Out of scope:
   Verifier: provider/session binding tests inspect persisted binding state.
 - Diagnostic options are bounded and driver-owned; unsupported options/scenarios fail explicitly.
   Verifier: focused diagnostic option failure tests.
+- `diagnostic/activity` uses assistant message commentary with `phase: "commentary"` by default,
+  supports `diagnostic_activity=off` relay-only opt-out, and preserves a final answer with `phase:
+  "final_answer"`.
+  Verifier: `diagnosticDriverActivity.test.ts`.
 - Existing simulator coverage is migrated to Diagnostic scenario names.
   Verifier: stale `simulatorDriver` imports/options removed; provider runtime/cancel/recovery tests
   pass with Diagnostic driver.

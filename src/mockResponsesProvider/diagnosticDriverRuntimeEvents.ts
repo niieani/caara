@@ -1,6 +1,11 @@
 import { Effect, Match, Stream } from "effect";
 
-import type { AgentRuntimeEvent } from "./agentDriver.ts";
+import {
+  createAssistantRuntimeItemCreatedEvent,
+  type AgentRuntimeEvent,
+  type AgentRuntimeMessagePhase,
+  type AgentRuntimeTransportVisibility,
+} from "./agentDriver.ts";
 
 /** Splits text into deterministic non-empty chunks bounded by the requested chunk count. */
 const textChunks = ({
@@ -23,16 +28,20 @@ export const createChunkedAssistantTextRuntimeEvents = ({
   itemId,
   text,
   chunkCount,
+  messagePhase,
+  transportVisibility,
 }: {
   readonly itemId: string;
   readonly text: string;
   readonly chunkCount: number;
+  readonly messagePhase?: AgentRuntimeMessagePhase;
+  readonly transportVisibility?: AgentRuntimeTransportVisibility;
 }): readonly AgentRuntimeEvent[] => [
-  {
-    _tag: "ItemCreated",
+  createAssistantRuntimeItemCreatedEvent({
     itemId,
-    itemKind: "assistant_message",
-  },
+    messagePhase,
+    transportVisibility,
+  }),
   {
     _tag: "ContentStarted",
     itemId,

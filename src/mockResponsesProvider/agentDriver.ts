@@ -1,4 +1,4 @@
-import { Context, Schema, type Stream } from "effect";
+import { Context, Option, Schema, type Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
 import type { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
@@ -23,6 +23,12 @@ export interface AgentDriverTurn {
 /** Runtime item kind emitted by driver-neutral lifecycle events. */
 export type AgentRuntimeItemKind = "assistant_message" | "reasoning";
 
+/** Codex assistant message phase emitted for driver-neutral message items. */
+export type AgentRuntimeMessagePhase = "commentary" | "final_answer";
+
+/** Responses transport visibility for a runtime item. */
+export type AgentRuntimeTransportVisibility = "visible" | "relay_only";
+
 /** Runtime content kind emitted by driver-neutral lifecycle events. */
 export type AgentRuntimeContentKind = "assistant_text" | "reasoning_summary_text";
 
@@ -31,6 +37,8 @@ export interface AgentRuntimeItemCreated {
   readonly _tag: "ItemCreated";
   readonly itemId: string;
   readonly itemKind: AgentRuntimeItemKind;
+  readonly messagePhase?: AgentRuntimeMessagePhase;
+  readonly transportVisibility?: AgentRuntimeTransportVisibility;
 }
 
 /** Runtime event emitted when a driver starts one content part for an item. */
@@ -171,43 +179,85 @@ export const unsupportedExternalAgentKindError = ({
 }): AgentDriverError =>
   new AgentDriverError({ message: `Unsupported external agent kind: ${externalAgentKind}.` });
 
+/** Builds the optional message-phase field for an assistant runtime item. */
+const agentRuntimeMessagePhaseField = (
+  messagePhase: AgentRuntimeMessagePhase | undefined,
+): Readonly<Partial<Pick<AgentRuntimeItemCreated, "messagePhase">>> =>
+  Option.match(Option.fromUndefinedOr(messagePhase), {
+    onNone: () => ({}),
+    onSome: (phase) => ({ messagePhase: phase }),
+  });
+
+/** Builds the optional transport-visibility field for a runtime item. */
+const agentRuntimeTransportVisibilityField = (
+  transportVisibility: AgentRuntimeTransportVisibility | undefined,
+): Readonly<Partial<Pick<AgentRuntimeItemCreated, "transportVisibility">>> =>
+  Option.match(Option.fromUndefinedOr(transportVisibility), {
+    onNone: () => ({}),
+    onSome: (visibility) => ({ transportVisibility: visibility }),
+  });
+
+/** Builds one assistant-message item creation event with optional phase and visibility. */
+export const createAssistantRuntimeItemCreatedEvent = ({
+  itemId,
+  messagePhase,
+  transportVisibility,
+}: {
+  readonly itemId: string;
+  readonly messagePhase?: AgentRuntimeMessagePhase;
+  readonly transportVisibility?: AgentRuntimeTransportVisibility;
+}): AgentRuntimeItemCreated => ({
+  _tag: "ItemCreated",
+  itemId,
+  itemKind: "assistant_message",
+  ...agentRuntimeMessagePhaseField(messagePhase),
+  ...agentRuntimeTransportVisibilityField(transportVisibility),
+});
+
 /** Builds a complete assistant text lifecycle for one runtime item. */
 export const createAssistantTextRuntimeEvents = ({
   itemId,
   text,
+  messagePhase,
+  transportVisibility,
 }: {
   readonly itemId: string;
   readonly text: string;
-}): readonly AgentRuntimeEvent[] => [
-  {
-    _tag: "ItemCreated",
+  readonly messagePhase?: AgentRuntimeMessagePhase;
+  readonly transportVisibility?: AgentRuntimeTransportVisibility;
+}): readonly AgentRuntimeEvent[] => {
+  const itemCreated = createAssistantRuntimeItemCreatedEvent({
     itemId,
-    itemKind: "assistant_message",
-  },
-  {
-    _tag: "ContentStarted",
-    itemId,
-    contentIndex: 0,
-    contentKind: "assistant_text",
-  },
-  {
-    _tag: "ContentDelta",
-    itemId,
-    contentIndex: 0,
-    contentKind: "assistant_text",
-    text,
-  },
-  {
-    _tag: "ContentCompleted",
-    itemId,
-    contentIndex: 0,
-    contentKind: "assistant_text",
-  },
-  {
-    _tag: "ItemCompleted",
-    itemId,
-  },
-];
+    messagePhase,
+    transportVisibility,
+  });
+  return [
+    itemCreated,
+    {
+      _tag: "ContentStarted",
+      itemId,
+      contentIndex: 0,
+      contentKind: "assistant_text",
+    },
+    {
+      _tag: "ContentDelta",
+      itemId,
+      contentIndex: 0,
+      contentKind: "assistant_text",
+      text,
+    },
+    {
+      _tag: "ContentCompleted",
+      itemId,
+      contentIndex: 0,
+      contentKind: "assistant_text",
+    },
+    {
+      _tag: "ItemCompleted",
+      itemId,
+    },
+  ];
+};
 
 /** Builds a complete displayable reasoning-summary lifecycle for one runtime item. */
 export const createReasoningSummaryRuntimeEvents = ({
