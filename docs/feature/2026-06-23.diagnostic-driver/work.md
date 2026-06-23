@@ -65,3 +65,24 @@ Implemented shape:
 Verification:
 
 - `bun run test src/mockResponsesProvider/mockResponsesProvider.test.ts --run`
+
+## Completed Slice: CAARA-canilqfh
+
+Target:
+
+- Expose `diagnostic/fails-before-output` and `diagnostic/fails-after-partial`.
+- Verify both scenarios fail terminally through OpenAI-shaped Responses behavior.
+- Preserve session binding safety: no binding on startup/runtime failure before output; no binding
+  advancement after partial output failure.
+
+Implemented shape:
+
+- Existing Diagnostic scenario routing emits a driver failure before runtime output or after a
+  partial reasoning summary.
+- `runtimeFailure.test.ts` asserts `response.failed`, absence of `response.completed`, binding
+  absence/preservation, recovery after failure, and `TurnFailed` relay records with Diagnostic
+  messages.
+
+Verification:
+
+- `bun run test src/mockResponsesProvider/runtimeFailure.test.ts --run`
