@@ -231,3 +231,22 @@ Test seam:
 
 - `claudeAgentSdkActivity.test.ts` covers a fake SDK tool lifecycle plus task/progress messages through SSE output, relay logs, payload redaction, and `activity=off` behavior.
 - Existing SDK driver tests assert final assistant text remains `phase: "final_answer"` after the runtime phase split.
+
+## Completed Slice: CAARA-pfgmuycx
+
+Problem:
+
+- The SDK remediation needed end-to-end proof through the real Codex `caara` subagent role.
+- Query-option behavior such as `activity=off` and reserved interactive tools could not be exercised through the fixed checked-in subagent role alone.
+- Future agents needed a stable smoke record for SDK execution, session continuity, cancellation, activity, permission, reasoning, and recovery behavior.
+
+Target:
+
+- Run the checked-in `caara` role against the local provider for first turn, follow-up continuity, and client-disconnect cancellation.
+- Run supplemental Codex-shaped direct provider requests for SDK activity default-on, `activity=off`, reserved `AskUserQuestion` rejection, displayable reasoning, and lost-session recovery.
+- Update smoke docs with SDK-specific evidence expectations and retired-CLI distinction checks.
+
+Evidence seam:
+
+- `docs/feature/2026-06-23.claude-sdk-driver-remediation/smoke-evidence.md` records commands, config, subagent ids, provider observations, direct smoke run id, session binding changes, and known stream observations.
+- `docs/agents/smoke-testing.md` now describes the SDK-backed workflow and supplemental direct-provider option checks.
