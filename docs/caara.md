@@ -414,20 +414,39 @@ relaying normalized runtime events onto the Responses transport.
 
 ## Codex Role Configuration
 
-The local Codex role lives at `.codex/agents/caara.toml`. It is self-contained: the role file
-includes both the `caara` agent config and the `[model_providers.caara]` provider block.
+The local Codex roles live at `.codex/agents/caara-claude.toml` and
+`.codex/agents/caara-antigravity.toml`. Each role file is self-contained: it includes both the
+agent config and the `[model_providers.caara]` provider block.
 
 The provider block is intentionally embedded in the role file because Codex validates role config
 layers before merging project-level provider config.
 
-Current local role:
+Current local Claude role:
 
 ```toml
-name = "caara"
+name = "caara-claude"
 description = "Delegates to the local Caara Responses provider backed by Claude Code."
 developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"
 model = "claude/haiku"
+
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
+```
+
+Current local Antigravity role:
+
+```toml
+name = "caara-antigravity"
+description = "Delegates to the local Caara Responses provider backed by Antigravity."
+developer_instructions = "Use the local Caara Antigravity driver. Relay the provider response as-is."
+model_provider = "caara"
+model = "agy/gemini-3.5-flash"
 
 [model_providers.caara]
 name = "Caara Responses"

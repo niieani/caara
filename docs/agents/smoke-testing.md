@@ -2,12 +2,18 @@
 
 Use this flow to verify the local Caara provider through Codex's real subagent path.
 
+Checked-in real-agent roles:
+
+- `agent_type = "caara-claude"`: Claude SDK driver with `model = "claude/haiku"`.
+- `agent_type = "caara-antigravity"`: Antigravity CLI driver with
+  `model = "agy/gemini-3.5-flash"`.
+
 For Caara-core smokes that do not need Claude, use the Diagnostic driver roles and runbooks in
 `docs/agents/diagnostic-smoke-runbooks.md`. Keep the Claude SDK flow below for the real
 Claude-backed subagent path.
 
-For Antigravity-backed smokes, use `docs/agents/antigravity-smoke-runbook.md`. It covers the real
-`agy` CLI canary, Caara first/resume validation, reasoning/activity checks, and evidence fields.
+For Antigravity-backed smokes, use `docs/agents/antigravity-smoke-runbook.md`. It mirrors the
+Codex subagent first/resume/cancel flow below for the real `agy` driver path.
 
 ## Claude SDK Subagent Flow
 
@@ -23,7 +29,7 @@ Expected startup line:
 Listening on http://localhost:8787
 ```
 
-2. Spawn a Codex subagent with `agent_type = "caara"`.
+2. Spawn a Codex subagent with `agent_type = "caara-claude"`.
 
 Do not pass a `model` override. The role sets `model = "claude/haiku"` and points at
 `http://127.0.0.1:8787/v1`. No provider query parameters are required for the standard subagent
@@ -46,7 +52,7 @@ Expected first-turn response includes:
 
 ```text
 cwd=/Volumes/Projects/Software/code-agents-as-responses-api
-readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
+readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code and `agy/<model>` targets to Antigravity, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 ```
 
 4. Send a follow-up prompt on the same subagent handle:
@@ -78,9 +84,9 @@ reports whether the session remains reusable. A clean SDK cancellation should no
 
 ## Supplemental Direct Provider Checks
 
-Use Codex-shaped direct HTTP requests only for provider query options that the checked-in `caara`
-agent role cannot pass, such as `activity=off` or invalid tool options. Keep helper scripts and JSON
-artifacts under `temp.local/$(date +%F)/`.
+Use Codex-shaped direct HTTP requests only for provider query options that the checked-in
+`caara-claude` role cannot pass, such as `activity=off` or invalid tool options. Keep helper scripts
+and JSON artifacts under `temp.local/$(date +%F)/`.
 
 Recommended supplemental checks:
 
@@ -105,8 +111,8 @@ To distinguish the SDK-backed path from the retired Claude CLI path:
 
 ## Troubleshooting
 
-If `agent_type = "caara"` is unavailable, check `.codex/agents/caara.toml` exists and includes its embedded `[model_providers.caara]` block.
+If `agent_type = "caara-claude"` is unavailable, check `.codex/agents/caara-claude.toml` exists and includes its embedded `[model_providers.caara]` block.
 
 If the subagent spawn succeeds but the turn fails, check the provider process is still listening on `127.0.0.1:8787`.
 
-If Codex rejects the role config, keep the provider block inside `.codex/agents/caara.toml`; project-level `.codex/config.toml` is not enough for role-layer validation.
+If Codex rejects the role config, keep the provider block inside each `.codex/agents/caara-*.toml` file; project-level `.codex/config.toml` is not enough for role-layer validation.

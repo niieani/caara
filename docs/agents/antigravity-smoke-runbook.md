@@ -1,118 +1,126 @@
 # Antigravity Smoke Runbook
 
-Use this runbook after fake `agy` tests are green to verify the real Antigravity CLI contract and
-the Caara Responses path. Keep run evidence under `temp.local/$(date +%F)/antigravity-smoke/` and
-put exact local paths in issue comments or temp evidence, not in committed docs.
+Use this flow to verify the local Caara provider through Codex's real subagent path with the
+Antigravity CLI driver. Do not substitute direct `agy` or direct `/v1/responses` calls for this
+smoke; those bypass the Codex subagent behavior this runbook verifies.
 
-## Direct CLI Canary
+Keep run evidence under `temp.local/$(date +%F)/antigravity-smoke/` when collecting artifacts. Put
+exact local paths in issue comments or temp evidence, not in committed docs.
 
-Run this first to prove local auth, model naming, log discovery, and transcript path assumptions:
+## Codex Subagent Flow
+
+1. Start the local provider:
+
+```bash
+bun run start
+```
+
+Expected startup line:
+
+```text
+Listening on http://localhost:8787
+```
+
+Optional evidence setup:
 
 ```bash
 RUN_DIR="$PWD/temp.local/$(date +%F)/antigravity-smoke/$(date +%H%M%S)"
 mkdir -p "$RUN_DIR"
-
-AGY_LOG="$RUN_DIR/agy-direct.log"
-agy --log-file "$AGY_LOG" \
-  --prompt 'ping. respond with pong.' \
-  --model gemini-3.5-flash \
-  --print-timeout 90s \
-  >"$RUN_DIR/agy-direct.stdout" \
-  2>"$RUN_DIR/agy-direct.stderr"
-
-CID="$(rg -o 'Created conversation [0-9a-f-]+' "$AGY_LOG" | head -1 | awk '{print $3}')"
-TRANSCRIPT="$HOME/.gemini/antigravity-cli/brain/$CID/.system_generated/logs/transcript_full.jsonl"
-wc -l "$TRANSCRIPT"
-```
-
-Expected:
-
-- stdout contains the model answer.
-- log contains `Created conversation <uuid>`.
-- transcript path exists under Antigravity user state.
-- transcript contains newline-complete JSONL with a final `MODEL/PLANNER_RESPONSE/DONE` record.
-
-Important argv contract: use `agy --prompt <text>` as the non-interactive prompt shape. Do not add
-another bare `--print`; real `agy` can exit 0 without creating the requested log in that shape.
-
-## Caara First And Resume
-
-Start Caara with isolated state:
-
-```bash
 CAARA_STATE_DIR="$RUN_DIR/state" bun run start >"$RUN_DIR/provider.log" 2>&1
 ```
 
-Send Codex-shaped `POST /v1/responses` requests with the normal required Codex identity headers.
-Use the same request shape as `docs/agents/diagnostic-smoke-runbooks.md`, changing only:
+2. Spawn a Codex subagent with `agent_type = "caara-antigravity"`.
 
-- `model`: `agy/gemini-3.5-flash`
-- query params:
-  - `print_timeout_seconds=120`
-  - `log_file=<absolute path under RUN_DIR>`
-  - `reasoning=on`
-  - `activity=on`
-- `metadata.cwd`: repo root
+Do not pass a `model` override. The role sets `model = "agy/gemini-3.5-flash"` and points at
+`http://127.0.0.1:8787/v1`. Caara selects external agent kind `agy` from the model prefix and gives
+`gemini-3.5-flash` to `agy --model`.
 
-First prompt:
+First-turn prompt:
 
 ```text
-In this workspace, read README.md line 5. Reply exactly as smoke_line_5=<the exact line 5 text>. Do not edit files.
+Please verify your working directory and read one specific source line.
+
+1. Report your current working directory.
+2. Read line 5 of README.md in that working directory.
+3. Reply with exactly two fields: cwd=<your cwd> and readme_line_5=<the exact line 5 text>.
+4. Do not edit files.
 ```
 
-Follow-up prompt on the same Codex thread id:
+3. Wait for completion.
+
+Expected first-turn response includes:
 
 ```text
-From this Antigravity conversation context, what README.md line number did I ask you to read? Include smoke_resume_line=5.
+cwd=/Volumes/Projects/Software/code-agents-as-responses-api
+readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code and `agy/<model>` targets to Antigravity, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 ```
 
-Expected evidence:
-
-- Both HTTP responses have status `200`.
-- First log contains `Created conversation <uuid>`.
-- Session binding under `$RUN_DIR/state/sessions/agy/agy/<thread>.json` stores only an opaque
-  Antigravity cursor with that conversation id.
-- Resume log says it is resuming the same conversation id.
-- `transcript_full.jsonl` line count increases after the resumed turn.
-- Responses-visible output contains the expected final answer text.
-
-## Reasoning, Activity, Privacy
-
-Activity smoke:
-
-- The README prompt should usually create transcript `tool_calls` and a `VIEW_FILE` record.
-- Responses output may include terse activity commentary such as `Reading file`.
-- The full `VIEW_FILE` payload must not appear in Responses-visible output.
-
-Reasoning smoke:
-
-- Use query option `model=Claude Sonnet 4.6 (Thinking)` with prompt:
+4. Send a follow-up prompt on the same subagent handle:
 
 ```text
-Think briefly. Then answer exactly: reasoning_smoke_ok
+What did I just ask you to verify? Answer from this subagent conversation context. Mention the working directory check and the README.md line number.
 ```
 
-- If the transcript contains a `thinking` field, Responses SSE must contain reasoning summary
-  frames and the assistant text must contain only the final answer.
+Expected follow-up response: the Antigravity-backed subagent identifies the previous cwd check and
+`README.md` line 5 request from the same external Antigravity conversation.
 
-Privacy checks for every SSE artifact:
+Relay evidence to check:
+
+- `TargetSelected` requested `agy/gemini-3.5-flash`.
+- `DriverStarted` used external agent kind `agy`.
+- The follow-up `DriverStarted` includes an external session id and `previousTarget`.
+- The first Antigravity CLI log contains `Created conversation <uuid>`.
+- The follow-up external session id contains the same conversation id, and that conversation's
+  `transcript_full.jsonl` line count increases after the follow-up.
+- The session binding under `$CAARA_STATE_DIR/sessions/agy/agy/<codex-thread-id>.json`, or the
+  default Caara state dir when `CAARA_STATE_DIR` is unset, stores a driver-owned opaque cursor.
+- Runtime relay logs include normal runtime item lifecycle records.
+- Tool activity appears as terse assistant commentary such as `Reading README.md`.
+- Final assistant text appears as `phase = "final_answer"`.
+
+Antigravity driver-owned evidence paths:
+
+- CLI logs: `$HOME/.caara/antigravity-cli/logs/<codex-turn-id>.log`
+- Transcript: `$HOME/.gemini/antigravity-cli/brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl`
+
+5. Start a long-running turn on the same handle, then close the spawned agent while it is running.
+
+Expected observation: Caara logs `TurnCancelled` with `externalAgentKind = "agy"`. Antigravity
+sessions are reusable only when cancellation happens before transcript bytes are written:
+
+- no transcript mutation: `outcomeTag = "Interrupted"` and `sessionReusable = true`;
+- transcript mutation already observed: `outcomeTag = "Terminated"` and `sessionReusable = false`.
+
+6. Stop the local provider.
+
+## Activity And Reasoning Checks
+
+The standard README prompt should usually create Antigravity transcript tool activity, often with a
+`VIEW_FILE` record. Responses-visible output may include terse activity commentary such as
+`Reading README.md`; raw transcript payloads must not appear in Codex-visible assistant text.
+
+Reasoning is enabled by default for the Antigravity role. If the transcript contains a `thinking`
+field, Responses stream evidence should expose it only as reasoning-summary frames while final
+assistant text contains the answer.
+
+Privacy checks for captured SSE or response artifacts:
 
 ```bash
-rg 'step_index|transcript_full\.jsonl|\.gemini/antigravity-cli/brain|Created conversation' "$RUN_DIR"/*.sse
+rg 'step_index|transcript_full\.jsonl|\.gemini/antigravity-cli/brain|Created conversation' "$RUN_DIR"
 ```
 
-Expected: no matches in Responses SSE. Raw transcript/log paths may appear only in local evidence
-files or provider logs.
+Expected: no matches in Responses-visible artifacts. Raw transcript and log paths may appear only in
+local evidence files or provider logs.
 
-## Evidence Report
+## Troubleshooting
 
-Record these fields in the `fp` issue comment:
+If `agent_type = "caara-antigravity"` is unavailable, check
+`.codex/agents/caara-antigravity.toml` exists and includes its embedded `[model_providers.caara]`
+block. A running Codex thread may need a restart before newly added role files appear in the
+subagent registry.
 
-- direct `agy` command, stdout path, log path, parsed conversation id, transcript path, event count;
-- Caara provider command and state directory;
-- first/resume request command or helper path, log paths, session binding path, conversation id;
-- transcript event count before and after resume;
-- final Responses-visible output for first, resume, and reasoning turns;
-- activity/reasoning shapes observed in transcript and corresponding Responses frame types;
-- raw-leak search result;
-- unresolved gaps, with follow-up issue ids.
+If the subagent spawn succeeds but the turn fails, check the provider process is still listening on
+`127.0.0.1:8787` and that `agy` is available on the provider process `PATH`.
+
+If `agy` starts but cannot complete, verify local Antigravity authentication outside the committed
+runbook and record the evidence under `temp.local/$(date +%F)/antigravity-smoke/`.

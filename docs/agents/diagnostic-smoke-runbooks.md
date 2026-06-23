@@ -29,7 +29,7 @@ For Codex subagent path smokes, use one of the checked-in Diagnostic roles:
 - `caara-diagnostic-recovery`
 - `caara-diagnostic-echo`
 
-The checked-in `caara` role is Claude-specific (`claude/haiku`). If a running Codex thread's
+The checked-in `caara-claude` role is Claude-specific (`claude/haiku`). If a running Codex thread's
 multi-agent tool does not expose newly added Diagnostic roles, record that as a role-discovery
 blocker and run the direct-provider fallback below for scenario evidence.
 

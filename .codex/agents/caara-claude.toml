@@ -1,4 +1,4 @@
-name = "caara"
+name = "caara-claude"
 description = "Delegates to the local Caara Responses provider backed by Claude Code."
 developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"

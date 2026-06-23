@@ -2,7 +2,7 @@
 
 Caara lets Codex spawn external code agents as subagents through the OpenAI Responses API.
 
-Current implementation routes `claude/<model>` targets to Claude Code, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
+Current implementation routes `claude/<model>` targets to Claude Code and `agy/<model>` targets to Antigravity, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 
 ## Install
 
@@ -23,20 +23,22 @@ Supported endpoint:
 - `POST /v1/responses`
 - requires `stream: true`
 - requires a model string in `<external-agent-kind>/<external-model>` form
-- currently supports the `claude/*` external agent kind
+- currently supports `claude/*`, `agy/*`, and `diagnostic/*` smoke-test targets
 - streams OpenAI Responses SSE events back to Codex
 
 ## Codex Agent
 
-Local Codex subagent config lives in `.codex/agents/caara.toml`:
+Local Codex subagent configs live in `.codex/agents/caara-claude.toml` and
+`.codex/agents/caara-antigravity.toml`:
+
+| File                                   | `agent_type`        | Model                  |
+| -------------------------------------- | ------------------- | ---------------------- |
+| `.codex/agents/caara-claude.toml`      | `caara-claude`      | `claude/haiku`         |
+| `.codex/agents/caara-antigravity.toml` | `caara-antigravity` | `agy/gemini-3.5-flash` |
+
+Each role embeds the provider block:
 
 ```toml
-name = "caara"
-description = "Delegates to the local Caara Responses provider backed by Claude Code."
-developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
-model_provider = "caara"
-model = "claude/haiku"
-
 [model_providers.caara]
 name = "Caara Responses"
 base_url = "http://127.0.0.1:8787/v1"
