@@ -348,7 +348,7 @@ describe("diagnostic echo driver", () => {
     }),
   );
 
-  it.effect("echoes only the latest user message on follow-up turns", () =>
+  it.effect("normalizes follow-up history before diagnostic driver dispatch", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
       const inputs: Array<Schema.Json> = [];

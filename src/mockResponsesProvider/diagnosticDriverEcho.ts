@@ -37,12 +37,12 @@ const responseRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 /** Responses message item shape accepted by the Diagnostic echo extractor. */
 const responseInputMessageSchema = Schema.Struct({
   type: Schema.Literal("message"),
-  role: Schema.String,
+  role: Schema.Literal("user"),
   content: Schema.Array(responseRecordSchema),
 });
 
 /** Responses input shape accepted by the Diagnostic echo extractor. */
-const responseInputSchema = Schema.Array(responseRecordSchema);
+const responseInputSchema = Schema.Array(responseInputMessageSchema);
 
 /** Builds an explicit Diagnostic echo extraction failure. */
 const diagnosticEchoError = (message: string): AgentDriverError =>
@@ -79,17 +79,24 @@ const firstStringProperty = ({
       .at(0),
   );
 
-/** Finds the latest user message while ignoring prior assistant/tool history items. */
-const latestUserMessage = (items: readonly ResponseRecord[]) =>
-  items
-    .flatMap((item) =>
-      Option.match(Schema.decodeUnknownOption(responseInputMessageSchema)(item), {
-        onNone: () => [],
-        onSome: (message) => [message],
-      }),
-    )
-    .filter((message) => message.role === "user")
-    .at(-1);
+/** Returns the single normalized user message expected at the driver boundary. */
+const singleCurrentUserMessage = Effect.fnUntraced(function* (
+  messages: readonly (typeof responseInputMessageSchema.Type)[],
+) {
+  const message = yield* Option.match(Option.fromUndefinedOr(messages.at(0)), {
+    onNone: () => diagnosticEchoError("Diagnostic echo requires a current user message."),
+    onSome: Effect.succeed,
+  });
+  yield* Match.value(messages.length).pipe(
+    Match.when(1, () => Effect.void),
+    Match.orElse(() =>
+      Effect.fail(
+        diagnosticEchoError("Diagnostic echo requires exactly one normalized user message."),
+      ),
+    ),
+  );
+  return message;
+});
 
 /** Summarizes one supported Diagnostic echo text content block. */
 const echoSummaryFromTextContent = Effect.fnUntraced(function* (content: ResponseRecord) {
@@ -154,15 +161,12 @@ const echoSummaryFromContent = Effect.fnUntraced(function* (content: ResponseRec
 
 /** Builds the deterministic final answer text for the diagnostic/echo scenario. */
 export const diagnosticEchoAnswerText = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
-  const items = yield* Schema.decodeUnknownEffect(responseInputSchema)(turn.prompt.input).pipe(
+  const messages = yield* Schema.decodeUnknownEffect(responseInputSchema)(turn.prompt.input).pipe(
     Effect.mapError(() =>
-      diagnosticEchoError("Diagnostic echo requires Responses input message history."),
+      diagnosticEchoError("Diagnostic echo requires normalized current-turn user input."),
     ),
   );
-  const message = yield* Option.match(Option.fromUndefinedOr(latestUserMessage(items)), {
-    onNone: () => diagnosticEchoError("Diagnostic echo requires a current user message."),
-    onSome: Effect.succeed,
-  });
+  const message = yield* singleCurrentUserMessage(messages);
   const summaries = yield* Effect.forEach(message.content, echoSummaryFromContent);
   const nonEmptySummaries = yield* Option.match(
     Option.fromUndefinedOr([summaries].filter((values) => values.length > 0).at(0)),

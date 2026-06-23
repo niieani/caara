@@ -254,9 +254,10 @@ not emit Responses function-call, custom-tool, tool-output, custom-item, annotat
 stdout, stderr, or JSON activity items. `diagnostic_activity=off` keeps the activity runtime
 lifecycle in relay logs while hiding commentary from the Codex-visible Responses stream.
 
-`diagnostic/echo` emits a deterministic final answer summarizing only the latest user message content
-seen by the Diagnostic driver. It ignores prior assistant/tool history and fails explicitly for
-unsupported or malformed current-turn content.
+`diagnostic/echo` emits a deterministic final answer summarizing the normalized current user message
+content received by the Diagnostic driver. Prior assistant/tool history is ignored by the shared
+core normalizer before driver dispatch. The driver fails explicitly for unsupported, malformed, or
+non-normalized current-turn content.
 
 `diagnostic/recovery` emits Caara's standard lost-session recovery prompt as a final-answer
 assistant message, records lost-continuity diagnostics, and updates the binding to a fresh

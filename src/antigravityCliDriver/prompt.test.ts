@@ -62,6 +62,21 @@ describe("Antigravity CLI prompt extraction", () => {
     }),
   );
 
+  it.effect("fails multiple normalized user messages instead of joining driver-local history", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        extractAntigravityCliPrompt({
+          input: [
+            currentUserMessage([{ type: "input_text", text: "first request" }]),
+            currentUserMessage([{ type: "input_text", text: "current request" }]),
+          ],
+        }),
+      );
+
+      assert.match(error.message, /exactly one normalized user message/i);
+    }),
+  );
+
   it.effect("fails raw mixed Codex input instead of filtering it inside the driver", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
