@@ -8,6 +8,7 @@ import {
 
 import { type AgentDriverError, AgentDriverRegistry } from "./agentDriver.ts";
 import { decodeCodexTurnRequest } from "./codexTurnContext.ts";
+import { normalizeCurrentTurnInput } from "./currentTurnInput.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger } from "./relayLogger.ts";
@@ -146,6 +147,22 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     codexThreadId: responsesRequest.codex.threadId,
     turnId: responsesRequest.codex.turnId,
   });
+  const normalizedPrompt = yield* normalizeCurrentTurnInput({
+    input: responsesRequest.responses.input,
+  }).pipe(
+    Effect.catchTag("AgentDriverError", (error) =>
+      Effect.gen(function* () {
+        yield* relayLogger.log({
+          _tag: "TurnFailed",
+          threadId: responsesRequest.codex.threadId,
+          turnId: responsesRequest.codex.turnId,
+          message: error.message,
+        });
+        yield* lease.release;
+        return yield* error;
+      }),
+    ),
+  );
 
   const previousTarget = Option.match(Option.fromUndefinedOr(preparedSession.previousTarget), {
     onNone: () => undefined,
@@ -180,9 +197,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     .startOrResumeTurn({
       codex: responsesRequest.codex,
       target: responsesRequest.target,
-      prompt: {
-        input: responsesRequest.responses.input,
-      },
+      prompt: normalizedPrompt,
       cwd: preparedSession.cwd,
       requestedCwd: preparedSession.requestedCwd,
       previousTarget: preparedSession.previousTarget,

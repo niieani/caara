@@ -98,6 +98,29 @@ const userTextMessage = (text: string): Schema.Json => ({
   content: [{ type: "input_text", text }],
 });
 
+/** Builds the developer message that Codex Desktop sends before workspace user context. */
+const developerMessage = (): Schema.Json => ({
+  type: "message",
+  role: "developer",
+  content: [{ type: "input_text", text: "Use Codex developer instructions." }],
+});
+
+/** Builds the AGENTS/environment prelude user message observed in real Codex subagent input. */
+const codexPreludeMessage = (): Schema.Json => ({
+  type: "message",
+  role: "user",
+  content: [
+    {
+      type: "input_text",
+      text: "# AGENTS.md instructions for /workspace/project\n\n<INSTRUCTIONS>\nUse Bun.\n</INSTRUCTIONS>",
+    },
+    {
+      type: "input_text",
+      text: "<environment_context>\n  <cwd>/workspace/project</cwd>\n</environment_context>",
+    },
+  ],
+});
+
 /** Builds a prior assistant message that must never appear in diagnostic/echo output. */
 const priorAssistantMessage = (): Schema.Json => ({
   type: "message",
@@ -283,6 +306,44 @@ describe("diagnostic echo driver", () => {
       );
       assert.strictEqual(inputs.length, 1);
       assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(relayEvents.at(-1)?._tag, "TurnCompleted");
+    }),
+  );
+
+  it.effect("normalizes real Codex prelude before diagnostic driver dispatch", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+
+      const result = yield* runDiagnosticEchoTurn({
+        stateDir,
+        turnId: "turn-diagnostic-echo-codex-prelude",
+        input: [
+          developerMessage(),
+          codexPreludeMessage(),
+          userTextMessage("Read README.md line 5."),
+        ],
+        inputs,
+        diagnostics,
+        relayEvents,
+      });
+
+      assert.strictEqual(
+        result.assistantText,
+        'Diagnostic echo current user input: [{"type":"input_text","text":"Read README.md line 5."}]',
+      );
+      assert.strictEqual(result.assistantText.includes("Use Codex developer instructions"), false);
+      assert.strictEqual(result.assistantText.includes("AGENTS.md instructions"), false);
+      assert.strictEqual(result.assistantText.includes("<environment_context>"), false);
+      assert.deepStrictEqual(inputs, [
+        [developerMessage(), codexPreludeMessage(), userTextMessage("Read README.md line 5.")],
+      ]);
+      assert.deepStrictEqual(
+        relayEvents.slice(0, 4).map((event) => event._tag),
+        ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted"],
+      );
       assert.strictEqual(relayEvents.at(-1)?._tag, "TurnCompleted");
     }),
   );

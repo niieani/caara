@@ -162,6 +162,30 @@ interface AgentTarget {
 }
 ```
 
+## Current-Turn Input Normalization
+
+Caara normalizes `body.input` once at the core transport-to-driver boundary before dispatching to
+any external-agent driver. Real Codex Desktop subagent turns include mixed Responses input:
+
+- Codex/developer instructions as a `developer` message.
+- Repository instructions and `<environment_context>` as a setup `user` message.
+- The actual managing-agent request as the current `user` message.
+
+Drivers receive only the normalized current managing-agent user request. They do not parse or filter
+raw Codex developer context, AGENTS.md prelude text, environment context, assistant history, or tool
+output. A turn that contains only developer/prelude context fails explicitly instead of treating that
+setup text as the delegated task. If the latest user-like message is Codex setup/prelude context,
+normalization fails rather than falling back to an older user request.
+
+Developer context and AGENTS/environment user context are intentionally ignored because external
+code agents read repository instructions and environment through their own native harness when
+started in the workspace. Duplicating that context in the delegated task prompt makes the prompt
+noisy and can change the task semantics.
+
+Driver-specific prompt mappers still own content validation after normalization. For example, a
+driver may accept text and path-based files while explicitly rejecting unsupported current-turn
+content.
+
 ## Claude Agent SDK Driver
 
 The Claude Agent SDK driver is the only production driver in v1.
@@ -180,8 +204,7 @@ Unsupported option names and invalid option values fail the turn explicitly.
 
 For a first turn, the driver starts an SDK `query()` with a generated durable session id. For a
 follow-up turn, it passes the stored Claude SDK resume cursor to `query()`. The prompt extractor
-maps only the latest Codex user message from the full Responses message history so previous
-assistant `output_text` and tool outputs do not become new Claude prompts.
+maps the core-normalized current user request into the Claude SDK prompt stream.
 
 Current-turn input mapping:
 
