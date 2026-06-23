@@ -15,6 +15,7 @@ export interface AgentDriverTurn {
   readonly target: AgentTarget;
   readonly prompt: AgentTurnInput;
   readonly cwd: string;
+  readonly requestedCwd: string | undefined;
   readonly previousTarget: AgentTarget | undefined;
   readonly externalSession: ExternalSessionState | undefined;
 }
@@ -133,6 +134,7 @@ export type AgentDriverCancel = EffectContract<AgentCancellationOutcome>;
 export interface AgentDriverTurnResult {
   readonly runtimeEvents: AgentRuntimeEventStream;
   readonly externalSession: ExternalSessionState;
+  readonly bindingCwd?: string;
   readonly cancel: AgentDriverCancel;
 }
 

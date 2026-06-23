@@ -98,6 +98,7 @@ const simulatorTurn = (binding: CaaraSessionBinding): AgentDriverTurn => ({
   target: claudeTarget,
   prompt: { input: [] },
   cwd: binding.cwd,
+  requestedCwd: binding.cwd,
   previousTarget: claudeTarget,
   externalSession: binding.externalSession,
 });

@@ -183,6 +183,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
         input: responsesRequest.responses.input,
       },
       cwd: preparedSession.cwd,
+      requestedCwd: preparedSession.requestedCwd,
       previousTarget: preparedSession.previousTarget,
       externalSession: preparedSession.binding?.externalSession,
     })
@@ -247,6 +248,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       target: responsesRequest.target,
       prepared: preparedSession,
       externalSession: driverTurnResult.externalSession,
+      bindingCwd: driverTurnResult.bindingCwd,
     }).pipe(Effect.provideService(SessionDirectory, sessionDirectory));
   }).pipe(Effect.ensuring(lease.release));
   const releaseFailedTurn = lease.release;
@@ -290,6 +292,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
           target: responsesRequest.target,
           prepared: preparedSession,
           externalSession: driverTurnResult.externalSession,
+          bindingCwd: driverTurnResult.bindingCwd,
         }).pipe(Effect.provideService(SessionDirectory, sessionDirectory), Effect.asVoid),
     });
   }).pipe(Effect.ensuring(lease.release));

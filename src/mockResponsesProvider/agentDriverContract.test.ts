@@ -56,6 +56,7 @@ const contractTurn = (): AgentDriverTurn => ({
     ],
   },
   cwd: process.cwd(),
+  requestedCwd: process.cwd(),
   previousTarget: undefined,
   externalSession: undefined,
 });

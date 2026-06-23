@@ -169,6 +169,7 @@ export class SessionDirectoryError extends Schema.TaggedErrorClass<SessionDirect
 export interface PreparedSessionBinding {
   readonly binding: CaaraSessionBinding | undefined;
   readonly cwd: string;
+  readonly requestedCwd: string | undefined;
   readonly previousTarget: AgentTarget | undefined;
 }
 
@@ -378,28 +379,15 @@ const bindingKeyMismatchMessage = ({
 }): Option.Option<string> =>
   Option.fromUndefinedOr(
     [
-      {
-        label: "external agent kind",
-        expected: key.externalAgentKind,
-        actual: binding.bindingKey.externalAgentKind,
-      },
-      {
-        label: "driver instance id",
-        expected: key.driverInstanceId,
-        actual: binding.bindingKey.driverInstanceId,
-      },
-      {
-        label: "Codex thread id",
-        expected: key.codexThreadId,
-        actual: binding.bindingKey.codexThreadId,
-      },
-    ]
-      .filter((entry) => entry.actual !== entry.expected)
-      .map(
-        (entry) =>
-          `Persisted session binding ${entry.label} mismatch: expected ${entry.expected}, received ${entry.actual}.`,
-      )
-      .at(0),
+      ["external agent kind", key.externalAgentKind, binding.bindingKey.externalAgentKind],
+      ["driver instance id", key.driverInstanceId, binding.bindingKey.driverInstanceId],
+      ["Codex thread id", key.codexThreadId, binding.bindingKey.codexThreadId],
+    ].find(([, expected, actual]) => actual !== expected),
+  ).pipe(
+    Option.map(
+      ([label, expected, actual]) =>
+        `Persisted session binding ${label} mismatch: expected ${expected}, received ${actual}.`,
+    ),
   );
 
 /** Validates that a loaded binding belongs to the selected driver/thread key. */
@@ -431,10 +419,11 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
   const directory = yield* SessionDirectory;
   const key = sessionBindingKeyFromTurn({ codex, target });
   const binding = yield* directory.get(key);
+  const requestedCwd = Option.getOrUndefined(initialCwdOption(codex));
 
   return yield* Option.match(binding, {
     onNone: () =>
-      Option.match(initialCwdOption(codex), {
+      Option.match(Option.fromUndefinedOr(requestedCwd), {
         onNone: () =>
           Effect.fail(
             new InvalidResponsesRequest({
@@ -446,6 +435,7 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
           Effect.succeed({
             binding: undefined,
             cwd,
+            requestedCwd: cwd,
             previousTarget: undefined,
           } satisfies PreparedSessionBinding),
       }),
@@ -456,6 +446,7 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
           ({
             binding: validatedBinding,
             cwd: validatedBinding.cwd,
+            requestedCwd,
             previousTarget: targetFromBinding(validatedBinding),
           }) satisfies PreparedSessionBinding,
       ),
@@ -468,11 +459,13 @@ export const completeSessionBinding = Effect.fnUntraced(function* ({
   target,
   prepared,
   externalSession,
+  bindingCwd,
 }: {
   readonly codex: CodexTurnContext;
   readonly target: AgentTarget;
   readonly prepared: PreparedSessionBinding;
   readonly externalSession: ExternalSessionState;
+  readonly bindingCwd?: string;
 }) {
   const directory = yield* SessionDirectory;
   const bindingKey = sessionBindingKeyFromTurn({ codex, target });
@@ -483,7 +476,7 @@ export const completeSessionBinding = Effect.fnUntraced(function* ({
     parentCodexSessionId: makeCodexParentSessionId(codex.parentSessionId),
     requestedTarget: requestedTargetStateFromTarget(target),
     externalSession,
-    cwd: prepared.cwd,
+    cwd: bindingCwd ?? prepared.cwd,
     createdFromTurnId: prepared.binding?.createdFromTurnId ?? makeCodexTurnId(codex.turnId),
     lastTurnId: makeCodexTurnId(codex.turnId),
   });
