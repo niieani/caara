@@ -1,4 +1,5 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, Exit, Match, Option, Schedule, Scope } from "effect";
+import type { Effect as EffectContract } from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
@@ -6,6 +7,14 @@ import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process"
 import { AgentDriverError, type AgentDriverTurn } from "../mockResponsesProvider/agentDriver.ts";
 import { buildAntigravityCliArgv, type AntigravityCliOptions } from "./options.ts";
 import type { AntigravityCliSettingsValue } from "./settings.ts";
+
+/** Live Antigravity process controls owned by one driver turn. */
+export interface AntigravityRunningProcess {
+  readonly conversationId: string;
+  readonly awaitExit: EffectContract<void, AgentDriverError>;
+  readonly terminate: EffectContract<void, AgentDriverError>;
+  readonly close: EffectContract<void>;
+}
 
 /** Builds the Antigravity CLI diagnostic log-file path for one Codex turn. */
 export const antigravityLogFilePath = ({
@@ -54,6 +63,18 @@ const readAntigravityLogFile = Effect.fnUntraced(function* ({
         }),
     ),
   );
+});
+
+/** Reads and parses one Antigravity conversation id from the diagnostic log file. */
+const readConversationIdFromLogFile = Effect.fnUntraced(function* ({
+  fileSystem,
+  logFilePath,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly logFilePath: string;
+}) {
+  const logContent = yield* readAntigravityLogFile({ fileSystem, logFilePath });
+  return yield* conversationIdFromLog(logContent);
 });
 
 /** Creates the parent directory for one driver-owned Antigravity diagnostic log file. */
@@ -137,19 +158,17 @@ const ensureAntigravityCommandAvailable = Effect.fnUntraced(function* ({
   });
 });
 
-/** Runs one Antigravity CLI process and returns its exit code. */
-const runAntigravityProcess = Effect.fnUntraced(function* ({
+/** Builds the configured Antigravity child-process command. */
+const antigravityProcessCommand = ({
   settings,
-  spawner,
   turn,
   argv,
 }: {
   readonly settings: AntigravityCliSettingsValue;
-  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly turn: AgentDriverTurn;
   readonly argv: readonly string[];
-}) {
-  const command = ChildProcess.make(settings.command, argv, {
+}) =>
+  ChildProcess.make(settings.command, argv, {
     cwd: turn.cwd,
     env: {
       ...settings.environment,
@@ -159,16 +178,13 @@ const runAntigravityProcess = Effect.fnUntraced(function* ({
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
+    killSignal: "SIGTERM",
+    forceKillAfter: "1 second",
   });
-  const exitCode = yield* spawner.exitCode(command).pipe(
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Antigravity CLI failed to start: ${error.message}`,
-        }),
-    ),
-  );
-  return yield* Match.value(Number(exitCode)).pipe(
+
+/** Validates that one Antigravity process exited successfully. */
+const validateAntigravityExitCode = (exitCode: unknown): EffectContract<void, AgentDriverError> =>
+  Match.value(Number(exitCode)).pipe(
     Match.when(0, () => Effect.void),
     Match.orElse((code) =>
       Effect.fail(
@@ -178,6 +194,136 @@ const runAntigravityProcess = Effect.fnUntraced(function* ({
       ),
     ),
   );
+
+/** Closes one live Antigravity process scope. */
+const closeAntigravityProcessScope = (scope: Scope.Closeable): EffectContract<void> =>
+  Scope.close(scope, Exit.void).pipe(Effect.ignore);
+
+/** Waits for one Antigravity process to exit and validates its exit status. */
+const antigravityProcessExit = ({
+  handle,
+}: {
+  readonly handle: ChildProcessSpawner.ChildProcessHandle;
+}) =>
+  handle.exitCode.pipe(
+    Effect.mapError(
+      (error) =>
+        new AgentDriverError({
+          message: `Antigravity CLI failed to start: ${error.message}`,
+        }),
+    ),
+    Effect.flatMap(validateAntigravityExitCode),
+  );
+
+/** Terminates a live Antigravity process and closes its process scope. */
+const terminateAntigravityProcess = ({
+  handle,
+  close,
+}: {
+  readonly handle: ChildProcessSpawner.ChildProcessHandle;
+  readonly close: EffectContract<void>;
+}) =>
+  handle.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }).pipe(
+    Effect.mapError(
+      (error) =>
+        new AgentDriverError({
+          message: `Antigravity CLI could not be terminated: ${error.message}`,
+        }),
+    ),
+    Effect.ensuring(close),
+  );
+
+/** Waits for a fresh Antigravity process to reveal its conversation id or fail first. */
+const waitForFreshConversationId = ({
+  fileSystem,
+  logFilePath,
+  processExit,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly logFilePath: string;
+  readonly processExit: EffectContract<void, AgentDriverError>;
+}) => {
+  const waitForLog = readConversationIdFromLogFile({ fileSystem, logFilePath }).pipe(
+    Effect.retry(Schedule.spaced("20 millis")),
+    Effect.timeoutOption("5 seconds"),
+    Effect.flatMap((conversationId) =>
+      Option.match(conversationId, {
+        onNone: () =>
+          Effect.fail(
+            new AgentDriverError({
+              message: "Antigravity CLI log file was not created.",
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+  const readLogAfterCleanExit = processExit.pipe(
+    Effect.flatMap(() => readConversationIdFromLogFile({ fileSystem, logFilePath })),
+  );
+  return Effect.raceFirst(waitForLog, readLogAfterCleanExit);
+};
+
+/** Starts one Antigravity CLI process and returns live process controls. */
+export const startAntigravityTurnProcess = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
+  settings,
+  spawner,
+  turn,
+  prompt,
+  options,
+  logFilePath,
+  conversationId,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly prompt: string;
+  readonly options: AntigravityCliOptions;
+  readonly logFilePath: string;
+  readonly conversationId?: string;
+}) {
+  yield* makeAntigravityLogDirectory({ fileSystem, pathService, logFilePath });
+  yield* ensureAntigravityCommandAvailable({ fileSystem, pathService, settings });
+  const command = antigravityProcessCommand({
+    settings,
+    turn,
+    argv: buildAntigravityCliArgv({ prompt, options, logFilePath, conversationId }),
+  });
+  const scope = yield* Scope.make();
+  const close = closeAntigravityProcessScope(scope);
+  const handle = yield* spawner.spawn(command).pipe(
+    Effect.provideService(Scope.Scope, scope),
+    Effect.mapError(
+      (error) =>
+        new AgentDriverError({
+          message: `Antigravity CLI failed to start: ${error.message}`,
+        }),
+    ),
+  );
+  const processExit = antigravityProcessExit({ handle });
+  const awaitExit = processExit.pipe(Effect.ensuring(close));
+  const activeConversationIdEffect = Option.match(Option.fromUndefinedOr(conversationId), {
+    onNone: () => waitForFreshConversationId({ fileSystem, logFilePath, processExit }),
+    onSome: Effect.succeed,
+  });
+  const activeConversationId = yield* activeConversationIdEffect.pipe(
+    Effect.catch((error: AgentDriverError) =>
+      Effect.gen(function* () {
+        yield* close;
+        return yield* error;
+      }),
+    ),
+  );
+  return {
+    conversationId: activeConversationId,
+    awaitExit,
+    terminate: terminateAntigravityProcess({ handle, close }),
+    close,
+  } satisfies AntigravityRunningProcess;
 });
 
 /** Runs one Antigravity CLI process and returns the active conversation id. */
@@ -202,20 +348,17 @@ export const runAntigravityTurnProcess = Effect.fnUntraced(function* ({
   readonly logFilePath: string;
   readonly conversationId?: string;
 }) {
-  yield* makeAntigravityLogDirectory({ fileSystem, pathService, logFilePath });
-  yield* ensureAntigravityCommandAvailable({ fileSystem, pathService, settings });
-  yield* runAntigravityProcess({
+  const running = yield* startAntigravityTurnProcess({
+    fileSystem,
+    pathService,
     settings,
     spawner,
     turn,
-    argv: buildAntigravityCliArgv({ prompt, options, logFilePath, conversationId }),
+    prompt,
+    options,
+    logFilePath,
+    conversationId,
   });
-  return yield* Option.match(Option.fromUndefinedOr(conversationId), {
-    onNone: () =>
-      Effect.gen(function* () {
-        const logContent = yield* readAntigravityLogFile({ fileSystem, logFilePath });
-        return yield* conversationIdFromLog(logContent);
-      }),
-    onSome: Effect.succeed,
-  });
+  yield* running.awaitExit;
+  return running.conversationId;
 });

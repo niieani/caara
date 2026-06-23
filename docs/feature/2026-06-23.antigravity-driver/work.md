@@ -36,3 +36,13 @@ Effect platform services; tests inject fake behavior without starting real `agy`
 Dependency note: PRD child tree allows options before resume/mapping; implement options before
 mapping so event toggles exist when mapping tests land.
 
+## Cancellation Slice
+
+`CAARA-mhpxvctk` implemented live process controls for fresh Antigravity turns:
+
+- `startAntigravityTurnProcess` returns conversation id plus `awaitExit`/`terminate` controls.
+- Fresh-turn runtime events wait on process exit through an interruptible detached fiber.
+- Cancellation sends `SIGTERM`, then preserves the binding only when transcript bytes are absent.
+- Missing prior transcript on a preserved no-mutation resume is treated as an empty observation.
+- Fake `agy` cancellation modes cover before transcript, after transcript, and in-flight activity
+  bytes; focused tests assert signal logs and follow-up resume/fresh behavior.

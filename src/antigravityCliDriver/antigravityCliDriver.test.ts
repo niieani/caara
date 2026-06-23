@@ -153,6 +153,42 @@ const relayLoggerLayer = (events: Array<RelayLogEvent>) =>
     }),
   });
 
+/** Returns true when a decoded Responses stream contains a terminal failure frame. */
+const hasResponseFailureFrame = (
+  frames: readonly { readonly event: string; readonly data: unknown }[],
+): boolean => frames.some((frame) => frame.event === "response.failed");
+
+/** Returns driver failure messages captured by the provider relay logger. */
+const turnFailedMessages = (events: readonly RelayLogEvent[]): readonly string[] =>
+  events
+    .filter(
+      (event): event is Extract<RelayLogEvent, { readonly _tag: "TurnFailed" }> =>
+        event._tag === "TurnFailed",
+    )
+    .map((event) => event.message);
+
+/** Decoded Responses SSE frames accepted by the test assistant-text extractor. */
+type DecodedResponseFrames = Parameters<typeof assistantTextFromResponseFrames>[0];
+
+/** Converts decoded 200 response frames into the provider-boundary test result shape. */
+const successfulHttpTurnResult = ({
+  frames,
+  status,
+}: {
+  readonly frames: DecodedResponseFrames;
+  readonly status: number;
+}) =>
+  Match.value(hasResponseFailureFrame(frames)).pipe(
+    Match.when(true, () => ({
+      _tag: "StreamFailure" as const,
+      status,
+    })),
+    Match.orElse(() => ({
+      _tag: "Success" as const,
+      text: assistantTextFromResponseFrames(frames),
+    })),
+  );
+
 /** Builds a fresh server layer backed by the fake Antigravity CLI process. */
 const providerLayer = ({
   stateDir,
@@ -229,10 +265,7 @@ const runTurn = ({
     });
     const response = yield* HttpClient.execute(request);
     const success = decodeResponseSseFrames(response.stream).pipe(
-      Effect.map((frames) => ({
-        _tag: "Success" as const,
-        text: assistantTextFromResponseFrames(frames),
-      })),
+      Effect.map((frames) => successfulHttpTurnResult({ frames, status: response.status })),
     );
     const failure = response.text.pipe(
       Effect.map((body) => ({
@@ -416,9 +449,6 @@ describe("Antigravity CLI driver", () => {
   for (const [fakeMode, expected] of [
     ["process-failure", "Antigravity CLI exited with code 23"],
     ["missing-log", "Antigravity CLI log file was not created"],
-    ["missing-transcript", "Antigravity transcript_full.jsonl was not created"],
-    ["transcript-jsonl-only", "Antigravity transcript_full.jsonl was not created"],
-    ["missing-final", "Antigravity transcript did not contain a completed final model response"],
   ] as const) {
     it.effect(`fails explicitly when fake agy reports ${fakeMode}`, () =>
       Effect.gen(function* () {
@@ -428,6 +458,26 @@ describe("Antigravity CLI driver", () => {
         const failure = yield* Schema.decodeUnknownEffect(FailureTurnResult)(result);
         assert.strictEqual(failure.status, 500);
         assert.ok(failure.body.includes(expected), failure.body);
+      }),
+    );
+  }
+
+  for (const [fakeMode, expected] of [
+    ["missing-transcript", "Antigravity transcript_full.jsonl was not created"],
+    ["transcript-jsonl-only", "Antigravity transcript_full.jsonl was not created"],
+    ["missing-final", "Antigravity transcript did not contain a completed final model response"],
+  ] as const) {
+    it.effect(`fails the stream explicitly when fake agy reports ${fakeMode}`, () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const relayEvents: Array<RelayLogEvent> = [];
+        const result = yield* runTurn({ ...fixture, fakeMode, relayEvents });
+
+        assert.deepStrictEqual(result, { _tag: "StreamFailure", status: 200 });
+        assert.ok(
+          turnFailedMessages(relayEvents).some((message) => message.includes(expected)),
+          String(turnFailedMessages(relayEvents)),
+        );
       }),
     );
   }

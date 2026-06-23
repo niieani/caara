@@ -1,9 +1,10 @@
-import { Effect, Layer, Match, Option, Stream } from "effect";
+import { Effect, Fiber, Layer, Match, Option, Stream } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  type AgentDriverCancel,
   type AgentCancellationOutcome,
   AgentDriverError,
   AgentDriverRegistry,
@@ -11,12 +12,17 @@ import {
   type AgentDriverResolve,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
-  type AgentRuntimeEvent,
+  type AgentRuntimeEventStream,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
 import { lostSessionRecoveryDriverPrompt } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
-import { antigravityLogFilePath, runAntigravityTurnProcess } from "./cliProcess.ts";
+import {
+  antigravityLogFilePath,
+  runAntigravityTurnProcess,
+  startAntigravityTurnProcess,
+  type AntigravityRunningProcess,
+} from "./cliProcess.ts";
 import {
   decodeAntigravityDriverResumeCursor,
   makeAntigravityDriverResumeCursor,
@@ -57,11 +63,95 @@ const terminatedCancellationOutcome = (): AgentCancellationOutcome => ({
   sessionReusable: false,
 });
 
-/** Builds a reusable interrupted cancellation outcome after a completed recovery start. */
-const recoveredCancellationOutcome = (): AgentCancellationOutcome => ({
+/** Builds a reusable interrupted cancellation outcome. */
+const interruptedCancellationOutcome = (): AgentCancellationOutcome => ({
   _tag: "Interrupted",
   sessionReusable: true,
 });
+
+/** Returns cancellation outcome from the conservative transcript mutation proof. */
+const cancellationOutcomeFromTranscriptContent = (hasTranscriptContent: boolean) =>
+  Match.value(hasTranscriptContent).pipe(
+    Match.when(true, terminatedCancellationOutcome),
+    Match.orElse(interruptedCancellationOutcome),
+  );
+
+/** Builds the transcript path for one Antigravity conversation id. */
+const transcriptPathForConversation = ({
+  pathService,
+  settings,
+  conversationId,
+}: {
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly conversationId: string;
+}): string =>
+  antigravityTranscriptFullPath({
+    pathService,
+    homeDir: settings.homeDir,
+    conversationId,
+  });
+
+/** Returns true when the transcript path has any bytes, including an incomplete JSONL tail. */
+const transcriptHasContent = Effect.fnUntraced(function* ({
+  fileSystem,
+  transcriptPath,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly transcriptPath: string;
+}) {
+  const content = yield* fileSystem.readFileString(transcriptPath).pipe(Effect.option);
+  return Option.match(content, {
+    onNone: () => false,
+    onSome: (text) => text.length > 0,
+  });
+});
+
+/** Cancels one live fresh Antigravity process and reports conservative binding reusability. */
+const cancelRunningAntigravityTurn = ({
+  fileSystem,
+  transcriptPath,
+  runningProcess,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly transcriptPath: string;
+  readonly runningProcess: AntigravityRunningProcess;
+}) =>
+  runningProcess.terminate.pipe(
+    Effect.flatMap(() => transcriptHasContent({ fileSystem, transcriptPath })),
+    Effect.map(cancellationOutcomeFromTranscriptContent),
+    Effect.orElseSucceed(terminatedCancellationOutcome),
+  );
+
+/** Builds a runtime stream that waits for a live Antigravity process before reading transcript. */
+const runtimeEventsFromRunningProcess = ({
+  fileSystem,
+  pathService,
+  settings,
+  conversationId,
+  options,
+  runningProcess,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly conversationId: string;
+  readonly options: AntigravityCliOptions;
+  readonly runningProcess: AntigravityRunningProcess;
+}) =>
+  Stream.fromEffect(
+    Effect.gen(function* () {
+      const awaitExitFiber = yield* Effect.forkDetach(runningProcess.awaitExit);
+      yield* Fiber.join(awaitExitFiber);
+      return yield* readRuntimeEventsForConversation({
+        fileSystem,
+        pathService,
+        settings,
+        conversationId,
+        options,
+      });
+    }),
+  ).pipe(Stream.flatMap((runtimeEvents) => Stream.fromIterable(runtimeEvents)));
 
 /** Reads runtime events from the transcript owned by one Antigravity conversation id. */
 const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
@@ -79,11 +169,7 @@ const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
   readonly observation?: AntigravityTranscriptObservation;
   readonly options: AntigravityCliOptions;
 }) {
-  const transcriptPath = antigravityTranscriptFullPath({
-    pathService,
-    homeDir: settings.homeDir,
-    conversationId,
-  });
+  const transcriptPath = transcriptPathForConversation({ pathService, settings, conversationId });
   return yield* readAntigravityTranscriptRuntimeEvents({
     fileSystem,
     transcriptPath,
@@ -97,13 +183,15 @@ const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
 const antigravityTurnResult = ({
   conversationId,
   runtimeEvents,
+  cancel,
 }: {
   readonly conversationId: string;
-  readonly runtimeEvents: readonly AgentRuntimeEvent[];
+  readonly runtimeEvents: AgentRuntimeEventStream;
+  readonly cancel: AgentDriverCancel;
 }): AgentDriverTurnResult => ({
-  runtimeEvents: Stream.fromIterable(runtimeEvents),
+  runtimeEvents,
   externalSession: durableAntigravitySession({ conversationId }),
-  cancel: Effect.succeed(terminatedCancellationOutcome()),
+  cancel,
 });
 
 /** Starts a fresh Antigravity conversation and maps its transcript into runtime events. */
@@ -126,7 +214,7 @@ const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
   readonly options: AntigravityCliOptions;
   readonly logFilePath: string;
 }) {
-  const conversationId = yield* runAntigravityTurnProcess({
+  const runningProcess = yield* startAntigravityTurnProcess({
     fileSystem,
     pathService,
     settings,
@@ -136,14 +224,28 @@ const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
     options,
     logFilePath,
   });
-  const runtimeEvents = yield* readRuntimeEventsForConversation({
+  const transcriptPath = transcriptPathForConversation({
+    pathService,
+    settings,
+    conversationId: runningProcess.conversationId,
+  });
+  const runtimeEvents = runtimeEventsFromRunningProcess({
     fileSystem,
     pathService,
     settings,
-    conversationId,
+    conversationId: runningProcess.conversationId,
     options,
+    runningProcess,
   });
-  return { conversationId, runtimeEvents };
+  return {
+    conversationId: runningProcess.conversationId,
+    runtimeEvents,
+    cancel: cancelRunningAntigravityTurn({
+      fileSystem,
+      transcriptPath,
+      runningProcess,
+    }),
+  };
 });
 
 /** Starts a fresh Antigravity session after continuity loss and returns recovery metadata. */
@@ -168,7 +270,7 @@ const recoverWithFreshAntigravitySession = Effect.fnUntraced(function* ({
   readonly reason: string;
   readonly diagnostics: Readonly<Record<string, string>>;
 }) {
-  const fresh = yield* startFreshAntigravityTurn({
+  const conversationId = yield* runAntigravityTurnProcess({
     fileSystem,
     pathService,
     settings,
@@ -187,15 +289,27 @@ const recoverWithFreshAntigravitySession = Effect.fnUntraced(function* ({
   );
   return {
     runtimeEvents: Stream.empty,
-    externalSession: durableAntigravitySession({ conversationId: fresh.conversationId }),
+    externalSession: durableAntigravitySession({ conversationId }),
     bindingCwd: turn.cwd,
     lostSessionRecovery: {
       reason,
       diagnostics,
     },
-    cancel: Effect.succeed(recoveredCancellationOutcome()),
+    cancel: Effect.succeed(interruptedCancellationOutcome()),
   } satisfies AgentDriverTurnResult;
 });
+
+/** Recovers a preserved no-mutation resume binding that has no transcript yet. */
+const recoverMissingResumeTranscript = (error: AgentDriverError) =>
+  Match.value(error.message).pipe(
+    Match.when("Antigravity transcript_full.jsonl was not created.", () =>
+      Effect.succeed({
+        records: [],
+        state: emptyAntigravityTranscriptObservationState,
+      } satisfies AntigravityTranscriptObservation),
+    ),
+    Match.orElse(() => Effect.fail(error)),
+  );
 
 /** Reads the transcript state that existed before a resumed Antigravity process is spawned. */
 const observePriorResumeTranscript = Effect.fnUntraced(function* ({
@@ -218,7 +332,7 @@ const observePriorResumeTranscript = Effect.fnUntraced(function* ({
     fileSystem,
     transcriptPath,
     state: emptyAntigravityTranscriptObservationState,
-  });
+  }).pipe(Effect.catchTag("AgentDriverError", recoverMissingResumeTranscript));
 });
 
 /** Creates a driver implementation from injected Antigravity process/filesystem services. */
@@ -258,8 +372,8 @@ export const makeAntigravityCliAgentDriver = ({
         options,
         logFilePath,
       }),
-      ({ conversationId, runtimeEvents }) =>
-        antigravityTurnResult({ conversationId, runtimeEvents }),
+      ({ cancel, conversationId, runtimeEvents }) =>
+        antigravityTurnResult({ cancel, conversationId, runtimeEvents }),
     );
 
     return yield* Option.match(durableResumeCursorOption(turn), {
@@ -346,8 +460,9 @@ export const makeAntigravityCliAgentDriver = ({
                           }),
                           (runtimeEvents) =>
                             antigravityTurnResult({
+                              cancel: Effect.succeed(terminatedCancellationOutcome()),
                               conversationId: cursor.conversationId,
-                              runtimeEvents,
+                              runtimeEvents: Stream.fromIterable(runtimeEvents),
                             }),
                         ),
                     },
