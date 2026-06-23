@@ -214,6 +214,7 @@ Supported v1 scenario names:
 - `diagnostic/fails-after-partial`
 - `diagnostic/hangs-until-cancel`
 - `diagnostic/recovery`
+- `diagnostic/echo`
 
 `diagnostic/basic` emits deterministic assistant output, persists an opaque Diagnostic driver
 resume cursor, and returns distinct resumed output on follow-up turns for the same Codex thread.
@@ -228,6 +229,10 @@ Driver-owned options are bounded:
 not emit Responses function-call, custom-tool, tool-output, custom-item, annotation, raw payload,
 stdout, stderr, or JSON activity items. `diagnostic_activity=off` keeps the activity runtime
 lifecycle in relay logs while hiding commentary from the Codex-visible Responses stream.
+
+`diagnostic/echo` emits a deterministic final answer summarizing only the latest user message content
+seen by the Diagnostic driver. It ignores prior assistant/tool history and fails explicitly for
+unsupported or malformed current-turn content.
 
 Unsupported Diagnostic option names, invalid option values, and unknown scenarios fail explicitly.
 The retired simulator driver and `simulator_*` query options are not part of the public or test

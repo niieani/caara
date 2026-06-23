@@ -16,6 +16,7 @@ export const diagnosticDriverFixture = {
   activityReadingItemId: "diagnostic-activity-reading",
   activityEditingItemId: "diagnostic-activity-editing",
   activityAnswerItemId: "diagnostic-activity-answer",
+  echoMessageItemId: "diagnostic-echo-message",
   basicExternalSessionId: "diagnostic-session-codex-thread-diagnostic-basic",
   recoveredExternalSessionId: "diagnostic-session-recovered-codex-thread-diagnostic-basic",
   basicExternalSessionCursor: '{"sessionId":"diagnostic-session-codex-thread-diagnostic-basic"}',

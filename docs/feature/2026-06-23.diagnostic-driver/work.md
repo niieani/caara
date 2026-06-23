@@ -1,6 +1,6 @@
 # Work Notes
 
-## Current Slice: CAARA-uagzirfk
+## Completed Slice: CAARA-uagzirfk
 
 Target:
 
@@ -26,3 +26,24 @@ Verification:
 - `bun run test src/mockResponsesProvider/diagnosticDriverActivity.test.ts --run`
 - Provider/session/runtime/cancellation/recovery focused test set.
 - `bun run typecheck`
+
+## Completed Slice: CAARA-whnkibft
+
+Target:
+
+- Add `diagnostic/echo` as a deterministic current-turn input inspection scenario.
+- Summarize only the latest user message content seen by the Diagnostic driver.
+- Ignore prior assistant output, prior tool output, and other history when a follow-up request
+  includes the full Responses transcript.
+- Fail explicitly for unsupported or malformed current-turn content.
+
+Implemented shape:
+
+- `diagnostic/echo` emits a final assistant answer with a JSON-stable summary of supported
+  `input_text`, `input_image.image_url`, and `input_file.file_path` / `input_file.path` content.
+- Opaque `file_id` and unsupported current-turn content fail through the normal Diagnostic driver
+  error path.
+
+Verification:
+
+- `bun run test src/mockResponsesProvider/diagnosticDriverEcho.test.ts --run`
