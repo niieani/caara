@@ -29,6 +29,8 @@ Out of scope:
   Verifier: relay-log and persisted-binding assertions.
 - SDK-backed cancellation interrupts, drains to terminal SDK result with a bound, and keeps bindings reusable only for clean aborted terminal reasons.
   Verifier: focused SDK cancellation tests before first event, after partial output, follow-up abort, ambiguous end, interrupt failure, and stream failure.
+- Claude SDK and Claude Code drivers run non-interactively, reserve `AskUserQuestion`, and relay SDK permission denials as observable runtime context.
+  Verifier: focused permission-policy tests for SDK query options, CLI invocation options, reserved-tool validation, runtime event mapping, and relay logging.
 - Every child issue is completed only after `bun lint`, `bun run test --run`, and `bun run fmt`.
   Verifier: command output captured in issue comments.
 - Final PRD completion requires independent implementation review with no unresolved blocking findings.
@@ -36,4 +38,4 @@ Out of scope:
 
 ## Execution Shape
 
-Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-hmdoazmi, SDK cancellation semantics.
+Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-fcigyzat, noninteractive permission policy.

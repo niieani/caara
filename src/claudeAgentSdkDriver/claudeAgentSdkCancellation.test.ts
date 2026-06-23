@@ -18,6 +18,10 @@ import {
   type FakeSdkHarness,
   type FakeSdkRuntimeControls,
 } from "./claudeAgentSdkCancellationHarness.ts";
+import {
+  assertRequestsUseNonInteractivePermissionPolicy,
+  queryOptionsWithoutPermissionPolicy,
+} from "./claudeAgentSdkTestAssertions.ts";
 
 /** Stable cwd used by SDK cancellation tests. */
 const projectRoot = process.cwd();
@@ -131,8 +135,11 @@ describe("Claude Agent SDK cancellation", () => {
 
         const outcome = yield* result.cancel;
 
+        assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
         assert.deepStrictEqual(
-          harness.recordedRequests.map((request) => request.options),
+          harness.recordedRequests.map((request) =>
+            queryOptionsWithoutPermissionPolicy(request.options),
+          ),
           [
             {
               cwd: projectRoot,

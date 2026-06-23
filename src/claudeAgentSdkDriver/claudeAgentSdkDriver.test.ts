@@ -24,6 +24,10 @@ import {
   type ClaudeAgentSdkQueryRuntime,
 } from "./claudeAgentSdkClient.ts";
 import {
+  assertRequestsUseNonInteractivePermissionPolicy,
+  queryRequestsWithoutPermissionPolicy,
+} from "./claudeAgentSdkTestAssertions.ts";
+import {
   ClaudeAgentSdkSessionIdGenerator,
   claudeAgentSdkAgentDriverRegistryLive,
 } from "./driver.ts";
@@ -324,7 +328,8 @@ describe("Claude Agent SDK driver", () => {
 
         const { result, events } = yield* runDriverTurn({ harness, turn });
 
-        assert.deepStrictEqual(harness.recordedRequests, [
+        assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
+        assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
           {
             prompt: "follow-up request",
             options: {
@@ -379,7 +384,8 @@ describe("Claude Agent SDK driver", () => {
 
       const { result, events } = yield* runDriverTurn({ harness, turn });
 
-      assert.deepStrictEqual(harness.recordedRequests, [
+      assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
+      assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
         {
           prompt: "follow-up request",
           options: {
@@ -419,7 +425,8 @@ describe("Claude Agent SDK driver", () => {
 
       const { result, events } = yield* runDriverTurn({ harness, turn });
 
-      assert.deepStrictEqual(harness.recordedRequests, [
+      assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
+      assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
         {
           prompt: lostSessionRecoveryDriverPrompt,
           options: {

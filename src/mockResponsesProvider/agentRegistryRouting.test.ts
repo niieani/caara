@@ -12,6 +12,8 @@ import {
   AgentDriverRegistry,
   type AgentDriver,
   type AgentDriverResolve,
+  type AgentRuntimeEvent,
+  createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
@@ -21,7 +23,7 @@ import {
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
-import { sessionDirectoryLive } from "./sessionDirectory.ts";
+import { EphemeralExternalSession, sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriver, simulatorAgentDriverRegistryLive } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
@@ -199,6 +201,18 @@ const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =
     .filter((event) => event._tag === "RuntimeEventRelayed")
     .map((event) => event.runtimeEventTag);
 
+/** Runtime permission-denial fixture used to prove relay context. */
+const permissionDeniedRuntimeEvents = [
+  {
+    _tag: "PermissionDenied",
+    toolName: "Bash",
+    toolUseId: "toolu_registry_permission",
+    message: "Caara denied this permission request.",
+    decisionReason: "dontAsk denied unapproved tool",
+  },
+  createRuntimeTurnSucceededEvent(),
+] satisfies readonly AgentRuntimeEvent[];
+
 /** Decodes and validates the terminal response completion event shape. */
 const decodeCompletedEvent = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -269,6 +283,62 @@ function routesExternalAgentKindThroughDriverRegistry() {
   );
 }
 
+/** Test program proving permission-denied runtime events carry relay-log context. */
+function relaysPermissionDeniedRuntimeContext() {
+  const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
+  const driverRegistryLayer = singleKindAgentDriverRegistryLayer({
+    externalAgentKind: "gemini",
+    driver: {
+      startOrResumeTurn: () =>
+        Effect.succeed({
+          runtimeEvents: Stream.fromIterable(permissionDeniedRuntimeEvents),
+          externalSession: new EphemeralExternalSession({}),
+          cancel: Effect.succeed({ _tag: "Interrupted", sessionReusable: true }),
+        }),
+    },
+  });
+
+  return Effect.gen(function* () {
+    const request = setCodexHeaders(
+      yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), geminiRequestBody),
+    );
+    const response = yield* HttpClient.execute(request);
+    const frames = yield* decodeResponseSseFrames(response.stream);
+    const lastFrame = frames.at(-1);
+    assert.ok(lastFrame, "permission-denied response must include terminal SSE frame");
+    const completedData = decodeCompletedEvent(lastFrame.data);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(completedData.type, "response.completed");
+    assert.deepStrictEqual(runtimeEventTags(relayEvents), ["PermissionDenied", "TurnSucceeded"]);
+    assert.deepStrictEqual(
+      relayEvents.filter((event) => event._tag === "PermissionDenied"),
+      [
+        {
+          _tag: "PermissionDenied",
+          threadId: "codex-thread-registry-routing",
+          turnId: makeTurnId(),
+          toolName: "Bash",
+          toolUseId: "toolu_registry_permission",
+          message: "Caara denied this permission request.",
+          decisionReason: "dontAsk denied unapproved tool",
+        },
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      makeRegistryRoutingTestLayer({
+        loggedInputs,
+        loggedDiagnostics,
+        relayEvents,
+        driverRegistryLayer,
+      }),
+    ),
+  );
+}
+
 /** Test program proving unsupported agent kind failure comes from registry resolution. */
 function rejectsUnsupportedAgentKindThroughDriverRegistry() {
   const loggedInputs: Array<Schema.Json> = [];
@@ -303,6 +373,11 @@ describe("agent registry routing", () => {
   it.effect(
     "routes supported external agent kinds through the injected driver registry",
     routesExternalAgentKindThroughDriverRegistry,
+  );
+
+  it.effect(
+    "relays permission-denied runtime events with tool context",
+    relaysPermissionDeniedRuntimeContext,
   );
 
   it.effect(

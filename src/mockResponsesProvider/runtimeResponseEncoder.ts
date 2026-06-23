@@ -383,6 +383,7 @@ const runtimeEventToSseEvents = ({
         ContentDelta: (event) => contentDeltaToSseEvents({ state, runtimeEvent: event }),
         ContentCompleted: (event) => contentCompletedToSseEvents({ state, runtimeEvent: event }),
         ItemCompleted: (event) => itemCompletedToSseEvents({ state, runtimeEvent: event }),
+        PermissionDenied: () => [state, []] as const,
         TurnSucceeded: () => turnSucceededToSseEvents({ request, state }),
         TurnFailed: () => turnFailedToSseEvents({ request, state }),
       }),

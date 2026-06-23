@@ -19,6 +19,10 @@ import {
   type ClaudeAgentSdkQueryRuntime,
 } from "./claudeAgentSdkClient.ts";
 import {
+  assertRequestsUseNonInteractivePermissionPolicy,
+  queryOptionsWithoutPermissionPolicy,
+} from "./claudeAgentSdkTestAssertions.ts";
+import {
   ClaudeAgentSdkSessionIdGenerator,
   claudeAgentSdkAgentDriverRegistryLive,
 } from "./driver.ts";
@@ -227,8 +231,9 @@ describe("Claude Agent SDK lost-session recovery", () => {
           },
         });
         assert.strictEqual(durableCursor(result), "00000000-0000-4000-8000-000000000502");
+        assertRequestsUseNonInteractivePermissionPolicy(recordedRequests);
         assert.deepStrictEqual(
-          recordedRequests.map((request) => request.options),
+          recordedRequests.map((request) => queryOptionsWithoutPermissionPolicy(request.options)),
           [
             {
               cwd: projectRoot,

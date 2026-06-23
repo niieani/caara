@@ -75,6 +75,15 @@ export interface AgentRuntimeTurnFailed {
   readonly error: AgentDriverError;
 }
 
+/** Runtime event emitted when an external agent denies a tool permission request. */
+export interface AgentRuntimePermissionDenied {
+  readonly _tag: "PermissionDenied";
+  readonly toolName: string;
+  readonly toolUseId: string;
+  readonly message: string;
+  readonly decisionReason: string | undefined;
+}
+
 /** Normalized runtime event emitted by an external agent driver. */
 export type AgentRuntimeEvent =
   | AgentRuntimeItemCreated
@@ -83,7 +92,8 @@ export type AgentRuntimeEvent =
   | AgentRuntimeContentCompleted
   | AgentRuntimeItemCompleted
   | AgentRuntimeTurnSucceeded
-  | AgentRuntimeTurnFailed;
+  | AgentRuntimeTurnFailed
+  | AgentRuntimePermissionDenied;
 
 /** Driver runtime stream carrying normalized runtime events or a typed driver failure. */
 export type AgentRuntimeEventStream = Stream.Stream<AgentRuntimeEvent, AgentDriverError>;

@@ -132,3 +132,23 @@ Target:
 Test seam:
 
 - `claudeAgentSdkCancellation.test.ts` covers abort before first event, after partial output, follow-up abort, clean reusable `aborted_tools`, no-result ambiguity, interrupt failure, and stream failure.
+
+## Completed Slice: CAARA-fcigyzat
+
+Problem:
+
+- Claude SDK permission prompts and user dialogs could reach Caara without a deterministic noninteractive policy.
+- `AskUserQuestion` could be requested through user-supplied tool options.
+- SDK `permission_denied` system messages were not represented in Caara runtime or relay logs.
+
+Target:
+
+- Default SDK and Claude Code turns to noninteractive permission mode and disallow `AskUserQuestion`.
+- Reject user-supplied tool options that attempt to allow `AskUserQuestion`.
+- Auto-deny SDK permission prompts, cancel unsupported SDK user dialogs, and relay `PermissionDenied` runtime context without producing Responses output.
+
+Test seam:
+
+- `claudeAgentSdkPermissionPolicy.test.ts` covers SDK permission callbacks, dialog cancellation, reserved-tool validation, and `permission_denied` runtime mapping.
+- `claudeCodePermissionPolicy.test.ts` and `claudeCodeContract.test.ts` cover CLI defaults and reserved-tool validation.
+- `agentRegistryRouting.test.ts` covers relay logging and response completion for `PermissionDenied` runtime events.

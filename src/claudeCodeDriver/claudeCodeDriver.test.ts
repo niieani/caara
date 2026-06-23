@@ -400,6 +400,10 @@ describe("Claude Code driver integration", () => {
         "0.02",
         "--tools",
         "",
+        "--permission-mode",
+        "dontAsk",
+        "--disallowed-tools",
+        "AskUserQuestion",
         makePromptText(1),
       ]);
 
@@ -446,6 +450,10 @@ describe("Claude Code driver integration", () => {
         "0.03",
         "--tools",
         "default",
+        "--permission-mode",
+        "dontAsk",
+        "--disallowed-tools",
+        "AskUserQuestion",
         makePromptText(2),
       ]);
       assert.deepStrictEqual(cwdLog, [projectRoot, projectRoot]);

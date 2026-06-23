@@ -1,8 +1,16 @@
+import {
+  claudeNonInteractivePermissionMode,
+  withReservedInteractiveToolDisallowed,
+} from "../claudeInteractionPolicy.ts";
+
 /** Supported Claude Code effort literals shown by the installed CLI help. */
 export const claudeCodeEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /** Claude Code effort option accepted by `claude --effort`. */
 export type ClaudeCodeEffort = (typeof claudeCodeEfforts)[number];
+
+/** Claude Code permission mode accepted by `claude --permission-mode`. */
+export type ClaudeCodePermissionMode = "dontAsk";
 
 /** Tool selection contract for `claude --tools` in print-mode probes. */
 export type ClaudeCodeToolSelection = "disabled" | "default" | readonly string[];
@@ -15,6 +23,9 @@ export interface ClaudeCodePrintInvocationOptions {
   readonly effort?: ClaudeCodeEffort;
   readonly maxBudgetUsd?: string;
   readonly tools?: ClaudeCodeToolSelection;
+  readonly allowedTools?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly permissionMode?: ClaudeCodePermissionMode;
   readonly debugFile?: string;
   readonly sessionId?: string;
   readonly resumeSessionId?: string;
@@ -39,6 +50,9 @@ const formatToolSelection = (tools: ClaudeCodeToolSelection): string => {
   return tools.join(",");
 };
 
+/** Converts a Claude Code allow/deny tool list into one CLI argument value. */
+const formatToolList = (tools: readonly string[]): string => tools.join(",");
+
 /** Builds the spawn-ready argv for Claude Code print-mode stream-json probes. */
 export const buildClaudeCodePrintInvocation = ({
   cwd,
@@ -47,6 +61,9 @@ export const buildClaudeCodePrintInvocation = ({
   effort,
   maxBudgetUsd,
   tools,
+  allowedTools,
+  disallowedTools,
+  permissionMode = claudeNonInteractivePermissionMode(),
   debugFile,
   sessionId,
   resumeSessionId,
@@ -75,6 +92,15 @@ export const buildClaudeCodePrintInvocation = ({
   if (tools !== undefined) {
     args.push("--tools", formatToolSelection(tools));
   }
+  if (allowedTools !== undefined) {
+    args.push("--allowed-tools", formatToolList(allowedTools));
+  }
+  args.push(
+    "--permission-mode",
+    permissionMode,
+    "--disallowed-tools",
+    formatToolList(withReservedInteractiveToolDisallowed(disallowedTools)),
+  );
   if (debugFile !== undefined) {
     args.push("--debug-file", debugFile);
   }

@@ -92,6 +92,17 @@ export interface LostSessionRecoveredRelayEvent {
   readonly diagnostics: Readonly<Record<string, string>>;
 }
 
+/** Relay event recorded when an external agent permission request is denied. */
+export interface PermissionDeniedRelayEvent {
+  readonly _tag: "PermissionDenied";
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly toolName: string;
+  readonly toolUseId: string;
+  readonly message: string;
+  readonly decisionReason: string | undefined;
+}
+
 /** Structured relay event emitted around Codex-to-driver turn processing. */
 export type RelayLogEvent =
   | TurnAcceptedRelayEvent
@@ -103,7 +114,8 @@ export type RelayLogEvent =
   | TurnConcurrencyConflictRelayEvent
   | TurnInFlightAcquiredRelayEvent
   | TurnCancelledRelayEvent
-  | LostSessionRecoveredRelayEvent;
+  | LostSessionRecoveredRelayEvent
+  | PermissionDeniedRelayEvent;
 
 /** Logs structured relay events for observability and test artifact capture. */
 export class RelayLogger extends Context.Service<

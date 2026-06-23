@@ -28,6 +28,12 @@ type ClaudeAgentSdkContentBlockDeltaEvent = Extract<
   { readonly type: "content_block_delta" }
 >;
 
+/** SDK permission-denied message emitted after noninteractive permission rejection. */
+type ClaudeAgentSdkPermissionDeniedMessage = Extract<
+  SDKMessage,
+  { readonly type: "system"; readonly subtype: "permission_denied" }
+>;
+
 /** Initial SDK-message conversion state for one query stream. */
 const initialState = (): ClaudeAgentSdkRuntimeEventState => ({
   nextMessageIndex: 0,
@@ -74,6 +80,26 @@ const reasoningTextEvents = ({
 const noRuntimeEvents = (
   state: ClaudeAgentSdkRuntimeEventState,
 ): ClaudeAgentSdkRuntimeEventResult => [state, []] as const;
+
+/** Converts one SDK permission denial into a driver-neutral runtime event. */
+const runtimeEventsFromPermissionDenied = ({
+  state,
+  message,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly message: ClaudeAgentSdkPermissionDeniedMessage;
+}): ClaudeAgentSdkRuntimeEventResult => [
+  state,
+  [
+    {
+      _tag: "PermissionDenied",
+      toolName: message.tool_name,
+      toolUseId: message.tool_use_id,
+      message: message.message,
+      decisionReason: message.decision_reason,
+    },
+  ],
+];
 
 /** Converts one SDK content-block delta into runtime events. */
 const runtimeEventsFromContentBlockDelta = ({
@@ -160,6 +186,9 @@ const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
             `Claude Agent SDK failed with subtype ${sdkMessage.subtype}.`,
         }),
       ),
+    ),
+    Match.when({ type: "system", subtype: "permission_denied" }, (sdkMessage) =>
+      Effect.succeed(runtimeEventsFromPermissionDenied({ state, message: sdkMessage })),
     ),
     Match.orElse(() => Effect.succeed(noRuntimeEvents(state))),
   );

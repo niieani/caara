@@ -216,9 +216,35 @@ describe("Claude Code contract harness", () => {
       "0.02",
       "--tools",
       "",
+      "--permission-mode",
+      "dontAsk",
+      "--disallowed-tools",
+      "AskUserQuestion",
       "--debug-file",
       "../debug.log",
       "Reply with exactly CAARA_HAIKU_OK and nothing else.",
+    ]);
+  });
+
+  it("builds non-interactive permission flags into print-mode invocations by default", () => {
+    const invocation = buildClaudeCodePrintInvocation({
+      cwd: fixture.cwd,
+      prompt: "Reply with exactly CAARA_PERMISSION_OK and nothing else.",
+      model: "sonnet",
+    });
+
+    assert.deepStrictEqual(invocation.args, [
+      "-p",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "sonnet",
+      "--permission-mode",
+      "dontAsk",
+      "--disallowed-tools",
+      "AskUserQuestion",
+      "Reply with exactly CAARA_PERMISSION_OK and nothing else.",
     ]);
   });
 
@@ -247,6 +273,10 @@ describe("Claude Code contract harness", () => {
       "low",
       "--tools",
       "",
+      "--permission-mode",
+      "dontAsk",
+      "--disallowed-tools",
+      "AskUserQuestion",
       "Reply with exactly CAARA_AFTER_CANCEL_OK and nothing else.",
     ]);
   });

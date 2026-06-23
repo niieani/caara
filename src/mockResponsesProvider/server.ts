@@ -252,6 +252,16 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
           ContentDelta: () => Effect.void,
           ContentCompleted: () => Effect.void,
           ItemCompleted: () => Effect.void,
+          PermissionDenied: (event) =>
+            relayLogger.log({
+              _tag: "PermissionDenied",
+              threadId: responsesRequest.codex.threadId,
+              turnId: responsesRequest.codex.turnId,
+              toolName: event.toolName,
+              toolUseId: event.toolUseId,
+              message: event.message,
+              decisionReason: event.decisionReason,
+            }),
         });
       }),
     ),
