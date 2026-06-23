@@ -175,8 +175,16 @@ Unsupported option names and invalid option values fail the turn explicitly.
 
 For a first turn, the driver starts an SDK `query()` with a generated durable session id. For a
 follow-up turn, it passes the stored Claude SDK resume cursor to `query()`. The prompt extractor
-selects the latest Codex user `input_text` from the full Responses message history so previous
-assistant `output_text` does not become a new Claude prompt.
+maps only the latest Codex user message from the full Responses message history so previous
+assistant `output_text` and tool outputs do not become new Claude prompts.
+
+Current-turn input mapping:
+
+- `input_text` becomes SDK text content.
+- `input_image.image_url` becomes SDK image content for data URLs and HTTP(S) URLs.
+- `input_file.file_path` / `input_file.path` becomes explicit workspace-file text when the path is
+  addressable from the driver cwd.
+- Opaque `file_id` content and unknown content item types fail explicitly.
 
 Caara does not hand-build Claude CLI argv or parse Claude stdout for normal turns. Claude Agent SDK
 messages are translated into Caara runtime events. Assistant text, displayable reasoning, permission

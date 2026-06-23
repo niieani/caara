@@ -143,7 +143,7 @@ Problem:
 
 Target:
 
-- Default SDK and Claude Code turns to noninteractive permission mode and disallow `AskUserQuestion`.
+- Default SDK turns to noninteractive permission mode and disallow `AskUserQuestion`.
 - Reject user-supplied tool options that attempt to allow `AskUserQuestion`.
 - Auto-deny SDK permission prompts, cancel unsupported SDK user dialogs, and relay `PermissionDenied` runtime context without producing Responses output.
 
@@ -191,3 +191,23 @@ Test seam:
 
 - `claudeCliRetirement.test.ts` fails if retired `claudeCodeDriver`/`claudeCodeContract` files or direct `Bun.spawn` calls reappear under `src`.
 - Existing SDK driver, cancellation, recovery, permission-policy, and provider routing tests cover the replacement SDK query seam.
+
+## Completed Slice: CAARA-iqbzhbva
+
+Problem:
+
+- The SDK prompt bridge still returned plain text and selected only `input_text`.
+- Prior non-message/tool history caused prompt decode failure instead of being ignored.
+- Images, path references, opaque file ids, and unknown current-turn content were not handled intentionally.
+
+Target:
+
+- Build a one-shot `AsyncIterable<SDKUserMessage>` for the latest user message only.
+- Map `input_text` to SDK text blocks and `input_image.image_url` to SDK image blocks for supported data URLs and HTTP(S) URLs.
+- Map `input_file.file_path` / `input_file.path` to explicit workspace-file text only when the path stays within the driver cwd.
+- Fail opaque `file_id`, unknown content types, malformed images, and out-of-workspace paths explicitly.
+
+Test seam:
+
+- `prompt.test.ts` covers text-only, data-url image, workspace path, opaque file-id rejection, unknown content rejection, and history-not-replayed behavior.
+- `claudeAgentSdkDriver.test.ts` asserts SDK driver requests now carry SDK user-message prompt streams while retaining session/options behavior.

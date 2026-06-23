@@ -1,7 +1,8 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { BunCrypto } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Context, Crypto, Effect, Layer, Match, Option, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
+import * as Path from "effect/Path";
 
 import {
   AgentDriverError,
@@ -22,6 +23,7 @@ import {
   ClaudeAgentSdkClient,
   claudeAgentSdkClientLive,
   type ClaudeAgentSdkClientError,
+  type ClaudeAgentSdkQueryPrompt,
   type ClaudeAgentSdkQueryRuntime,
 } from "./claudeAgentSdkClient.ts";
 import { runtimeEventsFromClaudeAgentSdkQuery } from "./events.ts";
@@ -226,7 +228,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
 }: {
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly turn: AgentDriverTurn;
-  readonly prompt: string;
+  readonly prompt: ClaudeAgentSdkQueryPrompt;
   readonly startup: ClaudeAgentSdkSessionStartup;
   readonly cursor: string;
   readonly cwd: string;
@@ -330,13 +332,18 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
 const startContinuableSdkTurn = Effect.fnUntraced(function* ({
   client,
   generator,
+  pathService,
   turn,
 }: {
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
+  readonly pathService: Path.Path;
   readonly turn: AgentDriverTurn;
 }) {
-  const prompt = yield* extractClaudeAgentSdkPrompt(turn.prompt.input);
+  const prompt = yield* extractClaudeAgentSdkPrompt({
+    cwd: turn.cwd,
+    input: turn.prompt.input,
+  }).pipe(Effect.provideService(Path.Path, pathService));
   const startup = yield* Option.match(durableResumeCursorOption(turn), {
     onNone: () =>
       Effect.map(generator.nextSessionId, (sessionId) => ({
@@ -378,9 +385,11 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
 const createClaudeAgentSdkAgentDriver = ({
   client,
   generator,
+  pathService,
 }: {
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
+  readonly pathService: Path.Path;
 }): AgentDriver => ({
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Match.value(requiresFreshSessionForCwdChange(turn)).pipe(
@@ -398,7 +407,7 @@ const createClaudeAgentSdkAgentDriver = ({
           freshCwd: turn.requestedCwd ?? turn.cwd,
         }),
       ),
-      Match.orElse(() => startContinuableSdkTurn({ client, generator, turn })),
+      Match.orElse(() => startContinuableSdkTurn({ client, generator, pathService, turn })),
     );
   }),
 });
@@ -409,10 +418,11 @@ export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
   Effect.gen(function* () {
     const client = yield* ClaudeAgentSdkClient;
     const generator = yield* ClaudeAgentSdkSessionIdGenerator;
+    const pathService = yield* Path.Path;
     const resolve: AgentDriverResolve = (target) =>
       Match.value(target.externalAgentKind).pipe(
         Match.when("claude", () =>
-          Effect.succeed(createClaudeAgentSdkAgentDriver({ client, generator })),
+          Effect.succeed(createClaudeAgentSdkAgentDriver({ client, generator, pathService })),
         ),
         Match.orElse((externalAgentKind) =>
           Effect.fail(
@@ -430,4 +440,5 @@ export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
 export const claudeAgentSdkDriverLive = claudeAgentSdkAgentDriverRegistryLive.pipe(
   Layer.provideMerge(claudeAgentSdkClientLive),
   Layer.provideMerge(claudeAgentSdkSessionIdGeneratorLive),
+  Layer.provideMerge(BunServices.layer),
 );

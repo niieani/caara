@@ -1,6 +1,7 @@
 import type { Options as ClaudeQueryOptions, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Match, Option, Stream } from "effect";
+import * as Path from "effect/Path";
 
 import {
   AgentDriverRegistry,
@@ -143,6 +144,7 @@ const fakeRecoveryLayer = ({
   claudeAgentSdkAgentDriverRegistryLive.pipe(
     Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, outcomes })),
     Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
+    Layer.provideMerge(Path.layer),
   );
 
 /** Builds one selected Claude target for SDK recovery tests. */

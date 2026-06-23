@@ -1,11 +1,9 @@
-import type { Options as ClaudeQueryOptions, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer, Match, Option, Result, Stream } from "effect";
+import { Effect, Result } from "effect";
 
 import {
-  AgentDriverRegistry,
   type AgentDriverTurn,
-  type AgentDriverTurnResult,
   type AgentRuntimeEvent,
   createAssistantTextRuntimeEvents,
   createReasoningSummaryRuntimeEvents,
@@ -18,190 +16,20 @@ import {
 } from "../mockResponsesProvider/sessionDirectory.ts";
 import { lostSessionRecoveryDriverPrompt } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import {
-  ClaudeAgentSdkClient,
-  ClaudeAgentSdkClientError,
-  type ClaudeAgentSdkQueryRequest,
-  type ClaudeAgentSdkQueryRuntime,
-} from "./claudeAgentSdkClient.ts";
+  collectPromptMessages,
+  durableCursor,
+  fakeSdkHarness,
+  runDriverTurn,
+  sdkTextDelta,
+  sdkThinkingDelta,
+} from "./claudeAgentSdkDriverTestHarness.ts";
 import {
   assertRequestsUseNonInteractivePermissionPolicy,
-  queryRequestsWithoutPermissionPolicy,
+  queryOptionsWithoutPermissionPolicy,
 } from "./claudeAgentSdkTestAssertions.ts";
-import {
-  ClaudeAgentSdkSessionIdGenerator,
-  claudeAgentSdkAgentDriverRegistryLive,
-} from "./driver.ts";
 
 /** Stable cwd used by SDK driver tests. */
 const projectRoot = process.cwd();
-
-/** SDK query request with non-optional options for assertions. */
-interface RecordedQueryRequest {
-  readonly prompt: ClaudeAgentSdkQueryRequest["prompt"];
-  readonly options: ClaudeQueryOptions;
-}
-
-/** Captured fake SDK runtime controls used to assert in-place option changes. */
-interface FakeSdkRuntimeControls {
-  readonly modelUpdates: string[];
-  readonly interrupts: string[];
-  readonly closes: string[];
-}
-
-/** Builds one fake SDK stream text delta message. */
-const sdkTextDelta = ({ sessionId, text }: { readonly sessionId: string; readonly text: string }) =>
-  ({
-    type: "stream_event",
-    event: {
-      type: "content_block_delta",
-      index: 0,
-      delta: {
-        type: "text_delta",
-        text,
-      },
-    },
-    parent_tool_use_id: null,
-    uuid: "00000000-0000-4000-8000-000000000011",
-    session_id: sessionId,
-  }) satisfies SDKMessage;
-
-/** Builds one fake SDK stream thinking delta message. */
-const sdkThinkingDelta = ({
-  sessionId,
-  thinking,
-}: {
-  readonly sessionId: string;
-  readonly thinking: string;
-}) =>
-  ({
-    type: "stream_event",
-    event: {
-      type: "content_block_delta",
-      index: 0,
-      delta: {
-        type: "thinking_delta",
-        thinking,
-        estimated_tokens: null,
-      },
-    },
-    parent_tool_use_id: null,
-    uuid: "00000000-0000-4000-8000-000000000012",
-    session_id: sessionId,
-  }) satisfies SDKMessage;
-
-/** Builds a fake SDK query runtime that emits fixed messages and records controls. */
-const fakeRuntime = ({
-  messages,
-  controls,
-}: {
-  readonly messages: readonly SDKMessage[];
-  readonly controls: FakeSdkRuntimeControls;
-}): ClaudeAgentSdkQueryRuntime => ({
-  interrupt: () => {
-    controls.interrupts.push("interrupt");
-    return Promise.resolve();
-  },
-  close: () => {
-    controls.closes.push("close");
-  },
-  setModel: (model?: string) => {
-    controls.modelUpdates.push(model ?? "");
-    return Promise.resolve();
-  },
-  setPermissionMode: () => Promise.resolve(),
-  setMaxThinkingTokens: () => Promise.resolve(),
-  [Symbol.asyncIterator]: () => {
-    let index = 0;
-    return {
-      next: () => {
-        const message = messages.at(index);
-        index += 1;
-        return Option.match(Option.fromUndefinedOr(message), {
-          onNone: () =>
-            Promise.resolve({ done: true, value: undefined } satisfies IteratorReturnResult<void>),
-          onSome: (nextMessage) =>
-            Promise.resolve({
-              done: false,
-              value: nextMessage,
-            } satisfies IteratorYieldResult<SDKMessage>),
-        });
-      },
-    };
-  },
-});
-
-/** Builds an SDK client layer that records query requests and returns queued runtimes. */
-const fakeSdkClientLayer = ({
-  recordedRequests,
-  runtimes,
-}: {
-  readonly recordedRequests: RecordedQueryRequest[];
-  readonly runtimes: readonly ClaudeAgentSdkQueryRuntime[];
-}) => {
-  let runtimeIndex = 0;
-  return Layer.succeed(ClaudeAgentSdkClient, {
-    query: (request) =>
-      Effect.sync(() => {
-        const runtime = runtimes.at(runtimeIndex);
-        runtimeIndex += 1;
-        recordedRequests.push({
-          prompt: request.prompt,
-          options: request.options,
-        });
-        return runtime;
-      }).pipe(
-        Effect.flatMap((runtime) =>
-          Option.match(Option.fromUndefinedOr(runtime), {
-            onNone: () =>
-              Effect.fail(new ClaudeAgentSdkClientError({ message: "no fake runtime" })),
-            onSome: Effect.succeed,
-          }),
-        ),
-      ),
-  });
-};
-
-/** Builds a deterministic SDK session-id generator layer. */
-const fakeSessionIdLayer = ({ sessionIds }: { readonly sessionIds: readonly string[] }) => {
-  let sessionIndex = 0;
-  return Layer.succeed(ClaudeAgentSdkSessionIdGenerator, {
-    nextSessionId: Effect.sync(() => {
-      const sessionId = sessionIds.at(sessionIndex);
-      sessionIndex += 1;
-      assert.ok(sessionId, "missing fake session id");
-      return sessionId;
-    }),
-  });
-};
-
-/** Builds one fake SDK driver harness from session ids and runtime messages. */
-const fakeSdkHarness = ({
-  sessionIds,
-  runtimeMessages,
-}: {
-  readonly sessionIds: readonly string[];
-  readonly runtimeMessages: readonly (readonly SDKMessage[])[];
-}) => {
-  const recordedRequests: RecordedQueryRequest[] = [];
-  const controls = {
-    modelUpdates: [],
-    interrupts: [],
-    closes: [],
-  } satisfies FakeSdkRuntimeControls;
-  const runtimes = runtimeMessages.map((messages) => fakeRuntime({ messages, controls }));
-
-  return {
-    recordedRequests,
-    controls,
-    layer: claudeAgentSdkAgentDriverRegistryLive.pipe(
-      Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
-      Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
-    ),
-  };
-};
-
-/** Mutable fake SDK harness state owned by one test invocation. */
-type FakeSdkHarness = ReturnType<typeof fakeSdkHarness>;
 
 /** Builds Codex identity context for one direct driver test turn. */
 const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTurnContext =>
@@ -275,36 +103,6 @@ const makeTurn = ({
   externalSession,
 });
 
-/** Collects all runtime events emitted by one SDK driver turn. */
-const runDriverTurn = ({
-  harness,
-  turn,
-}: {
-  readonly harness: FakeSdkHarness;
-  readonly turn: AgentDriverTurn;
-}) =>
-  Effect.gen(function* () {
-    const registry = yield* AgentDriverRegistry;
-    const driver = yield* registry.resolve(turn.target);
-    const result = yield* driver.startOrResumeTurn(turn);
-    const events = yield* result.runtimeEvents.pipe(
-      Stream.runCollect,
-      Effect.map((chunk) => [...chunk]),
-    );
-
-    return {
-      result,
-      events,
-    };
-  }).pipe(Effect.provide(harness.layer));
-
-/** Extracts the driver resume cursor from a durable turn result. */
-const durableCursor = (result: AgentDriverTurnResult): string =>
-  Match.valueTags(result.externalSession, {
-    Durable: (session) => session.driverResumeCursor,
-    Ephemeral: () => assert.fail("expected durable external session"),
-  });
-
 describe("Claude Agent SDK driver", () => {
   it.effect(
     "starts a first-turn SDK query with prompt/options and maps assistant text deltas",
@@ -327,12 +125,27 @@ describe("Claude Agent SDK driver", () => {
         });
 
         const { result, events } = yield* runDriverTurn({ harness, turn });
+        const request = harness.recordedRequests.at(0);
+        assert.ok(request, "missing SDK query request");
+        const promptMessages = yield* collectPromptMessages(request.prompt);
 
         assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
-        assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
+        assert.deepStrictEqual(promptMessages, [
           {
-            prompt: "follow-up request",
-            options: {
+            type: "user",
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "follow-up request" }],
+            },
+          } satisfies SDKUserMessage,
+        ]);
+        assert.deepStrictEqual(
+          harness.recordedRequests.map((recordedRequest) =>
+            queryOptionsWithoutPermissionPolicy(recordedRequest.options),
+          ),
+          [
+            {
               cwd: projectRoot,
               model: "sonnet",
               sessionId: "00000000-0000-4000-8000-000000000101",
@@ -341,8 +154,8 @@ describe("Claude Agent SDK driver", () => {
               maxBudgetUsd: 0.5,
               tools: { type: "preset", preset: "claude_code" },
             },
-          },
-        ]);
+          ],
+        );
         assert.strictEqual(durableCursor(result), "00000000-0000-4000-8000-000000000101");
         assert.deepStrictEqual(events, [
           ...createAssistantTextRuntimeEvents({
@@ -383,20 +196,35 @@ describe("Claude Agent SDK driver", () => {
       });
 
       const { result, events } = yield* runDriverTurn({ harness, turn });
+      const request = harness.recordedRequests.at(0);
+      assert.ok(request, "missing SDK query request");
+      const promptMessages = yield* collectPromptMessages(request.prompt);
 
       assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
-      assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
+      assert.deepStrictEqual(promptMessages, [
         {
-          prompt: "follow-up request",
-          options: {
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "follow-up request" }],
+          },
+        } satisfies SDKUserMessage,
+      ]);
+      assert.deepStrictEqual(
+        harness.recordedRequests.map((recordedRequest) =>
+          queryOptionsWithoutPermissionPolicy(recordedRequest.options),
+        ),
+        [
+          {
             cwd: projectRoot,
             model: "opus",
             resume: "00000000-0000-4000-8000-000000000201",
             includePartialMessages: true,
             effort: "low",
           },
-        },
-      ]);
+        ],
+      );
       assert.deepStrictEqual(harness.controls.modelUpdates, ["opus"]);
       assert.strictEqual(durableCursor(result), "00000000-0000-4000-8000-000000000201");
       assert.deepStrictEqual(events, [
@@ -424,19 +252,24 @@ describe("Claude Agent SDK driver", () => {
       });
 
       const { result, events } = yield* runDriverTurn({ harness, turn });
+      const request = harness.recordedRequests.at(0);
+      assert.ok(request, "missing SDK query request");
 
       assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);
-      assert.deepStrictEqual(queryRequestsWithoutPermissionPolicy(harness.recordedRequests), [
-        {
-          prompt: lostSessionRecoveryDriverPrompt,
-          options: {
+      assert.strictEqual(request.prompt, lostSessionRecoveryDriverPrompt);
+      assert.deepStrictEqual(
+        harness.recordedRequests.map((recordedRequest) =>
+          queryOptionsWithoutPermissionPolicy(recordedRequest.options),
+        ),
+        [
+          {
             cwd: "/new/project",
             model: "sonnet",
             sessionId: "00000000-0000-4000-8000-000000000302",
             includePartialMessages: true,
           },
-        },
-      ]);
+        ],
+      );
       assert.strictEqual(durableCursor(result), "00000000-0000-4000-8000-000000000302");
       assert.strictEqual(result.bindingCwd, "/new/project");
       assert.deepStrictEqual(result.lostSessionRecovery, {

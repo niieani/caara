@@ -6,6 +6,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { assert } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import * as Path from "effect/Path";
 
 import {
   AgentDriverRegistry,
@@ -268,6 +269,7 @@ export const fakeSdkHarness = ({
     layer: claudeAgentSdkAgentDriverRegistryLive.pipe(
       Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
       Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
+      Layer.provideMerge(Path.layer),
     ),
   };
 };

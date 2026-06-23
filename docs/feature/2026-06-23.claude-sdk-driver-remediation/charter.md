@@ -35,6 +35,8 @@ Out of scope:
   Verifier: architecture regression test plus SDK driver focused tests.
 - Active provider host IO for session persistence and path validation is supplied through Effect platform services or narrow config seams.
   Verifier: focused tests inject `FileSystem`/`Path`, assert env config failure, and cover existing provider/session harnesses with Bun platform layers.
+- Current-turn Responses text, images, and workspace-file references map into SDK user-message prompt content; prior assistant/tool history and unsupported opaque content do not.
+  Verifier: focused SDK prompt tests and SDK driver request assertions.
 - Every child issue is completed only after `bun lint`, `bun run test --run`, and `bun run fmt`.
   Verifier: command output captured in issue comments.
 - Final PRD completion requires independent implementation review with no unresolved blocking findings.
@@ -42,4 +44,4 @@ Out of scope:
 
 ## Execution Shape
 
-Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-exzcerfi, retire Claude CLI transport.
+Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-iqbzhbva, SDK prompt input mapping.
