@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer, Option, Stream } from "effect";
+import { Effect, Exit, Layer, Match, Option, Ref, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -202,6 +202,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);
+  const runtimeStreamFailed = yield* Ref.make(false);
   const runtimeEvents = driverTurnResult.runtimeEvents.pipe(
     Stream.tap((runtimeEvent) =>
       relayLogger.log({
@@ -210,18 +211,6 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
         turnId: responsesRequest.codex.turnId,
         runtimeEventTag: runtimeEvent._tag,
       }),
-    ),
-    Stream.catch((error) =>
-      Stream.drain(
-        Stream.fromEffect(
-          relayLogger.log({
-            _tag: "TurnFailed",
-            threadId: responsesRequest.codex.threadId,
-            turnId: responsesRequest.codex.turnId,
-            message: error.message,
-          }),
-        ),
-      ),
     ),
   );
   const completeTurn = Effect.gen(function* () {
@@ -237,6 +226,14 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       externalSession: driverTurnResult.externalSession,
     }).pipe(Effect.provideService(SessionDirectory, sessionDirectory));
   }).pipe(Effect.ensuring(lease.release));
+  const releaseFailedTurn = lease.release;
+  const completeOrReleaseTurn = Effect.gen(function* () {
+    const failed = yield* Ref.get(runtimeStreamFailed);
+    return yield* Match.value(failed).pipe(
+      Match.when(true, () => releaseFailedTurn),
+      Match.orElse(() => completeTurn),
+    );
+  });
   const cancelTurn = Effect.gen(function* () {
     const cancellation = yield* driverTurnResult.cancel();
     yield* relayLogger.log({
@@ -268,11 +265,10 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   /** Selects interrupted exits, which represent disconnected client streams. */
   const interruptedExitOption = (exit: Exit.Exit<unknown>): Option.Option<Exit.Exit<unknown>> =>
     Option.fromUndefinedOr([exit].filter(Exit.hasInterrupts).at(0));
-  const releaseFailedTurn = lease.release;
   /** Finalizes a streamed turn according to normal completion, cancellation, or failure cleanup. */
   const finalizeTurn = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
-      onSuccess: () => completeTurn,
+      onSuccess: () => completeOrReleaseTurn,
       onFailure: () =>
         Option.match(interruptedExitOption(exit), {
           onNone: () => releaseFailedTurn,
@@ -282,6 +278,16 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   const responseEventStream = createResponseEventStreamFromRuntimeEvents({
     request: responsesRequest.responses,
     runtimeEvents,
+    onRuntimeFailure: (error) =>
+      Effect.gen(function* () {
+        yield* Ref.set(runtimeStreamFailed, true);
+        yield* relayLogger.log({
+          _tag: "TurnFailed",
+          threadId: responsesRequest.codex.threadId,
+          turnId: responsesRequest.codex.turnId,
+          message: error.message,
+        });
+      }),
   }).pipe(Stream.onExit(finalizeTurn));
 
   return HttpServerResponse.stream(encodeSseEventStream(responseEventStream), {

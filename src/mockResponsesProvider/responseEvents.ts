@@ -1,5 +1,5 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
-import { Match, Stream } from "effect";
+import { Effect, Match, Stream } from "effect";
 
 import type { AgentRuntimeEvent } from "./agentDriver.ts";
 import { mockResponsesFixture, type ResponsesCreateRequest } from "./protocol.ts";
@@ -124,12 +124,26 @@ interface RuntimeMessageItem {
 /** Concrete output item union emitted by the runtime event encoder. */
 type RuntimeOutputItem = RuntimeReasoningItem | RuntimeMessageItem;
 
+/** Terminal state tracked while converting runtime events into Responses frames. */
+type RuntimeResponseTerminalState = "open" | "failed";
+
 /** Stateful encoder position for streaming runtime event conversion. */
 interface RuntimeResponseState {
   readonly sequenceNumber: number;
   readonly outputIndex: number;
   readonly output: readonly RuntimeOutputItem[];
+  readonly terminal: RuntimeResponseTerminalState;
 }
+
+/** Runtime stream value after driver errors are converted into terminal failure values. */
+type RuntimeTransportEvent =
+  | {
+      readonly _tag: "RuntimeEvent";
+      readonly runtimeEvent: AgentRuntimeEvent;
+    }
+  | {
+      readonly _tag: "RuntimeFailure";
+    };
 
 /** Builds a stable item id for a runtime event output item. */
 const runtimeItemId = ({
@@ -168,6 +182,7 @@ const initialRuntimeResponseState = ({
     sequenceNumber: 1,
     outputIndex: 0,
     output: [],
+    terminal: "open",
   },
   createdEvent: {
     event: "response.created",
@@ -299,6 +314,7 @@ const runtimeEventToSseEvents = ({
       sequenceNumber,
       outputIndex: state.outputIndex + 1,
       output,
+      terminal: state.terminal,
     },
     events,
   ] as const;
@@ -318,6 +334,63 @@ const completedEventFromState = ({
     response: createRuntimeResponse({ request, output: state.output }),
     sequence_number: state.sequenceNumber,
   } satisfies OpenAiSchema.ResponseStreamEvent,
+});
+
+/** Builds the terminal failed event from final stream encoder state. */
+const failedEventFromState = ({
+  request,
+  state,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+}): SseEvent => ({
+  event: "response.failed",
+  data: {
+    type: "response.failed",
+    response: createRuntimeResponse({ request, output: state.output }),
+    sequence_number: state.sequenceNumber,
+  } satisfies OpenAiSchema.ResponseStreamEvent,
+});
+
+/** Converts one runtime transport value plus encoder state into SSE frames and next state. */
+const runtimeTransportEventToSseEvents = ({
+  request,
+  state,
+  transportEvent,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+  readonly transportEvent: RuntimeTransportEvent;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] =>
+  Match.valueTags(transportEvent, {
+    RuntimeEvent: ({ runtimeEvent }) => runtimeEventToSseEvents({ state, runtimeEvent }),
+    RuntimeFailure: () =>
+      [
+        {
+          ...state,
+          sequenceNumber: state.sequenceNumber + 1,
+          terminal: "failed",
+        },
+        [failedEventFromState({ request, state })],
+      ] as const,
+  });
+
+/** Builds terminal SSE frames for a halted runtime transport stream. */
+const terminalEventsFromState = ({
+  request,
+  state,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+}): readonly SseEvent[] =>
+  Match.value(state.terminal).pipe(
+    Match.when("failed", (): readonly SseEvent[] => []),
+    Match.orElse((): readonly SseEvent[] => [completedEventFromState({ request, state })]),
+  );
+
+/** Type-shape function for side effects run when a runtime stream fails. */
+const runtimeFailureHandlerShape = Effect.fnUntraced(function* () {
+  yield* Effect.void;
 });
 
 /** Builds Responses-compatible SSE frames from normalized driver runtime events. */
@@ -369,17 +442,38 @@ export const createResponseEventsFromRuntimeEvents = ({
 export const createResponseEventStreamFromRuntimeEvents = <E, R>({
   request,
   runtimeEvents,
+  onRuntimeFailure = () => runtimeFailureHandlerShape(),
 }: {
   readonly request: ResponsesCreateRequest;
   readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, E, R>;
-}): Stream.Stream<SseEvent, E, R> => {
+  readonly onRuntimeFailure?: (error: E) => ReturnType<typeof runtimeFailureHandlerShape>;
+}): Stream.Stream<SseEvent, never, R> => {
   const initial = initialRuntimeResponseState({ request });
-  const runtimeResponseEvents = runtimeEvents.pipe(
+  const transportEvents = runtimeEvents.pipe(
+    Stream.map(
+      (runtimeEvent): RuntimeTransportEvent => ({
+        _tag: "RuntimeEvent",
+        runtimeEvent,
+      }),
+    ),
+    Stream.catch((error) =>
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          yield* onRuntimeFailure(error);
+          return {
+            _tag: "RuntimeFailure",
+          } satisfies RuntimeTransportEvent;
+        }),
+      ),
+    ),
+  );
+  const runtimeResponseEvents = transportEvents.pipe(
     Stream.mapAccum(
       () => initial.state,
-      (state, runtimeEvent) => runtimeEventToSseEvents({ state, runtimeEvent }),
+      (state, transportEvent) =>
+        runtimeTransportEventToSseEvents({ request, state, transportEvent }),
       {
-        onHalt: (state) => [completedEventFromState({ request, state })],
+        onHalt: (state) => terminalEventsFromState({ request, state }),
       },
     ),
   );

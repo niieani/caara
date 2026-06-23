@@ -19,6 +19,8 @@ export const simulatorDriverFixture = {
   resumedAssistantText: "Simulator driver resumed prior session with previous target",
   recoveryAssistantText: lostSessionRecoveryAssistantText,
   startFailureMessage: "simulator driver failed before runtime events",
+  runtimeFailureBeforeOutputMessage: "simulator driver runtime failed before output",
+  runtimeFailureAfterPartialMessage: "simulator driver runtime failed after partial output",
   unrecoverableSessionFailureMessage:
     "simulator driver could not resume prior session or start a fresh external session",
   externalSessionId: "simulator-session-codex-thread-session-binding",
@@ -74,6 +76,41 @@ const simulatorStartFailureOption = (turn: AgentDriverTurn): Option.Option<strin
     Option.filter((failureMode) => failureMode === "start"),
   );
 
+/** Returns a runtime failure marker when the simulator stream should fail after start. */
+const simulatorRuntimeFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_failure).pipe(
+    Option.filter(
+      (failureMode) =>
+        failureMode === "runtime_before_output" || failureMode === "runtime_after_partial",
+    ),
+  );
+
+/** Builds the driver error emitted by simulator runtime failure streams. */
+const simulatorRuntimeFailureError = (failureMode: string): AgentDriverError => {
+  const message = Match.value(failureMode).pipe(
+    Match.when(
+      "runtime_after_partial",
+      () => simulatorDriverFixture.runtimeFailureAfterPartialMessage,
+    ),
+    Match.orElse(() => simulatorDriverFixture.runtimeFailureBeforeOutputMessage),
+  );
+  return new AgentDriverError({ message });
+};
+
+/** Builds a stream that emits one partial reasoning event before failing. */
+const simulatorPartialRuntimeFailureStream = (
+  failureMode: string,
+): Stream.Stream<AgentRuntimeEvent, AgentDriverError> =>
+  Stream.concat(
+    Stream.fromIterable<AgentRuntimeEvent>([
+      {
+        _tag: "ReasoningDelta",
+        text: simulatorDriverFixture.reasoningText,
+      },
+    ]),
+    Stream.fail(simulatorRuntimeFailureError(failureMode)),
+  );
+
 /** Returns a resume-failure marker when an existing simulator session should be unrecoverable. */
 const simulatorResumeFailureOption = (turn: AgentDriverTurn): Option.Option<string> =>
   Option.fromUndefinedOr(turn.target.rawDriverOptions.simulator_resume).pipe(
@@ -93,11 +130,23 @@ const simulatorHoldOpenOption = (turn: AgentDriverTurn): Option.Option<string> =
     Option.filter((holdMode) => holdMode === "open"),
   );
 
-/** Builds the simulator runtime event stream for held-open or normal turns. */
-const simulatorRuntimeEventStream = (turn: AgentDriverTurn): Stream.Stream<AgentRuntimeEvent> =>
-  Option.match(simulatorHoldOpenOption(turn), {
-    onNone: () => Stream.fromIterable(createSimulatorEvents(turn)),
-    onSome: () => Stream.never,
+/** Builds the simulator runtime event stream for held-open, failing, or normal turns. */
+const simulatorRuntimeEventStream = (
+  turn: AgentDriverTurn,
+): Stream.Stream<AgentRuntimeEvent, AgentDriverError> =>
+  Option.match(simulatorRuntimeFailureOption(turn), {
+    onNone: () =>
+      Option.match(simulatorHoldOpenOption(turn), {
+        onNone: () => Stream.fromIterable(createSimulatorEvents(turn)),
+        onSome: () => Stream.never,
+      }),
+    onSome: (failureMode) =>
+      Match.value(failureMode).pipe(
+        Match.when("runtime_after_partial", () =>
+          simulatorPartialRuntimeFailureStream(failureMode),
+        ),
+        Match.orElse(() => Stream.fail(simulatorRuntimeFailureError(failureMode))),
+      ),
   });
 
 /** Returns the simulator cancellation mode requested by driver options. */
