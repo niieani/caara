@@ -70,12 +70,14 @@ const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
   settings,
   conversationId,
   observation,
+  options,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly pathService: Path.Path;
   readonly settings: AntigravityCliSettingsValue;
   readonly conversationId: string;
   readonly observation?: AntigravityTranscriptObservation;
+  readonly options: AntigravityCliOptions;
 }) {
   const transcriptPath = antigravityTranscriptFullPath({
     pathService,
@@ -86,6 +88,8 @@ const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
     fileSystem,
     transcriptPath,
     state: observation?.state,
+    reasoning: options.reasoning,
+    activity: options.activity,
   });
 });
 
@@ -137,6 +141,7 @@ const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
     pathService,
     settings,
     conversationId,
+    options,
   });
   return { conversationId, runtimeEvents };
 });
@@ -337,6 +342,7 @@ export const makeAntigravityCliAgentDriver = ({
                             settings,
                             conversationId: cursor.conversationId,
                             observation,
+                            options,
                           }),
                           (runtimeEvents) =>
                             antigravityTurnResult({

@@ -2,23 +2,47 @@ import { Effect, Match, Option, Schema } from "effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
-import {
-  AgentDriverError,
-  type AgentRuntimeEvent,
-  createAssistantTextRuntimeEvents,
-  createRuntimeTurnSucceededEvent,
-} from "../mockResponsesProvider/agentDriver.ts";
+import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import type { AntigravityRelayMode } from "./options.ts";
+import { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
 
-/** Minimal Antigravity transcript record shape needed for first-turn final output. */
+export { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
+
+/** Safe Antigravity tool-call metadata fields allowed to influence activity text. */
+const AntigravityToolMetadata = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  toolName: Schema.optional(Schema.String),
+  tool_name: Schema.optional(Schema.String),
+  type: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  filePath: Schema.optional(Schema.String),
+  file_path: Schema.optional(Schema.String),
+  toolSummary: Schema.optional(Schema.String),
+  toolAction: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
+});
+
+/** Antigravity transcript record shape accepted by the driver-owned mapper. */
 const AntigravityTranscriptRecord = Schema.Struct({
   step_index: Schema.Finite,
   source: Schema.String,
   type: Schema.String,
   status: Schema.String,
   content: Schema.optional(Schema.String),
+  thinking: Schema.optional(Schema.String),
+  tool_calls: Schema.optional(Schema.Array(AntigravityToolMetadata)),
+  name: Schema.optional(Schema.String),
+  toolName: Schema.optional(Schema.String),
+  tool_name: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  filePath: Schema.optional(Schema.String),
+  file_path: Schema.optional(Schema.String),
+  toolSummary: Schema.optional(Schema.String),
+  toolAction: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
 });
 
-/** Minimal Antigravity transcript record shape needed for first-turn final output. */
+/** Antigravity transcript record shape accepted by the driver-owned mapper. */
 export type AntigravityTranscriptRecord = typeof AntigravityTranscriptRecord.Type;
 
 /** In-memory observation state for append-only Antigravity transcript snapshots. */
@@ -96,23 +120,6 @@ const decodeTranscriptLine = Effect.fnUntraced(function* (line: string) {
   );
   return yield* validateSupportedTranscriptRecord(record);
 });
-
-/** Returns the final completed planner response content, if present. */
-const finalPlannerContentOption = (
-  records: readonly AntigravityTranscriptRecord[],
-): Option.Option<string> =>
-  Option.fromUndefinedOr(
-    records
-      .filter(
-        (record) =>
-          record.source === "MODEL" &&
-          record.type === "PLANNER_RESPONSE" &&
-          record.status === "DONE" &&
-          record.content !== undefined,
-      )
-      .map((record) => record.content)
-      .at(-1),
-  );
 
 /** Returns whether one Antigravity record shape is supported by the current driver contract. */
 const isSupportedTranscriptRecord = (record: AntigravityTranscriptRecord): boolean =>
@@ -233,31 +240,6 @@ export const observeAntigravityTranscriptContent = Effect.fnUntraced(function* (
   } satisfies AntigravityTranscriptObservation;
 });
 
-/** Converts validated Antigravity transcript records into first-turn runtime events. */
-export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function* ({
-  records,
-}: {
-  readonly records: readonly AntigravityTranscriptRecord[];
-}) {
-  const content = yield* Option.match(finalPlannerContentOption(records), {
-    onNone: () =>
-      Effect.fail(
-        new AgentDriverError({
-          message: "Antigravity transcript did not contain a completed final model response.",
-        }),
-      ),
-    onSome: Effect.succeed,
-  });
-  return [
-    ...createAssistantTextRuntimeEvents({
-      itemId: "msg_antigravity_cli_final",
-      text: content,
-      messagePhase: "final_answer",
-    }),
-    createRuntimeTurnSucceededEvent(),
-  ] satisfies readonly AgentRuntimeEvent[];
-});
-
 /** Reads one transcript snapshot and observes it from the supplied append-only state. */
 export const readAntigravityTranscriptObservation = Effect.fnUntraced(function* ({
   fileSystem,
@@ -277,15 +259,23 @@ export const readAntigravityTranscriptRuntimeEvents = Effect.fnUntraced(function
   fileSystem,
   transcriptPath,
   state = emptyAntigravityTranscriptObservationState,
+  reasoning,
+  activity,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly transcriptPath: string;
   readonly state?: AntigravityTranscriptObservationState;
+  readonly reasoning?: AntigravityRelayMode;
+  readonly activity?: AntigravityRelayMode;
 }) {
   const observation = yield* readAntigravityTranscriptObservation({
     fileSystem,
     transcriptPath,
     state,
   });
-  return yield* runtimeEventsFromAntigravityTranscript({ records: observation.records });
+  return yield* runtimeEventsFromAntigravityTranscript({
+    records: observation.records,
+    reasoning,
+    activity,
+  });
 });

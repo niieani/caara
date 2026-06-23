@@ -5,6 +5,7 @@ export const fakeAgyFixture = {
   finalAnswer: "agy transcript final answer",
   resumedAnswer: "agy resumed transcript final answer",
   recoveredAnswer: "agy recovered transcript final answer",
+  reasoningText: "agy transcript reasoning summary",
 } as const;
 
 /** Bun executable fixture that simulates the Antigravity CLI transcript/log contract. */
@@ -87,7 +88,13 @@ if (mode !== "missing-transcript") {
     { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
     { step_index: 1, source: "SYSTEM", type: "CONVERSATION_HISTORY", status: "DONE", created_at: "2026-06-23T03:09:01Z" },
   ];
-  if (mode !== "missing-final") {
+  if (mode === "reasoning-activity") {
+    records.push(
+      { step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "LIST_DIRECTORY", path: "src", payload: "FULL_TOOL_PAYLOAD_SHOULD_NOT_LEAK" }] },
+      { step_index: 3, source: "MODEL", type: "VIEW_FILE", status: "DONE", created_at: "2026-06-23T03:09:01Z", file_path: "src/server.ts", content: "FULL_FILE_CONTENT_SHOULD_NOT_LEAK" },
+      { step_index: 4, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", thinking: "${fakeAgyFixture.reasoningText}", content: "${fakeAgyFixture.finalAnswer}" },
+    );
+  } else if (mode !== "missing-final") {
     records.push({ step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: freshRecovery ? "${fakeAgyFixture.recoveredAnswer}" : "${fakeAgyFixture.finalAnswer}" });
   }
   fs.writeFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
