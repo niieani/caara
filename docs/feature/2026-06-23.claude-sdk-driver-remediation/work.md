@@ -24,7 +24,7 @@ Test seam:
 - Provider integration tests with simulator driver runtime failures.
 - Assert SSE events, relay logs, session binding file, and next-turn lease reuse.
 
-## Current Slice: CAARA-yrrtiwje
+## Completed Slice: CAARA-yrrtiwje
 
 Problem:
 
@@ -40,3 +40,20 @@ Target:
 Test seam:
 
 - `agentDriverContract.test.ts` resolves a driver via `AgentDriverRegistry`, starts it, consumes the runtime stream, runs cancellation, and checks typed runtime failure stream behavior.
+
+## Completed Slice: CAARA-tywjydqs
+
+Problem:
+
+- Codebase had no official Claude Agent SDK dependency.
+- Claude SDK query creation had no injectable seam for tests.
+
+Target:
+
+- Add current `@anthropic-ai/claude-agent-sdk` and required peer dependencies with Bun.
+- Introduce an Effect service that owns direct SDK `query()` calls.
+- Expose SDK prompt/options/message types at the seam while keeping runtime fakes structural.
+
+Test seam:
+
+- `claudeAgentSdkClient.test.ts` injects a fake client, records typed SDK options, emits a typed SDK message via `AsyncIterable`, and never spawns Claude.
