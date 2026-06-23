@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 
-import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { BunHttpServer } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
@@ -16,7 +15,6 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
-import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
@@ -179,14 +177,47 @@ const providerLayer = ({
     Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
-/** Decodes Responses SSE frames from a response byte stream. */
-const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+/** Decodes raw Responses SSE frame data without dropping extension fields such as phase. */
+const decodeUnknownResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
   stream.pipe(
     Stream.decodeText(),
-    Stream.pipeThroughChannel(Sse.decodeDataSchema(OpenAiSchema.ResponseStreamEvent)),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
+
+/** Schema used to extract assistant message completion items from raw SSE data. */
+const AssistantMessageDoneData = Schema.Struct({
+  type: Schema.Literal("response.output_item.done"),
+  item: Schema.Struct({
+    type: Schema.Literal("message"),
+    phase: Schema.optional(
+      Schema.Union([Schema.Literal("commentary"), Schema.Literal("final_answer")]),
+    ),
+    content: Schema.Array(
+      Schema.Struct({
+        type: Schema.Literal("output_text"),
+        text: Schema.String,
+      }),
+    ),
+  }),
+});
+
+/** Assistant message done data decoded from a raw Responses SSE frame. */
+type AssistantMessageDoneData = typeof AssistantMessageDoneData.Type;
+
+/** Returns completed assistant message items from raw decoded SSE frames. */
+const assistantMessageDoneData = (
+  frames: readonly { readonly data: unknown }[],
+): readonly AssistantMessageDoneData[] =>
+  frames.map((frame) => frame.data).filter(Schema.is(AssistantMessageDoneData));
+
+/** Extracts the first text content from a completed assistant message item. */
+const messageText = (message: AssistantMessageDoneData): string => {
+  const content = message.item.content.at(0);
+  assert.ok(content, "missing assistant content");
+  return content.text;
+};
 
 /** Runs one successful recovery test turn through the shared state directory. */
 const runTurn = ({
@@ -219,9 +250,12 @@ const runTurn = ({
       headers: makeHeaders({ turnId, includeWorkspace }),
     });
     const response = yield* HttpClient.execute(request);
-    const frames = yield* decodeResponseSseFrames(response.stream);
+    const frames = yield* decodeUnknownResponseSseFrames(response.stream);
     assert.strictEqual(response.status, 200);
-    return assistantTextFromResponseFrames(frames);
+    const messages = assistantMessageDoneData(frames);
+    const message = messages.at(0);
+    assert.ok(message, "missing assistant message done event");
+    return { assistantText: messageText(message), messages };
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
 
 /** Runs one recovery test turn expected to fail at the transport layer. */
@@ -299,7 +333,7 @@ describe("session recovery Diagnostic integration", () => {
       const diagnostics: Array<ResponsesRequestDiagnostics> = [];
       const relayEvents: Array<RelayLogEvent> = [];
 
-      const firstAssistantText = yield* runTurn({
+      const first = yield* runTurn({
         stateDir,
         turnId: "turn-recovery-seed",
         model: "diagnostic/basic",
@@ -310,9 +344,9 @@ describe("session recovery Diagnostic integration", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(firstAssistantText, diagnosticDriverFixture.basicAnswerText);
+      assert.strictEqual(first.assistantText, diagnosticDriverFixture.basicAnswerText);
 
-      const recoveryAssistantText = yield* runTurn({
+      const recovery = yield* runTurn({
         stateDir,
         turnId: "turn-recovery-fresh",
         model: "diagnostic/recovery",
@@ -323,7 +357,11 @@ describe("session recovery Diagnostic integration", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(recoveryAssistantText, lostSessionRecoveryAssistantText);
+      assert.strictEqual(recovery.assistantText, lostSessionRecoveryAssistantText);
+      assert.deepStrictEqual(
+        recovery.messages.map((message) => [message.item.phase, messageText(message)]),
+        [["final_answer", lostSessionRecoveryAssistantText]],
+      );
       assert.deepStrictEqual(
         relayEvents.filter((event) => event._tag === "LostSessionRecovered"),
         [

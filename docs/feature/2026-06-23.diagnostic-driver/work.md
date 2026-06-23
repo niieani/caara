@@ -108,3 +108,24 @@ Implemented shape:
 Verification:
 
 - `bun run test src/mockResponsesProvider/turnCancellation.test.ts src/mockResponsesProvider/turnConcurrency.test.ts --run`
+
+## Completed Slice: CAARA-zpdpednf
+
+Target:
+
+- Exercise Caara's standard lost-continuity recovery prompt with `diagnostic/recovery`.
+- Treat successful fresh-session recovery as a final answer, not activity commentary or transport
+  failure.
+- Preserve the old binding when the fresh recovery session cannot start.
+
+Implemented shape:
+
+- Diagnostic recovery returns Caara-owned `lostSessionRecoveryAssistantText`, records
+  `LostSessionRecovered`, and writes a fresh Diagnostic resume cursor.
+- Recovery runtime events now explicitly mark the prompt message as `phase: "final_answer"`.
+- Failure option `diagnostic_fresh_start=failure` returns OpenAI-shaped failure and preserves the
+  original binding for inspection.
+
+Verification:
+
+- `bun run test src/mockResponsesProvider/sessionRecovery.test.ts --run`

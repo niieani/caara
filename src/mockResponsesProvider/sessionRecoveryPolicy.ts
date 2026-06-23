@@ -15,6 +15,7 @@ export const lostSessionRecoveryDriverPrompt = `Reply with exactly this text and
 export const createLostSessionRecoveryRuntimeEvents = (): readonly AgentRuntimeEvent[] => [
   ...createAssistantTextRuntimeEvents({
     itemId: "lost-session-recovery-message",
+    messagePhase: "final_answer",
     text: lostSessionRecoveryAssistantText,
   }),
   createRuntimeTurnSucceededEvent(),
