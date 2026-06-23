@@ -10,15 +10,13 @@ import {
   type AgentDriverResolve,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
-  createAssistantTextRuntimeEvents,
-  createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import {
   DurableExternalSession,
   makeDriverResumeCursor,
 } from "../mockResponsesProvider/sessionDirectory.ts";
-import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
+import { lostSessionRecoveryDriverPrompt } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import {
   ClaudeAgentSdkClient,
   claudeAgentSdkClientLive,
@@ -76,10 +74,6 @@ const requiresFreshSessionForCwdChange = (turn: AgentDriverTurn): boolean => {
     requestedCwd !== turn.cwd
   );
 };
-
-/** Builds the prompt used to create a fresh SDK session after continuity is broken. */
-const recoveryPrompt = (): string =>
-  `Reply with exactly this text and nothing else:\n\n${lostSessionRecoveryAssistantText}`;
 
 /** Builds the standard durable session state for a Claude SDK session id. */
 const durableSession = (sessionId: string): DurableExternalSession =>
@@ -174,33 +168,60 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
   } satisfies AgentDriverTurnResult;
 });
 
-/** Starts a fresh SDK session and returns the standard lost-continuity recovery reply. */
+/** Converts a failed SDK resume query into a fresh-session lost-continuity recovery. */
+const recoverFailedResumeQuery = ({
+  turnResult,
+  client,
+  generator,
+  turn,
+  resume,
+}: {
+  readonly turnResult: EffectContract<AgentDriverTurnResult, AgentDriverError>;
+  readonly client: ClaudeAgentSdkClient["Service"];
+  readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly resume: string;
+}) =>
+  turnResult.pipe(
+    Effect.catchTag("AgentDriverError", (error) =>
+      recoverWithFreshSdkSession({
+        client,
+        generator,
+        turn,
+        reason: "sdk-resume-query-failed",
+        diagnostics: {
+          message: error.message,
+          previousCursor: resume,
+        },
+        freshCwd: turn.cwd,
+      }),
+    ),
+  );
+
+/** Starts a fresh SDK session and returns typed lost-continuity recovery metadata. */
 const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
   client,
   generator,
   turn,
+  reason,
+  diagnostics,
+  freshCwd,
 }: {
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
   readonly turn: AgentDriverTurn;
+  readonly reason: string;
+  readonly diagnostics: Readonly<Record<string, string>>;
+  readonly freshCwd: string;
 }) {
-  const requestedCwd = yield* requestedCwdOption(turn).pipe(
-    Option.match({
-      onNone: () =>
-        new AgentDriverError({
-          message: "Claude SDK session continuity is broken but no replacement cwd was provided.",
-        }),
-      onSome: Effect.succeed,
-    }),
-  );
   const sessionId = yield* generator.nextSessionId;
   const options = yield* buildClaudeAgentSdkQueryOptions({
-    cwd: requestedCwd,
+    cwd: freshCwd,
     model: turn.target.externalModelSpecifier,
     rawDriverOptions: turn.target.rawDriverOptions,
     startup: { _tag: "Start", sessionId },
   });
-  yield* client.query({ prompt: recoveryPrompt(), options }).pipe(
+  yield* client.query({ prompt: lostSessionRecoveryDriverPrompt, options }).pipe(
     Effect.mapError(
       (error) =>
         new AgentDriverError({
@@ -210,15 +231,13 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
   );
 
   return {
-    runtimeEvents: Stream.fromIterable([
-      ...createAssistantTextRuntimeEvents({
-        itemId: "claude-sdk-recovery-message",
-        text: lostSessionRecoveryAssistantText,
-      }),
-      createRuntimeTurnSucceededEvent(),
-    ]),
+    runtimeEvents: Stream.empty,
     externalSession: durableSession(sessionId),
-    bindingCwd: requestedCwd,
+    bindingCwd: freshCwd,
+    lostSessionRecovery: {
+      reason,
+      diagnostics,
+    },
     cancel: Effect.succeed({
       _tag: "Interrupted",
       sessionReusable: true,
@@ -250,7 +269,7 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
       }),
   });
 
-  return yield* sdkQueryTurnResult({
+  const turnResult = sdkQueryTurnResult({
     client,
     turn,
     prompt,
@@ -258,6 +277,20 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
     cursor: startup.cursor,
     cwd: turn.cwd,
   });
+  return yield* Match.value(startup.startup).pipe(
+    Match.tags({
+      Start: () => turnResult,
+      Resume: ({ resume }) =>
+        recoverFailedResumeQuery({
+          turnResult,
+          client,
+          generator,
+          turn,
+          resume,
+        }),
+    }),
+    Match.exhaustive,
+  );
 });
 
 /** Builds a Claude Agent SDK agent driver from injected SDK services. */
@@ -270,7 +303,20 @@ const createClaudeAgentSdkAgentDriver = ({
 }): AgentDriver => ({
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Match.value(requiresFreshSessionForCwdChange(turn)).pipe(
-      Match.when(true, () => recoverWithFreshSdkSession({ client, generator, turn })),
+      Match.when(true, () =>
+        recoverWithFreshSdkSession({
+          client,
+          generator,
+          turn,
+          reason: "cwd-changed",
+          diagnostics: {
+            previousCwd: turn.cwd,
+            requestedCwd: turn.requestedCwd ?? "unknown",
+            previousCursor: Option.getOrUndefined(durableResumeCursorOption(turn)) ?? "unknown",
+          },
+          freshCwd: turn.requestedCwd ?? turn.cwd,
+        }),
+      ),
       Match.orElse(() => startContinuableSdkTurn({ client, generator, turn })),
     );
   }),

@@ -18,6 +18,7 @@ import {
 import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionBindingFilePath, sessionDirectoryLive } from "./sessionDirectory.ts";
+import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
@@ -321,7 +322,22 @@ describe("session recovery simulator integration", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(recoveryAssistantText, simulatorDriverFixture.recoveryAssistantText);
+      assert.strictEqual(recoveryAssistantText, lostSessionRecoveryAssistantText);
+      assert.deepStrictEqual(
+        relayEvents.filter((event) => event._tag === "LostSessionRecovered"),
+        [
+          {
+            _tag: "LostSessionRecovered",
+            threadId: makeThreadId(),
+            turnId: "turn-recovery-fresh",
+            reason: "simulator-unresumable-session",
+            diagnostics: {
+              driver: "simulator",
+              previousCursor: simulatorDriverFixture.externalSessionCursor,
+            },
+          },
+        ],
+      );
       assert.deepStrictEqual(yield* readPersistedBinding({ stateDir }), {
         schemaVersion: 2,
         apiResponseId: "resp_turn-recovery-fresh",

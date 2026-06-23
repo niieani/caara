@@ -16,7 +16,7 @@ import {
   DurableExternalSession,
   makeDriverResumeCursor,
 } from "../mockResponsesProvider/sessionDirectory.ts";
-import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
+import { lostSessionRecoveryDriverPrompt } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import {
   ClaudeAgentSdkClient,
   ClaudeAgentSdkClientError,
@@ -421,7 +421,7 @@ describe("Claude Agent SDK driver", () => {
 
       assert.deepStrictEqual(harness.recordedRequests, [
         {
-          prompt: `Reply with exactly this text and nothing else:\n\n${lostSessionRecoveryAssistantText}`,
+          prompt: lostSessionRecoveryDriverPrompt,
           options: {
             cwd: "/new/project",
             model: "sonnet",
@@ -432,13 +432,15 @@ describe("Claude Agent SDK driver", () => {
       ]);
       assert.strictEqual(durableCursor(result), "00000000-0000-4000-8000-000000000302");
       assert.strictEqual(result.bindingCwd, "/new/project");
-      assert.deepStrictEqual(events, [
-        ...createAssistantTextRuntimeEvents({
-          itemId: "claude-sdk-recovery-message",
-          text: lostSessionRecoveryAssistantText,
-        }),
-        createRuntimeTurnSucceededEvent(),
-      ] satisfies readonly AgentRuntimeEvent[]);
+      assert.deepStrictEqual(result.lostSessionRecovery, {
+        reason: "cwd-changed",
+        diagnostics: {
+          previousCwd: "/old/project",
+          requestedCwd: "/new/project",
+          previousCursor: "00000000-0000-4000-8000-000000000301",
+        },
+      });
+      assert.deepStrictEqual(events, [] satisfies readonly AgentRuntimeEvent[]);
     }),
   );
 

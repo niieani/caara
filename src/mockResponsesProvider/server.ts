@@ -23,6 +23,7 @@ import {
   prepareSessionBinding,
   SessionDirectory,
 } from "./sessionDirectory.ts";
+import { createLostSessionRecoveryRuntimeEvents } from "./sessionRecoveryPolicy.ts";
 import { encodeSseEventStream } from "./sse.ts";
 import { TurnConcurrency, type TurnConcurrencyConflict } from "./turnConcurrency.ts";
 
@@ -202,9 +203,27 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);
+  yield* Option.match(Option.fromUndefinedOr(driverTurnResult.lostSessionRecovery), {
+    onNone: () => Effect.void,
+    onSome: (recovery) =>
+      relayLogger.log({
+        _tag: "LostSessionRecovered",
+        threadId: responsesRequest.codex.threadId,
+        turnId: responsesRequest.codex.turnId,
+        reason: recovery.reason,
+        diagnostics: recovery.diagnostics,
+      }),
+  });
   const runtimeTurnFailed = yield* Ref.make(false);
   const runtimeTurnSucceeded = yield* Ref.make(false);
-  const runtimeEvents = driverTurnResult.runtimeEvents.pipe(
+  const driverRuntimeEvents = Option.match(
+    Option.fromUndefinedOr(driverTurnResult.lostSessionRecovery),
+    {
+      onNone: () => driverTurnResult.runtimeEvents,
+      onSome: () => Stream.fromIterable(createLostSessionRecoveryRuntimeEvents()),
+    },
+  );
+  const runtimeEvents = driverRuntimeEvents.pipe(
     Stream.tap((runtimeEvent) =>
       Effect.gen(function* () {
         yield* relayLogger.log({

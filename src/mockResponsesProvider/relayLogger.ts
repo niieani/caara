@@ -83,6 +83,15 @@ export interface TurnCancelledRelayEvent {
   readonly sessionReusable: boolean;
 }
 
+/** Relay event recorded when Caara replaces a lost external-agent session. */
+export interface LostSessionRecoveredRelayEvent {
+  readonly _tag: "LostSessionRecovered";
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly reason: string;
+  readonly diagnostics: Readonly<Record<string, string>>;
+}
+
 /** Structured relay event emitted around Codex-to-driver turn processing. */
 export type RelayLogEvent =
   | TurnAcceptedRelayEvent
@@ -93,7 +102,8 @@ export type RelayLogEvent =
   | TurnFailedRelayEvent
   | TurnConcurrencyConflictRelayEvent
   | TurnInFlightAcquiredRelayEvent
-  | TurnCancelledRelayEvent;
+  | TurnCancelledRelayEvent
+  | LostSessionRecoveredRelayEvent;
 
 /** Logs structured relay events for observability and test artifact capture. */
 export class RelayLogger extends Context.Service<

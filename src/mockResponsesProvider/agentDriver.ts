@@ -130,11 +130,18 @@ export type AgentCancellationOutcome =
 /** Contract for cancelling one driver-owned in-flight turn. */
 export type AgentDriverCancel = EffectContract<AgentCancellationOutcome>;
 
+/** Driver-reported lost-session recovery metadata for Caara-owned recovery replies. */
+export interface AgentLostSessionRecovery {
+  readonly reason: string;
+  readonly diagnostics: Readonly<Record<string, string>>;
+}
+
 /** Driver start result containing runtime events and durable external session state. */
 export interface AgentDriverTurnResult {
   readonly runtimeEvents: AgentRuntimeEventStream;
   readonly externalSession: ExternalSessionState;
   readonly bindingCwd?: string;
+  readonly lostSessionRecovery?: AgentLostSessionRecovery;
   readonly cancel: AgentDriverCancel;
 }
 
