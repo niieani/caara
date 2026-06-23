@@ -152,3 +152,24 @@ Test seam:
 - `claudeAgentSdkPermissionPolicy.test.ts` covers SDK permission callbacks, dialog cancellation, reserved-tool validation, and `permission_denied` runtime mapping.
 - `claudeCodePermissionPolicy.test.ts` and `claudeCodeContract.test.ts` cover CLI defaults and reserved-tool validation.
 - `agentRegistryRouting.test.ts` covers relay logging and response completion for `PermissionDenied` runtime events.
+
+## Completed Slice: CAARA-sbvkyfbv
+
+Problem:
+
+- Session binding persistence used direct `node:fs/promises`, `node:path`, `node:os`, `Bun.file`, and import-time `process.env` state-dir resolution.
+- Codex workspace/cwd validation used `node:path` directly instead of an injectable path service.
+- Provider integration tests could not substitute session-directory host IO without touching the real filesystem.
+
+Target:
+
+- Move session-directory reads, writes, deletes, and path construction behind injected `FileSystem.FileSystem` and `Path.Path`.
+- Resolve live Caara state directory at layer construction through an explicit env config seam that fails without `CAARA_STATE_DIR`, `XDG_STATE_HOME`, or `HOME`.
+- Move Codex absolute-path filtering to injected `Path.Path`.
+- Provide Bun platform services at app/test composition edges while keeping tests able to inject fake platform services.
+
+Test seam:
+
+- `sessionDirectoryPlatformServices.test.ts` proves fake `FileSystem` injection is used and empty env fails explicitly.
+- `codexTurnContext.test.ts` proves workspace path filtering uses injected `Path`.
+- Provider/session/Claude Code harness tests prove Bun platform services are supplied at integration edges.

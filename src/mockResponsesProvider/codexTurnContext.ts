@@ -1,6 +1,5 @@
-import path from "node:path";
-
 import { Effect, Option, Schema } from "effect";
+import * as Path from "effect/Path";
 
 import { InvalidResponsesRequest } from "./errors.ts";
 import { decodeResponsesCreateRequest, type ResponsesCreateRequest } from "./protocol.ts";
@@ -266,14 +265,26 @@ const parseAgentTarget = Effect.fnUntraced(function* ({
 });
 
 /** Returns absolute workspace paths from the validated Codex metadata object. */
-const workspacePathsFromMetadata = (
-  metadata: typeof codexTurnMetadataSchema.Type,
-): readonly string[] =>
-  Object.keys(metadata.workspaces ?? {}).filter((workspacePath) => path.isAbsolute(workspacePath));
+const workspacePathsFromMetadata = ({
+  metadata,
+  pathService,
+}: {
+  readonly metadata: typeof codexTurnMetadataSchema.Type;
+  readonly pathService: Path.Path;
+}): readonly string[] =>
+  Object.keys(metadata.workspaces ?? {}).filter((workspacePath) =>
+    pathService.isAbsolute(workspacePath),
+  );
 
 /** Returns body-derived cwd candidates after absolute-path validation and de-duplication. */
-const cwdCandidatesFromBody = (body: Schema.Json): readonly string[] => [
-  ...new Set(extractCwdCandidates(body).filter((candidate) => path.isAbsolute(candidate))),
+const cwdCandidatesFromBody = ({
+  body,
+  pathService,
+}: {
+  readonly body: Schema.Json;
+  readonly pathService: Path.Path;
+}): readonly string[] => [
+  ...new Set(extractCwdCandidates(body).filter((candidate) => pathService.isAbsolute(candidate))),
 ];
 
 /** Enforces that a new external code-agent binding has at least one cwd source. */
@@ -313,6 +324,7 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
   const decodedHeaders = yield* decodeCodexHeaders(headers);
   const metadata = yield* decodeTurnMetadata(decodedHeaders["x-codex-turn-metadata"]);
   const bodyMetadata = yield* decodeBodyClientMetadata(body);
+  const pathService = yield* Path.Path;
   yield* validateIdentityConsistency({ headers: decodedHeaders, metadata, bodyMetadata });
 
   const rawDriverOptions = yield* parseProviderQueryParams(url);
@@ -320,8 +332,8 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
     requestedModel: responses.model,
     rawDriverOptions,
   });
-  const workspacePaths = workspacePathsFromMetadata(metadata);
-  const cwdCandidates = cwdCandidatesFromBody(body);
+  const workspacePaths = workspacePathsFromMetadata({ metadata, pathService });
+  const cwdCandidates = cwdCandidatesFromBody({ body, pathService });
   yield* validateCwdRequirement({ requireCwd, workspacePaths, cwdCandidates });
 
   return {

@@ -20,9 +20,9 @@ import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import {
   CaaraSessionBinding,
   DurableExternalSession,
-  sessionBindingFilePath,
-  sessionDirectoryLive,
 } from "../mockResponsesProvider/sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
+import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
 import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts";
 import { claudeCodeAgentDriverRegistryLive } from "./driver.ts";
 
@@ -271,7 +271,7 @@ const providerLayer = ({
     Layer.provideMerge(inputLoggerLayer(inputs)),
     Layer.provideMerge(diagnosticsLoggerLayer(diagnostics)),
     Layer.provideMerge(relayLoggerLayer(relayEvents)),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(
       claudeCodeAgentDriverRegistryLive({

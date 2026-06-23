@@ -23,7 +23,8 @@ import {
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
-import { EphemeralExternalSession, sessionDirectoryLive } from "./sessionDirectory.ts";
+import { EphemeralExternalSession } from "./sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { simulatorAgentDriver, simulatorAgentDriverRegistryLive } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
@@ -150,7 +151,7 @@ const makeRegistryRoutingTestLayer = ({
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
     Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
     Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(driverRegistryLayer),
   );

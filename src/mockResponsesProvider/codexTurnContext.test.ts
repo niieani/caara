@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Result, Schema } from "effect";
+import { Effect, Layer, Result, Schema } from "effect";
+import * as Path from "effect/Path";
 
-import { type DecodedCodexTurnRequest, decodeCodexTurnRequest } from "./codexTurnContext.ts";
+import {
+  type DecodedCodexTurnRequest,
+  type DecodeCodexTurnRequestOptions,
+  decodeCodexTurnRequest,
+} from "./codexTurnContext.ts";
 import type { InvalidResponsesRequest } from "./errors.ts";
 
 /** Stable project root used as a realistic Codex workspace path in decoder tests. */
@@ -78,6 +83,38 @@ const makeBody = (
   ...overrides,
 });
 
+/** Path service that treats workspace-scheme paths as absolute for decoder seam tests. */
+const workspaceSchemePathService: Path.Path = {
+  [Path.TypeId]: Path.TypeId,
+  sep: "/",
+  basename: (value) => value.split("/").at(-1) ?? value,
+  dirname: (value) => value.split("/").slice(0, -1).join("/") || "/",
+  extname: () => "",
+  format: (pathObject) => `${pathObject.dir ?? ""}/${pathObject.name ?? ""}${pathObject.ext ?? ""}`,
+  fromFileUrl: (url) => Effect.succeed(url.href),
+  isAbsolute: (value) => value.startsWith("workspace:"),
+  join: (...segments) => segments.join("/"),
+  normalize: (value) => value,
+  parse: (value) => ({
+    root: "",
+    dir: "",
+    base: value,
+    ext: "",
+    name: value,
+  }),
+  relative: (_from, to) => to,
+  resolve: (...segments) => segments.join("/"),
+  toFileUrl: (value) => Effect.succeed(new URL(`file://${value}`)),
+  toNamespacedPath: (value) => value,
+};
+
+/** Test layer proving the decoder consumes Path from the Effect environment. */
+const workspaceSchemePathLayer = Layer.succeed(Path.Path, workspaceSchemePathService);
+
+/** Decodes with the default POSIX path service used by decoder unit tests. */
+const decodeWithDefaultPath = (options: DecodeCodexTurnRequestOptions) =>
+  decodeCodexTurnRequest(options).pipe(Effect.provide(Path.layer));
+
 /** Extracts the invalid request message from an expected decoder failure result. */
 const invalidRequestMessageFromResult = (
   result: Result.Result<DecodedCodexTurnRequest, InvalidResponsesRequest>,
@@ -93,7 +130,7 @@ const invalidRequestMessageFromResult = (
 describe("Codex turn context decoder", () => {
   it.effect("decodes Codex turn context, agent target, driver options, and cwd candidates", () =>
     Effect.gen(function* () {
-      const decoded = yield* decodeCodexTurnRequest({
+      const decoded = yield* decodeWithDefaultPath({
         headers: makeHeaders(),
         url: "/v1/responses?effort=max&allowed_tools=Read",
         body: makeBody(),
@@ -119,10 +156,37 @@ describe("Codex turn context decoder", () => {
     }),
   );
 
+  it.effect("filters workspace paths through the injected Path service", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeCodexTurnRequest({
+        headers: makeHeaders({
+          metadata: makeTurnMetadata({
+            workspaces: {
+              "workspace:/project": {
+                latest_git_commit_hash: "abcdef0",
+                has_changes: true,
+              },
+              [projectRoot]: {
+                latest_git_commit_hash: "abcdef0",
+                has_changes: true,
+              },
+            },
+          }),
+        }),
+        url: "/v1/responses",
+        body: makeBody({ metadata: {} }),
+        requireCwd: true,
+      }).pipe(Effect.provide(workspaceSchemePathLayer));
+
+      assert.deepStrictEqual(decoded.codex.workspacePaths, ["workspace:/project"]);
+      assert.deepStrictEqual(decoded.codex.cwdCandidates, []);
+    }),
+  );
+
   it.effect("rejects malformed model strings", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders(),
           url: "/v1/responses",
           body: makeBody({ model: "claude" }),
@@ -137,7 +201,7 @@ describe("Codex turn context decoder", () => {
 
   it.effect("accepts open lowercase external agent kinds before registry resolution", () =>
     Effect.gen(function* () {
-      const decoded = yield* decodeCodexTurnRequest({
+      const decoded = yield* decodeWithDefaultPath({
         headers: makeHeaders(),
         url: "/v1/responses",
         body: makeBody({ model: "gemini/pro" }),
@@ -153,7 +217,7 @@ describe("Codex turn context decoder", () => {
   it.effect("rejects malformed external agent kind syntax", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders(),
           url: "/v1/responses",
           body: makeBody({ model: "Gemini/pro" }),
@@ -169,7 +233,7 @@ describe("Codex turn context decoder", () => {
   it.effect("rejects duplicate provider query params", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders(),
           url: "/v1/responses?effort=max&effort=low",
           body: makeBody(),
@@ -185,7 +249,7 @@ describe("Codex turn context decoder", () => {
   it.effect("rejects malformed Codex turn metadata", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders({
             overrides: { "x-codex-turn-metadata": "{not-json" },
           }),
@@ -203,7 +267,7 @@ describe("Codex turn context decoder", () => {
   it.effect("rejects conflicting identity fields", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders({
             overrides: { "thread-id": "different-thread" },
           }),
@@ -220,7 +284,7 @@ describe("Codex turn context decoder", () => {
 
   it.effect("allows observed Codex subagent header and metadata kind to differ", () =>
     Effect.gen(function* () {
-      const decoded = yield* decodeCodexTurnRequest({
+      const decoded = yield* decodeWithDefaultPath({
         headers: makeHeaders({
           metadata: makeTurnMetadata({ subagent_kind: "thread_spawn" }),
           overrides: { "x-openai-subagent": "collab_spawn" },
@@ -239,7 +303,7 @@ describe("Codex turn context decoder", () => {
     Effect.gen(function* () {
       const metadataWithoutWorkspace = makeTurnMetadata({ workspaces: {} });
       const result = yield* Effect.result(
-        decodeCodexTurnRequest({
+        decodeWithDefaultPath({
           headers: makeHeaders({ metadata: metadataWithoutWorkspace }),
           url: "/v1/responses",
           body: makeBody({ metadata: {} }),
@@ -255,7 +319,7 @@ describe("Codex turn context decoder", () => {
   it.effect("allows missing cwd when an existing binding can provide it later", () =>
     Effect.gen(function* () {
       const metadataWithoutWorkspace = makeTurnMetadata({ workspaces: {} });
-      const decoded = yield* decodeCodexTurnRequest({
+      const decoded = yield* decodeWithDefaultPath({
         headers: makeHeaders({ metadata: metadataWithoutWorkspace }),
         url: "/v1/responses",
         body: makeBody({ metadata: {} }),

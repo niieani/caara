@@ -1,8 +1,4 @@
-import * as fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Option, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
 import { AgentTarget, type CodexTurnContext } from "./codexTurnContext.ts";
@@ -183,14 +179,6 @@ export class SessionDirectory extends Context.Service<
   }
 >()("@caara/SessionDirectory") {}
 
-/** Filesystem path options for one session binding file. */
-export interface SessionBindingFilePathOptions {
-  readonly stateDir: string;
-  readonly externalAgentKind: string;
-  readonly driverInstanceId: string;
-  readonly codexThreadId: string;
-}
-
 /** Contract for looking up one persisted session binding. */
 export type SessionDirectoryGet = (
   key: SessionBindingKey,
@@ -205,133 +193,6 @@ export type SessionDirectorySave = (
 export type SessionDirectoryDelete = (
   key: SessionBindingKey,
 ) => EffectContract<void, SessionDirectoryError>;
-
-/** Encodes one session key component into a safe filesystem segment. */
-const encodeSessionPathSegment = (segment: string): string => encodeURIComponent(segment);
-
-/** Returns the durable binding file path for one session key. */
-export const sessionBindingFilePath = ({
-  stateDir,
-  externalAgentKind,
-  driverInstanceId,
-  codexThreadId,
-}: SessionBindingFilePathOptions): string =>
-  path.join(
-    stateDir,
-    "sessions",
-    encodeSessionPathSegment(externalAgentKind),
-    encodeSessionPathSegment(driverInstanceId),
-    `${encodeSessionPathSegment(codexThreadId)}.json`,
-  );
-
-/** Converts unknown filesystem failures into a typed session directory error. */
-const sessionDirectoryError = (cause: unknown): SessionDirectoryError =>
-  new SessionDirectoryError({ message: String(cause) });
-
-/** Decodes one persisted binding JSON string. */
-const decodeBindingJson = Effect.fnUntraced(function* (content: string) {
-  return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CaaraSessionBinding))(
-    content,
-  ).pipe(Effect.mapError((cause) => sessionDirectoryError(cause)));
-});
-
-/** Reads a binding file when it exists, returning none for a missing file. */
-const readBindingFile = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
-  const exists = yield* Effect.tryPromise({
-    try: () => Bun.file(filePath).exists(),
-    catch: sessionDirectoryError,
-  });
-  const readableFile = Option.fromUndefinedOr([filePath].filter(() => exists).at(0));
-
-  return yield* Option.match(readableFile, {
-    onNone: () => Effect.succeed(Option.none<CaaraSessionBinding>()),
-    onSome: (pathToRead) =>
-      Effect.tryPromise({
-        try: () => fs.readFile(pathToRead, "utf8"),
-        catch: sessionDirectoryError,
-      }).pipe(Effect.flatMap(decodeBindingJson), Effect.map(Option.some)),
-  });
-});
-
-/** Writes a binding file, creating parent directories first. */
-const writeBindingFile = Effect.fnUntraced(function* ({
-  filePath,
-  binding,
-}: {
-  readonly filePath: string;
-  readonly binding: CaaraSessionBinding;
-}) {
-  yield* Effect.tryPromise({
-    try: () => fs.mkdir(path.dirname(filePath), { recursive: true }),
-    catch: sessionDirectoryError,
-  });
-  const encodedBinding = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(binding).pipe(
-    Effect.mapError((cause) => sessionDirectoryError(cause)),
-  );
-  yield* Effect.tryPromise({
-    try: () => fs.writeFile(filePath, encodedBinding),
-    catch: sessionDirectoryError,
-  });
-});
-
-/** Deletes a binding file when cancellation makes its external session unusable. */
-const deleteBindingFile = Effect.fnUntraced(function* ({
-  filePath,
-}: {
-  readonly filePath: string;
-}) {
-  yield* Effect.tryPromise({
-    try: () => fs.rm(filePath, { force: true }),
-    catch: sessionDirectoryError,
-  });
-});
-
-/** Builds a filesystem-backed session directory layer rooted at a Caara state directory. */
-export const sessionDirectoryLive = ({ stateDir }: { readonly stateDir: string }) =>
-  Layer.succeed(SessionDirectory, {
-    get: Effect.fnUntraced(function* (key: SessionBindingKey) {
-      return yield* readBindingFile({ filePath: sessionBindingFilePath({ stateDir, ...key }) });
-    }),
-    save: Effect.fnUntraced(function* (binding: CaaraSessionBinding) {
-      return yield* writeBindingFile({
-        filePath: sessionBindingFilePath({
-          stateDir,
-          ...binding.bindingKey,
-        }),
-        binding,
-      });
-    }),
-    delete: Effect.fnUntraced(function* (key: SessionBindingKey) {
-      yield* deleteBindingFile({ filePath: sessionBindingFilePath({ stateDir, ...key }) });
-    }),
-  });
-
-/** Resolves the default Caara user-state directory from environment and platform state. */
-export const resolveCaaraStateDir = ({
-  env = process.env,
-}: {
-  readonly env?: NodeJS.ProcessEnv;
-} = {}): string => {
-  const xdgStateDir = [env.XDG_STATE_HOME]
-    .filter((stateHome): stateHome is string => stateHome !== undefined)
-    .map((stateHome) => path.join(stateHome, "caara"))
-    .at(0);
-  const fallbackHome = env.HOME ?? os.homedir();
-  const stateDir = [
-    env.CAARA_STATE_DIR,
-    xdgStateDir,
-    path.join(fallbackHome, ".local", "state", "caara"),
-  ]
-    .filter((candidate): candidate is string => candidate !== undefined)
-    .at(0);
-
-  return Option.getOrThrow(Option.fromUndefinedOr(stateDir));
-};
-
-/** Live session directory layer resolved from the current process environment. */
-export const sessionDirectoryFromEnvironmentLive = sessionDirectoryLive({
-  stateDir: resolveCaaraStateDir(),
-});
 
 /** Reconstructs an AgentTarget from persisted mutable target state. */
 export const targetFromBinding = (binding: CaaraSessionBinding): AgentTarget =>

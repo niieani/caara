@@ -14,11 +14,9 @@ import { RelayLogger, type RelayLogEvent } from "../mockResponsesProvider/relayL
 import { RequestDiagnosticsLogger } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
 import { assistantTextFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
-import {
-  CaaraSessionBinding,
-  sessionBindingFilePath,
-  sessionDirectoryLive,
-} from "../mockResponsesProvider/sessionDirectory.ts";
+import { CaaraSessionBinding } from "../mockResponsesProvider/sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
+import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
 import { lostSessionRecoveryAssistantText } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
 import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts";
 import { claudeCodeAgentDriverRegistryLive } from "./driver.ts";
@@ -259,7 +257,7 @@ const providerLayer = ({
         }),
       }),
     ),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(
       claudeCodeAgentDriverRegistryLive({ command: fakeClaudePath, env: fakeEnv }),

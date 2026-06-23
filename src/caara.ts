@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Layer } from "effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -9,18 +9,23 @@ import { inputLoggerLive } from "./mockResponsesProvider/inputLogger.ts";
 import { relayLoggerLive } from "./mockResponsesProvider/relayLogger.ts";
 import { requestDiagnosticsLoggerLive } from "./mockResponsesProvider/requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./mockResponsesProvider/server.ts";
-import { sessionDirectoryFromEnvironmentLive } from "./mockResponsesProvider/sessionDirectory.ts";
+import { sessionDirectoryFromEnvironmentLive } from "./mockResponsesProvider/sessionDirectoryPlatform.ts";
 import { turnConcurrencyLive } from "./mockResponsesProvider/turnConcurrency.ts";
 
 /** Default TCP port for the local mock Responses provider. */
 export const defaultMockResponsesPort = 8787;
+
+/** Live session directory layer with Bun platform services supplied at the app edge. */
+const sessionDirectoryLayer = sessionDirectoryFromEnvironmentLive().pipe(
+  Layer.provide(BunServices.layer),
+);
 
 /** Live application layer for the local mock Responses provider. */
 export const mainLayer = mockResponsesServerLayer.pipe(
   Layer.provideMerge(inputLoggerLive),
   Layer.provideMerge(relayLoggerLive),
   Layer.provideMerge(requestDiagnosticsLoggerLive),
-  Layer.provideMerge(sessionDirectoryFromEnvironmentLive),
+  Layer.provideMerge(sessionDirectoryLayer),
   Layer.provideMerge(turnConcurrencyLive),
   Layer.provideMerge(claudeAgentSdkDriverLive),
   Layer.provideMerge(

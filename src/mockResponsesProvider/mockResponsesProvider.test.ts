@@ -17,7 +17,7 @@ import {
 } from "./requestDiagnosticsLogger.ts";
 import { isAssistantMessageDoneData } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
-import { sessionDirectoryLive } from "./sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
@@ -161,7 +161,7 @@ const makeProviderTestLayer = (
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
     Layer.provideMerge(makeCaptureDiagnosticsLoggerLayer(loggedDiagnostics)),
     Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );

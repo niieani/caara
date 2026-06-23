@@ -16,7 +16,7 @@ import {
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
-import { sessionDirectoryLive } from "./sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { simulatorAgentDriverRegistryLive } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
@@ -190,7 +190,7 @@ const providerLayer = ({
         }),
       }),
     ),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );

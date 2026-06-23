@@ -17,7 +17,8 @@ import {
 } from "./requestDiagnosticsLogger.ts";
 import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
-import { sessionBindingFilePath, sessionDirectoryLive } from "./sessionDirectory.ts";
+import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
+import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
 import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
@@ -173,7 +174,7 @@ const providerLayer = ({
         }),
       }),
     ),
-    Layer.provideMerge(sessionDirectoryLive({ stateDir })),
+    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(simulatorAgentDriverRegistryLive),
   );
