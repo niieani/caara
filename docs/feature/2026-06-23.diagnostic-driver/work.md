@@ -150,3 +150,25 @@ Implemented shape:
 Verification:
 
 - `bun run fmt`
+
+## Completed Slice: CAARA-plzewqhc
+
+Target:
+
+- Run the Diagnostic smoke suite and capture evidence for all v1 scenarios.
+- Include commands/config, Codex-visible output, relay logs, session binding effects,
+  cancellation/concurrency behavior, Diagnostic-vs-Claude distinction, and current Codex-path gaps.
+
+Implemented shape:
+
+- Ran a real local provider with isolated `CAARA_STATE_DIR`.
+- Exercised all v1 Diagnostic scenarios via Codex-shaped direct HTTP requests.
+- Captured JSON summary, provider relay log, and state directory under
+  `temp.local/2026-06-23/diagnostic-smoke/`.
+- Added committed summary in `smoke-evidence.md`.
+- Recorded Codex-path blocker: current thread exposes only the Claude-backed `caara` role.
+  Follow-up issue: CAARA-feujtevl.
+
+Verification:
+
+- `bun run temp.local/2026-06-23/diagnostic-smoke/run-diagnostic-smoke.ts`
