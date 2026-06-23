@@ -4,10 +4,21 @@ import type {
 } from "../mockResponsesProvider/agentDriver.ts";
 
 /** Active SDK content block that owns one Caara runtime item lifecycle. */
-export interface ClaudeAgentSdkActiveStreamBlock {
+export interface ClaudeAgentSdkDisplayableStreamBlock {
+  readonly _tag: "Displayable";
   readonly itemId: string;
   readonly contentKind: AgentRuntimeContentKind;
 }
+
+/** Active SDK assistant text block ignored until the completed assistant message supplies phase. */
+export interface ClaudeAgentSdkIgnoredAssistantTextStreamBlock {
+  readonly _tag: "IgnoredAssistantText";
+}
+
+/** Active SDK content block currently tracked across raw stream events. */
+export type ClaudeAgentSdkActiveStreamBlock =
+  | ClaudeAgentSdkDisplayableStreamBlock
+  | ClaudeAgentSdkIgnoredAssistantTextStreamBlock;
 
 /** Stateful SDK-message conversion position for stable Caara runtime item ids. */
 export interface ClaudeAgentSdkRuntimeEventState {

@@ -1,0 +1,83 @@
+diff --git a/rules/no-effect-succeed-variable.grit b/rules/no-effect-succeed-variable.grit
+index abed87786e7ac209c422aea8525e6aadd9369d42..c654dbaf3be8069881e65718ef19481e74a1b502 100644
+--- a/rules/no-effect-succeed-variable.grit
++++ b/rules/no-effect-succeed-variable.grit
+@@ -12,7 +12,7 @@ file($body) where {
+         register_diagnostic(
+             span = $lift,
+             message = "Rule: avoid Effect.succeed(variable) as a branch placeholder. Why: it hides a decision and turns data into pseudo-control flow. Fix: select a plain value (Option/Match) and then run one Effect pipeline after the decision; if you already read the state, return it as a value. Avoid Option.toArray/forEach hacks that just re-encode the branch.",
+-            severity = "warning"
++            severity = "warn"
+         )
+     }
+ }
+diff --git a/rules/no-flatmap-ladder.grit b/rules/no-flatmap-ladder.grit
+index 97782315bdfc1c39c45a7e5ee98dcb1bfe75a7f7..a52bae60ec3d3acc5a59b6779938704110afb912 100644
+--- a/rules/no-flatmap-ladder.grit
++++ b/rules/no-flatmap-ladder.grit
+@@ -10,7 +10,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid nested Effect.flatMap. Why: it hides sequencing and pushes laddered control flow. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         },
+         $body <: contains `const $name: $type = Effect.flatMap($args)` as $call where {
+@@ -18,7 +18,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid nested Effect.flatMap. Why: it hides sequencing and pushes laddered control flow. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         },
+         $body <: contains `return Effect.flatMap($args)` as $call where {
+@@ -26,7 +26,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid nested Effect.flatMap. Why: it hides sequencing and pushes laddered control flow. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         },
+         $body <: contains `const $name = Effect.flatten($outer)` as $call where {
+@@ -34,7 +34,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid map+flatten ladders. Why: they hide sequencing. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         },
+         $body <: contains `const $name: $type = Effect.flatten($outer)` as $call where {
+@@ -42,7 +42,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid map+flatten ladders. Why: they hide sequencing. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         },
+         $body <: contains `return Effect.flatten($outer)` as $call where {
+@@ -50,7 +50,7 @@ file($body) where {
+             register_diagnostic(
+                 span = $call,
+                 message = "Rule: avoid map+flatten ladders. Why: they hide sequencing. Fix: build context once (Effect.all/Effect.map) and run a single flatMap.",
+-                severity = "warning"
++                severity = "warn"
+             )
+         }
+     }
+diff --git a/rules/warn-effect-sync-wrapper.grit b/rules/warn-effect-sync-wrapper.grit
+index af286ceb4a8556714658536b237d2f32fefa8ad3..47ee530a4e61140d7a24d8a286b44fd29daeb712 100644
+--- a/rules/warn-effect-sync-wrapper.grit
++++ b/rules/warn-effect-sync-wrapper.grit
+@@ -14,6 +14,6 @@ file($body) where {
+     register_diagnostic(
+         span = $call,
+         message = "Rule: avoid Effect.sync around side effects. Why: it hides intent. Fix: use Effect.log* or an explicit pipeline step for the side effect.",
+-        severity = "warning"
++        severity = "warn"
+     )
+ }

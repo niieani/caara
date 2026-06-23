@@ -80,13 +80,21 @@ const sdkUsage = (): NonNullableUsage => ({
   speed: "standard",
 });
 
-/** Builds one completed SDK assistant message containing final text content. */
+/** Stop reason values carried by completed SDK assistant messages. */
+type SdkAssistantStopReason = Extract<
+  SDKMessage,
+  { readonly type: "assistant" }
+>["message"]["stop_reason"];
+
+/** Builds one completed SDK assistant message containing text content. */
 export const sdkAssistantTextMessage = ({
   sessionId,
   text,
+  stopReason = "end_turn",
 }: {
   readonly sessionId: string;
   readonly text: string;
+  readonly stopReason?: SdkAssistantStopReason;
 }) =>
   ({
     type: "assistant",
@@ -107,11 +115,77 @@ export const sdkAssistantTextMessage = ({
         },
       ],
       stop_details: null,
-      stop_reason: null,
+      stop_reason: stopReason,
       stop_sequence: null,
       usage: sdkUsage(),
     },
     uuid: "00000000-0000-4000-8000-000000000009",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one completed SDK assistant message containing a Bash tool_use block. */
+export const sdkBashToolUseMessage = ({
+  sessionId,
+  command,
+  toolUseId = "toolu_bash_command",
+}: {
+  readonly sessionId: string;
+  readonly command: string;
+  readonly toolUseId?: string;
+}) =>
+  ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "msg_sdk_bash_tool_use",
+      type: "message",
+      container: null,
+      context_management: null,
+      diagnostics: null,
+      role: "assistant",
+      model: "claude-sonnet-4-5",
+      content: [
+        {
+          type: "tool_use",
+          id: toolUseId,
+          name: "Bash",
+          input: { command },
+        },
+      ],
+      stop_details: null,
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: sdkUsage(),
+    },
+    uuid: "00000000-0000-4000-8000-000000000109",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one completed SDK user message containing a tool_result block. */
+export const sdkToolResultMessage = ({
+  sessionId,
+  toolUseId = "toolu_bash_command",
+  content = "",
+}: {
+  readonly sessionId: string;
+  readonly toolUseId?: string;
+  readonly content?: string;
+}) =>
+  ({
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content,
+        },
+      ],
+    },
+    tool_use_result: content,
+    uuid: "00000000-0000-4000-8000-000000000110",
     session_id: sessionId,
   }) satisfies SDKMessage;
 

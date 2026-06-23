@@ -21,11 +21,13 @@ import {
   fakeSdkHarness,
   runDriverTurn,
   sdkAssistantTextMessage,
+  sdkBashToolUseMessage,
   sdkContentBlockStop,
   sdkTextBlockStart,
   sdkTextDelta,
   sdkThinkingBlockStart,
   sdkThinkingDelta,
+  sdkToolResultMessage,
 } from "./claudeAgentSdkDriverTestHarness.ts";
 import {
   assertRequestsUseNonInteractivePermissionPolicy,
@@ -43,6 +45,9 @@ const streamedThinkingSessionId = (): string => "00000000-0000-4000-8000-0000000
 
 /** Stable SDK session id used by streamed/final assistant deduplication coverage. */
 const streamedFinalDedupSessionId = (): string => "00000000-0000-4000-8000-000000000103";
+
+/** Stable SDK session id used by assistant phase and activity mapping coverage. */
+const assistantPhaseSessionId = (): string => "00000000-0000-4000-8000-000000000104";
 
 /** Builds Codex identity context for one direct driver test turn. */
 const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTurnContext =>
@@ -171,7 +176,7 @@ describe("Claude Agent SDK driver", () => {
       }),
   );
 
-  it.effect("keeps streamed text deltas in one assistant item lifecycle", () =>
+  it.effect("uses completed assistant messages as the phase authority for streamed text", () =>
     Effect.gen(function* () {
       const sessionId = streamedTextSessionId();
       const harness = fakeSdkHarness({
@@ -182,6 +187,7 @@ describe("Claude Agent SDK driver", () => {
             sdkTextDelta({ sessionId, text: "hel" }),
             sdkTextDelta({ sessionId, text: "lo" }),
             sdkContentBlockStop({ sessionId }),
+            sdkAssistantTextMessage({ sessionId, text: "hello", stopReason: "end_turn" }),
           ],
         ],
       });
@@ -207,14 +213,7 @@ describe("Claude Agent SDK driver", () => {
           itemId: "claude-sdk-message-0",
           contentIndex: 0,
           contentKind: "assistant_text",
-          text: "hel",
-        },
-        {
-          _tag: "ContentDelta",
-          itemId: "claude-sdk-message-0",
-          contentIndex: 0,
-          contentKind: "assistant_text",
-          text: "lo",
+          text: "hello",
         },
         {
           _tag: "ContentCompleted",
@@ -338,6 +337,63 @@ describe("Claude Agent SDK driver", () => {
           _tag: "ItemCompleted",
           itemId: "claude-sdk-message-0",
         },
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("maps pre-tool assistant text to commentary and includes Bash command detail", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkAssistantTextMessage({
+              sessionId,
+              text: "Let me verify before answering.",
+              stopReason: "tool_use",
+            }),
+            sdkBashToolUseMessage({
+              sessionId,
+              command: "find src -type f -name '*.tst.ts'",
+            }),
+            sdkToolResultMessage({ sessionId, content: "(Bash completed with no output)" }),
+            sdkAssistantTextMessage({
+              sessionId,
+              text: "There are no type-test files.",
+              stopReason: "end_turn",
+            }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-0",
+          text: "Let me verify before answering.",
+          messagePhase: "commentary",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-0",
+          text: "Using Bash: find src -type f -name '*.tst.ts'",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-1",
+          text: "Bash completed",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-1",
+          text: "There are no type-test files.",
+          messagePhase: "final_answer",
+        }),
         createRuntimeTurnSucceededEvent(),
       ] satisfies readonly AgentRuntimeEvent[]);
     }),

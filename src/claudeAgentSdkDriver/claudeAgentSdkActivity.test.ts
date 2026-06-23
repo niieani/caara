@@ -22,9 +22,11 @@ import {
   collectPromptMessages,
   fakeSdkHarness,
   sdkAssistantTextMessage,
+  sdkBashToolUseMessage,
   sdkContentBlockStop,
   sdkTextBlockStart,
   sdkTextDelta,
+  sdkToolResultMessage,
 } from "./claudeAgentSdkDriverTestHarness.ts";
 
 /** Project root used as the Codex workspace path in SDK activity tests. */
@@ -294,21 +296,45 @@ const sdkActivityMessages = (): readonly SDKMessage[] => [
   sdkAssistantTextMessage({ sessionId: sdkSessionId(), text: "SDK final answer" }),
 ];
 
+/** Builds the fake SDK runtime message sequence observed in assistant/tool/final turns. */
+const sdkAssistantToolFinalMessages = (): readonly SDKMessage[] => [
+  sdkAssistantTextMessage({
+    sessionId: sdkSessionId(),
+    text: "Let me verify before answering.",
+    stopReason: "tool_use",
+  }),
+  sdkBashToolUseMessage({
+    sessionId: sdkSessionId(),
+    command: "find src -type f -name '*.tst.ts'",
+  }),
+  sdkToolResultMessage({
+    sessionId: sdkSessionId(),
+    content: "(Bash completed with no output)",
+  }),
+  sdkAssistantTextMessage({
+    sessionId: sdkSessionId(),
+    text: "There are no type-test files.",
+    stopReason: "end_turn",
+  }),
+];
+
 /** Builds a fresh provider harness backed by one fake Claude SDK runtime. */
 const providerHarness = ({
   stateDir,
   inputs,
   diagnostics,
   relayEvents,
+  runtimeMessages = sdkActivityMessages(),
 }: {
   readonly stateDir: string;
   readonly inputs: Array<Schema.Json>;
   readonly diagnostics: Array<ResponsesRequestDiagnostics>;
   readonly relayEvents: Array<RelayLogEvent>;
+  readonly runtimeMessages?: readonly SDKMessage[];
 }) => {
   const harness = fakeSdkHarness({
     sessionIds: [sdkSessionId()],
-    runtimeMessages: [sdkActivityMessages()],
+    runtimeMessages: [runtimeMessages],
   });
   return {
     ...harness,
@@ -355,6 +381,7 @@ const runClaudeSdkActivityTurn = ({
   inputs,
   diagnostics,
   relayEvents,
+  runtimeMessages,
 }: {
   readonly stateDir: string;
   readonly turnId: string;
@@ -363,8 +390,9 @@ const runClaudeSdkActivityTurn = ({
   readonly inputs: Array<Schema.Json>;
   readonly diagnostics: Array<ResponsesRequestDiagnostics>;
   readonly relayEvents: Array<RelayLogEvent>;
+  readonly runtimeMessages?: readonly SDKMessage[];
 }) => {
-  const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents });
+  const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents, runtimeMessages });
   return Effect.gen(function* () {
     const request = setHeaders({
       request: yield* HttpClientRequest.bodyJson(
@@ -469,6 +497,38 @@ describe("Claude Agent SDK activity commentary", () => {
       assert.strictEqual(
         runtimeEventTags(relayEvents).filter((tag) => tag === "ItemCreated").length,
         5,
+      );
+      assert.strictEqual(inputs.length, 1);
+      assert.strictEqual(diagnostics.length, 1);
+    }),
+  );
+
+  it.effect("relays pre-tool assistant text as commentary and includes Bash command detail", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+
+      const result = yield* runClaudeSdkActivityTurn({
+        stateDir,
+        turnId: "turn-claude-sdk-assistant-tool-final",
+        url: "/v1/responses",
+        inputs,
+        diagnostics,
+        relayEvents,
+        runtimeMessages: sdkAssistantToolFinalMessages(),
+      });
+      const messages = assistantMessageDoneData(result.frames);
+
+      assert.deepStrictEqual(
+        messages.map((message) => [message.item.phase, messageText(message)]),
+        [
+          ["commentary", "Let me verify before answering."],
+          ["commentary", "Using Bash: find src -type f -name '*.tst.ts'"],
+          ["commentary", "Bash completed"],
+          ["final_answer", "There are no type-test files."],
+        ],
       );
       assert.strictEqual(inputs.length, 1);
       assert.strictEqual(diagnostics.length, 1);

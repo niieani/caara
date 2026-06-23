@@ -4,6 +4,7 @@ import { Effect, Match, Option, Schema, Stream } from "effect";
 import {
   AgentDriverError,
   type AgentRuntimeEvent,
+  type AgentRuntimeMessagePhase,
   type AgentRuntimeTransportVisibility,
   createAssistantTextRuntimeEvents,
   createReasoningSummaryRuntimeEvents,
@@ -30,6 +31,9 @@ const sdkToolInputSummarySchema = Schema.Struct({
   command: Schema.optional(Schema.String),
 });
 
+/** Maximum visible characters for a command embedded in activity commentary. */
+const maxToolCommandPreviewLength = 180;
+
 /** Safe subset of SDK tool_result content used for completion summaries. */
 const sdkToolResultContentSchema = Schema.Struct({
   type: Schema.Literal("tool_result"),
@@ -43,9 +47,11 @@ type SdkToolResultContent = typeof sdkToolResultContentSchema.Type;
 const assistantTextEvents = ({
   state,
   text,
+  messagePhase,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
   readonly text: string;
+  readonly messagePhase: AgentRuntimeMessagePhase;
 }): ClaudeAgentSdkRuntimeEventResult => [
   {
     ...state,
@@ -54,7 +60,7 @@ const assistantTextEvents = ({
   createAssistantTextRuntimeEvents({
     itemId: `claude-sdk-message-${state.nextMessageIndex}`,
     text,
-    messagePhase: "final_answer",
+    messagePhase,
   }),
 ];
 
@@ -103,13 +109,39 @@ const activityTextEvents = ({
   }),
 ];
 
-/** Extracts a safe path-like hint from an SDK tool input object. */
-const safeToolInputPath = (input: unknown): string | undefined =>
-  Option.getOrUndefined(
-    Schema.decodeUnknownOption(sdkToolInputSummarySchema)(input).pipe(
-      Option.flatMap((summary) => Option.fromUndefinedOr(summary.file_path ?? summary.path)),
+/** Extracts safe summary fields from an SDK tool input object. */
+const safeToolInputSummary = (input: unknown): typeof sdkToolInputSummarySchema.Type | undefined =>
+  Option.getOrUndefined(Schema.decodeUnknownOption(sdkToolInputSummarySchema)(input));
+
+/** Normalizes a command string for single-line activity commentary. */
+const normalizedToolCommandPreview = (command: string): string | undefined => {
+  const normalized = command.trim().replace(/\s+/g, " ");
+  return Match.value(normalized).pipe(
+    Match.when(
+      (candidate) => candidate.length === 0,
+      () => undefined,
     ),
+    Match.when(
+      (candidate) => candidate.length <= maxToolCommandPreviewLength,
+      (candidate) => candidate,
+    ),
+    Match.orElse((candidate) => `${candidate.slice(0, maxToolCommandPreviewLength - 3)}...`),
   );
+};
+
+/** Extracts a safe path-like hint from decoded SDK tool input summary fields. */
+const safeToolInputPath = (
+  summary: typeof sdkToolInputSummarySchema.Type | undefined,
+): string | undefined => summary?.file_path ?? summary?.path;
+
+/** Extracts a safe command preview from decoded SDK tool input summary fields. */
+const safeToolInputCommand = (
+  summary: typeof sdkToolInputSummarySchema.Type | undefined,
+): string | undefined =>
+  Option.match(Option.fromUndefinedOr(summary?.command), {
+    onNone: () => undefined,
+    onSome: normalizedToolCommandPreview,
+  });
 
 /** Extracts typed tool_result content blocks from an SDK user message content payload. */
 const sdkToolResultContents = (content: unknown): readonly SdkToolResultContent[] =>
@@ -125,8 +157,16 @@ const toolUseActivityText = ({
   readonly name: string;
   readonly input: unknown;
 }): string => {
-  const path = safeToolInputPath(input);
+  const summary = safeToolInputSummary(input);
+  const path = safeToolInputPath(summary);
+  const command = safeToolInputCommand(summary);
   return Match.value(name).pipe(
+    Match.when("Bash", () =>
+      Option.match(Option.fromUndefinedOr(command), {
+        onNone: () => "Using Bash",
+        onSome: (commandPreview) => `Using Bash: ${commandPreview}`,
+      }),
+    ),
     Match.when("Read", () =>
       Option.match(Option.fromUndefinedOr(path), {
         onNone: () => "Reading file",
@@ -230,6 +270,15 @@ const isAlreadyStreamedAssistantContent = ({
     Match.orElse(() => false),
   );
 
+/** Selects the Codex-visible assistant message phase from Claude's terminal stop reason. */
+const messagePhaseFromAssistantStopReason = (
+  stopReason: Extract<SDKMessage, { readonly type: "assistant" }>["message"]["stop_reason"],
+): AgentRuntimeMessagePhase =>
+  Match.value(stopReason).pipe(
+    Match.when("tool_use", () => "commentary" as const),
+    Match.orElse(() => "final_answer" as const),
+  );
+
 /** Converts a completed SDK assistant message into fallback text runtime events. */
 const runtimeEventsFromAssistantMessage = ({
   state,
@@ -242,6 +291,7 @@ const runtimeEventsFromAssistantMessage = ({
 }): ClaudeAgentSdkRuntimeEventResult => {
   let nextState = state;
   const events: AgentRuntimeEvent[] = [];
+  const messagePhase = messagePhaseFromAssistantStopReason(message.message.stop_reason);
 
   for (const [contentIndex, content] of message.message.content.entries()) {
     const [updatedState, nextEvents] = Match.value(content).pipe(
@@ -250,7 +300,7 @@ const runtimeEventsFromAssistantMessage = ({
         () => noRuntimeEvents(nextState),
       ),
       Match.when({ type: "text" }, (textContent) =>
-        assistantTextEvents({ state: nextState, text: textContent.text }),
+        assistantTextEvents({ state: nextState, text: textContent.text, messagePhase }),
       ),
       Match.when({ type: "thinking" }, (thinkingContent) =>
         reasoningTextEvents({ state: nextState, text: thinkingContent.thinking }),

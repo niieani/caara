@@ -50,6 +50,7 @@
     "effect": "4.0.0-beta.85"
   },
   "patchedDependencies": {
-    "effect@4.0.0-beta.85": "patches/effect@4.0.0-beta.85.patch"
+    "effect@4.0.0-beta.85": "patches/effect@4.0.0-beta.85.patch",
+    "@catenarycloud/linteffect@0.0.6": "patches/@catenarycloud%2Flinteffect@0.0.6.patch"
   }
 }
