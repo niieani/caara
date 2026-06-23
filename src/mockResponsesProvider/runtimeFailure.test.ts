@@ -9,6 +9,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive, diagnosticDriverFixture } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -20,7 +21,6 @@ import { mockResponsesServerLayer } from "./server.ts";
 import { CaaraSessionBinding } from "./sessionDirectory.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
-import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for runtime-failure setup and persisted binding inspection. */
@@ -95,12 +95,14 @@ const makeHeaders = ({
 /** Builds a Codex-shaped streaming Responses request body for one runtime-failure turn. */
 const makeBody = ({
   turnId,
+  model,
   includeCwd,
 }: {
   readonly turnId: string;
+  readonly model: string;
   readonly includeCwd: boolean;
 }): Schema.Json => ({
-  model: "claude/test",
+  model,
   input: [
     {
       type: "message",
@@ -194,7 +196,7 @@ const providerLayer = ({
     Layer.provideMerge(relayLoggerLayer(relayEvents)),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
 /** Creates a fresh runtime-failure state directory under project-local temp.local. */
@@ -214,8 +216,8 @@ const makeStateDir = Effect.fnUntraced(function* () {
 const persistedBindingPath = ({ stateDir }: { readonly stateDir: string }): string =>
   sessionBindingFilePath({
     stateDir,
-    externalAgentKind: "claude",
-    driverInstanceId: "claude",
+    externalAgentKind: "diagnostic",
+    driverInstanceId: "diagnostic",
     codexThreadId: makeThreadId(),
   });
 
@@ -246,6 +248,7 @@ const readPersistedBinding = Effect.fnUntraced(function* ({
 const runTurn = Effect.fnUntraced(function* ({
   stateDir,
   turnId,
+  model = "diagnostic/basic",
   url,
   includeWorkspace,
   includeCwd,
@@ -255,6 +258,7 @@ const runTurn = Effect.fnUntraced(function* ({
 }: {
   readonly stateDir: string;
   readonly turnId: string;
+  readonly model?: string;
   readonly url: string;
   readonly includeWorkspace: boolean;
   readonly includeCwd: boolean;
@@ -265,7 +269,7 @@ const runTurn = Effect.fnUntraced(function* ({
   const request = setHeaders({
     request: yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post(url),
-      makeBody({ turnId, includeCwd }),
+      makeBody({ turnId, model, includeCwd }),
     ),
     headers: makeHeaders({ turnId, includeWorkspace }),
   });
@@ -288,7 +292,8 @@ describe("runtime stream failure handling", () => {
       const failedFrames = yield* runTurn({
         stateDir,
         turnId: "turn-runtime-fails-before-output",
-        url: "/v1/responses?simulator_failure=runtime_before_output",
+        model: "diagnostic/fails-before-output",
+        url: "/v1/responses",
         includeWorkspace: true,
         includeCwd: true,
         inputs,
@@ -309,7 +314,7 @@ describe("runtime stream failure handling", () => {
         _tag: "TurnFailed",
         threadId: makeThreadId(),
         turnId: "turn-runtime-fails-before-output",
-        message: simulatorDriverFixture.runtimeFailureBeforeOutputMessage,
+        message: diagnosticDriverFixture.runtimeFailureBeforeOutputMessage,
       });
 
       const recoveryFrames = yield* runTurn({
@@ -324,7 +329,7 @@ describe("runtime stream failure handling", () => {
       });
       assert.strictEqual(
         assistantTextFromResponseFrames(recoveryFrames),
-        simulatorDriverFixture.assistantText,
+        diagnosticDriverFixture.basicAnswerText,
       );
     }),
   );
@@ -348,13 +353,14 @@ describe("runtime stream failure handling", () => {
       });
       assert.strictEqual(
         assistantTextFromResponseFrames(seedFrames),
-        simulatorDriverFixture.assistantText,
+        diagnosticDriverFixture.basicAnswerText,
       );
 
       const failedFrames = yield* runTurn({
         stateDir,
         turnId: "turn-runtime-fails-after-partial",
-        url: "/v1/responses?simulator_failure=runtime_after_partial",
+        model: "diagnostic/fails-after-partial",
+        url: "/v1/responses",
         includeWorkspace: false,
         includeCwd: false,
         inputs,
@@ -379,7 +385,7 @@ describe("runtime stream failure handling", () => {
             _tag: "TurnFailed",
             threadId: makeThreadId(),
             turnId: "turn-runtime-fails-after-partial",
-            message: simulatorDriverFixture.runtimeFailureAfterPartialMessage,
+            message: diagnosticDriverFixture.runtimeFailureAfterPartialMessage,
           },
         ],
       );
@@ -396,7 +402,7 @@ describe("runtime stream failure handling", () => {
       });
       assert.strictEqual(
         assistantTextFromResponseFrames(resumedFrames),
-        simulatorDriverFixture.resumedAssistantText,
+        diagnosticDriverFixture.resumedBasicAnswerText,
       );
     }),
   );

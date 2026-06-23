@@ -9,6 +9,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive, diagnosticDriverFixture } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -20,7 +21,6 @@ import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
 import { lostSessionRecoveryAssistantText } from "./sessionRecoveryPolicy.ts";
-import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for recovery setup and persisted binding inspection. */
@@ -176,7 +176,7 @@ const providerLayer = ({
     ),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
 /** Decodes Responses SSE frames from a response byte stream. */
@@ -282,8 +282,8 @@ const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
       fs.readFile(
         sessionBindingFilePath({
           stateDir,
-          externalAgentKind: "claude",
-          driverInstanceId: "claude",
+          externalAgentKind: "diagnostic",
+          driverInstanceId: "diagnostic",
           codexThreadId: makeThreadId(),
         }),
         "utf8",
@@ -291,8 +291,8 @@ const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
     catch: sessionRecoveryTestError,
   }).pipe(Effect.map((content) => Schema.decodeSync(Schema.UnknownFromJsonString)(content)));
 
-describe("session recovery simulator integration", () => {
-  it.effect("recovers an unresumable simulator session with a fresh durable binding", () =>
+describe("session recovery Diagnostic integration", () => {
+  it.effect("recovers an unresumable Diagnostic session with a fresh durable binding", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
       const inputs: Array<Schema.Json> = [];
@@ -302,7 +302,7 @@ describe("session recovery simulator integration", () => {
       const firstAssistantText = yield* runTurn({
         stateDir,
         turnId: "turn-recovery-seed",
-        model: "claude/test",
+        model: "diagnostic/basic",
         url: "/v1/responses",
         includeWorkspace: true,
         includeCwd: true,
@@ -310,13 +310,13 @@ describe("session recovery simulator integration", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(firstAssistantText, simulatorDriverFixture.assistantText);
+      assert.strictEqual(firstAssistantText, diagnosticDriverFixture.basicAnswerText);
 
       const recoveryAssistantText = yield* runTurn({
         stateDir,
         turnId: "turn-recovery-fresh",
-        model: "claude/test",
-        url: "/v1/responses?simulator_resume=unresumable",
+        model: "diagnostic/recovery",
+        url: "/v1/responses?diagnostic_resume=unresumable",
         includeWorkspace: false,
         includeCwd: false,
         inputs,
@@ -331,10 +331,10 @@ describe("session recovery simulator integration", () => {
             _tag: "LostSessionRecovered",
             threadId: makeThreadId(),
             turnId: "turn-recovery-fresh",
-            reason: "simulator-unresumable-session",
+            reason: "diagnostic-unresumable-session",
             diagnostics: {
-              driver: "simulator",
-              previousCursor: simulatorDriverFixture.externalSessionCursor,
+              driver: "diagnostic",
+              previousCursor: diagnosticDriverFixture.basicExternalSessionCursor,
             },
           },
         ],
@@ -343,19 +343,19 @@ describe("session recovery simulator integration", () => {
         schemaVersion: 2,
         apiResponseId: "resp_turn-recovery-fresh",
         bindingKey: {
-          externalAgentKind: "claude",
-          driverInstanceId: "claude",
+          externalAgentKind: "diagnostic",
+          driverInstanceId: "diagnostic",
           codexThreadId: makeThreadId(),
         },
         parentCodexSessionId: "parent-session-1",
         requestedTarget: {
-          requestedModel: "claude/test",
-          externalModelSpecifier: "test",
-          rawDriverOptions: { simulator_resume: "unresumable" },
+          requestedModel: "diagnostic/recovery",
+          externalModelSpecifier: "recovery",
+          rawDriverOptions: { diagnostic_resume: "unresumable" },
         },
         externalSession: {
           _tag: "Durable",
-          driverResumeCursor: simulatorDriverFixture.recoveredExternalSessionCursor,
+          driverResumeCursor: diagnosticDriverFixture.recoveredExternalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-recovery-seed",
@@ -364,7 +364,7 @@ describe("session recovery simulator integration", () => {
     }),
   );
 
-  it.effect("preserves the old binding when unresumable simulator fresh start fails", () =>
+  it.effect("preserves the old binding when unresumable Diagnostic fresh start fails", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
       const inputs: Array<Schema.Json> = [];
@@ -374,8 +374,8 @@ describe("session recovery simulator integration", () => {
       yield* runTurn({
         stateDir,
         turnId: "turn-unrecoverable-seed",
-        model: "claude/test",
-        url: "/v1/responses?effort=max",
+        model: "diagnostic/basic",
+        url: "/v1/responses",
         includeWorkspace: true,
         includeCwd: true,
         inputs,
@@ -387,8 +387,8 @@ describe("session recovery simulator integration", () => {
       const failure = yield* runErrorTurn({
         stateDir,
         turnId: "turn-unrecoverable-failed",
-        model: "claude/test",
-        url: "/v1/responses?simulator_resume=unresumable&simulator_fresh_start=failure",
+        model: "diagnostic/recovery",
+        url: "/v1/responses?diagnostic_resume=unresumable&diagnostic_fresh_start=failure",
         includeWorkspace: false,
         includeCwd: false,
         inputs,
@@ -411,7 +411,7 @@ describe("session recovery simulator integration", () => {
             _tag: "TurnFailed",
             threadId: makeThreadId(),
             turnId: "turn-unrecoverable-failed",
-            message: simulatorDriverFixture.unrecoverableSessionFailureMessage,
+            message: diagnosticDriverFixture.unrecoverableSessionFailureMessage,
           },
         ],
       );

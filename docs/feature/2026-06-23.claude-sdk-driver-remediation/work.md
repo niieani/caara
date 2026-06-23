@@ -21,7 +21,7 @@ Target:
 
 Test seam:
 
-- Provider integration tests with simulator driver runtime failures.
+- Provider integration tests with Diagnostic driver runtime failures.
 - Assert SSE events, relay logs, session binding file, and next-turn lease reuse.
 
 ## Completed Slice: CAARA-yrrtiwje
@@ -69,7 +69,7 @@ Target:
 
 - Decode syntactically valid external agent kinds as open lowercase slugs.
 - Make `AgentDriverRegistry.resolve` the owner of support checks.
-- Preserve current Claude routing through simulator/live registries.
+- Preserve current Claude routing through driver registry tests and live registries.
 
 Test seam:
 
@@ -93,7 +93,8 @@ Target:
 Test seam:
 
 - `sessionBinding.test.ts` proves first-turn creation, follow-up lookup, mutable model/options, and cursor persistence.
-- `sessionBindingV2Contract.test.ts` covers missing binding, wrong-driver binding, and invalid simulator cursor failures.
+- `sessionBindingV2Contract.test.ts` covers missing binding, wrong-driver binding, and invalid
+  driver-owned cursor failures.
 - Claude Code policy/session tests assert durable session cursor persistence through the updated binding model.
 
 ## Completed Slice: CAARA-nwpnzjlo
@@ -108,7 +109,7 @@ Target:
 - Replace the coarse runtime event union with item/content lifecycle events for assistant text and displayable reasoning summaries.
 - Add explicit runtime terminal success and failure events.
 - Make the Responses encoder item-id-aware and terminal-aware, so terminal failure cannot become `response.completed`.
-- Update simulator and Claude Code driver shims to emit lifecycle events plus terminal success.
+- Update Diagnostic and Claude driver shims to emit lifecycle events plus terminal success.
 
 Test seam:
 

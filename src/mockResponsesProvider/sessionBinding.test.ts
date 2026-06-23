@@ -9,6 +9,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive, diagnosticDriverFixture } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -19,7 +20,6 @@ import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
-import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for filesystem setup and persisted binding inspection. */
@@ -40,7 +40,7 @@ const projectRoot = process.cwd();
 /** Stable Codex thread id used to prove binding reuse across turns. */
 const makeThreadId = (): string => "codex-thread-session-binding";
 
-/** Builds Codex turn metadata for a simulator session test turn. */
+/** Builds Codex turn metadata for a Diagnostic session test turn. */
 const makeTurnMetadata = ({
   turnId,
   includeWorkspace,
@@ -71,7 +71,7 @@ const makeTurnMetadata = ({
   turn_started_at_unix_ms: 1,
 });
 
-/** Builds Codex headers for one simulator session test turn. */
+/** Builds Codex headers for one Diagnostic session test turn. */
 const makeHeaders = ({
   turnId,
   includeWorkspace,
@@ -175,7 +175,7 @@ const providerLayer = ({
     Layer.provideMerge(relayLoggerLayer(relayEvents)),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
 /** Decodes Responses SSE frames from a response byte stream. */
@@ -236,15 +236,15 @@ const makeStateDir = Effect.fnUntraced(function* () {
   });
 });
 
-/** Reads the persisted binding JSON for the test's Claude/thread session key. */
+/** Reads the persisted binding JSON for the test's Diagnostic/thread session key. */
 const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
   Effect.tryPromise({
     try: () =>
       fs.readFile(
         sessionBindingFilePath({
           stateDir,
-          externalAgentKind: "claude",
-          driverInstanceId: "claude",
+          externalAgentKind: "diagnostic",
+          driverInstanceId: "diagnostic",
           codexThreadId: makeThreadId(),
         }),
         "utf8",
@@ -252,8 +252,8 @@ const readPersistedBinding = ({ stateDir }: { readonly stateDir: string }) =>
     catch: sessionBindingTestError,
   }).pipe(Effect.map((content) => Schema.decodeSync(Schema.UnknownFromJsonString)(content)));
 
-describe("session binding simulator integration", () => {
-  it.effect("persists and reloads simulator bindings while passing previous target state", () =>
+describe("session binding Diagnostic integration", () => {
+  it.effect("persists and reloads Diagnostic bindings while passing previous target state", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
       const inputs: Array<Schema.Json> = [];
@@ -263,33 +263,33 @@ describe("session binding simulator integration", () => {
       const firstAssistantText = yield* runTurn({
         stateDir,
         turnId: "turn-session-1",
-        model: "claude/test",
-        url: "/v1/responses?effort=max",
+        model: "diagnostic/basic",
+        url: "/v1/responses?diagnostic_delay_ms=0",
         includeWorkspace: true,
         includeCwd: true,
         inputs,
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(firstAssistantText, simulatorDriverFixture.assistantText);
+      assert.strictEqual(firstAssistantText, diagnosticDriverFixture.basicAnswerText);
       const firstBinding = yield* readPersistedBinding({ stateDir });
       assert.deepStrictEqual(firstBinding, {
         schemaVersion: 2,
         apiResponseId: "resp_turn-session-1",
         bindingKey: {
-          externalAgentKind: "claude",
-          driverInstanceId: "claude",
+          externalAgentKind: "diagnostic",
+          driverInstanceId: "diagnostic",
           codexThreadId: makeThreadId(),
         },
         parentCodexSessionId: "parent-session-1",
         requestedTarget: {
-          requestedModel: "claude/test",
-          externalModelSpecifier: "test",
-          rawDriverOptions: { effort: "max" },
+          requestedModel: "diagnostic/basic",
+          externalModelSpecifier: "basic",
+          rawDriverOptions: { diagnostic_delay_ms: "0" },
         },
         externalSession: {
           _tag: "Durable",
-          driverResumeCursor: simulatorDriverFixture.externalSessionCursor,
+          driverResumeCursor: diagnosticDriverFixture.basicExternalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-session-1",
@@ -299,33 +299,33 @@ describe("session binding simulator integration", () => {
       const secondAssistantText = yield* runTurn({
         stateDir,
         turnId: "turn-session-2",
-        model: "claude/sonnet",
-        url: "/v1/responses?effort=low",
+        model: "diagnostic/basic",
+        url: "/v1/responses?diagnostic_chunk_count=1",
         includeWorkspace: false,
         includeCwd: false,
         inputs,
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(secondAssistantText, simulatorDriverFixture.resumedAssistantText);
+      assert.strictEqual(secondAssistantText, diagnosticDriverFixture.resumedBasicAnswerText);
       const secondBinding = yield* readPersistedBinding({ stateDir });
       assert.deepStrictEqual(secondBinding, {
         schemaVersion: 2,
         apiResponseId: "resp_turn-session-2",
         bindingKey: {
-          externalAgentKind: "claude",
-          driverInstanceId: "claude",
+          externalAgentKind: "diagnostic",
+          driverInstanceId: "diagnostic",
           codexThreadId: makeThreadId(),
         },
         parentCodexSessionId: "parent-session-1",
         requestedTarget: {
-          requestedModel: "claude/sonnet",
-          externalModelSpecifier: "sonnet",
-          rawDriverOptions: { effort: "low" },
+          requestedModel: "diagnostic/basic",
+          externalModelSpecifier: "basic",
+          rawDriverOptions: { diagnostic_chunk_count: "1" },
         },
         externalSession: {
           _tag: "Durable",
-          driverResumeCursor: simulatorDriverFixture.externalSessionCursor,
+          driverResumeCursor: diagnosticDriverFixture.basicExternalSessionCursor,
         },
         cwd: projectRoot,
         createdFromTurnId: "turn-session-1",
@@ -340,13 +340,13 @@ describe("session binding simulator integration", () => {
           _tag: "DriverStarted",
           threadId: makeThreadId(),
           turnId: "turn-session-2",
-          externalAgentKind: "claude",
-          externalSessionId: simulatorDriverFixture.externalSessionCursor,
+          externalAgentKind: "diagnostic",
+          externalSessionId: diagnosticDriverFixture.basicExternalSessionCursor,
           previousTarget: {
-            requestedModel: "claude/test",
-            externalAgentKind: "claude",
-            externalModelSpecifier: "test",
-            rawDriverOptions: { effort: "max" },
+            requestedModel: "diagnostic/basic",
+            externalAgentKind: "diagnostic",
+            externalModelSpecifier: "basic",
+            rawDriverOptions: { diagnostic_delay_ms: "0" },
           },
         },
       ]);

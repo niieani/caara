@@ -16,6 +16,7 @@ import {
   createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
+import { diagnosticAgentDriver, diagnosticAgentDriverRegistryLive } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -25,7 +26,6 @@ import {
 import { mockResponsesServerLayer } from "./server.ts";
 import { EphemeralExternalSession } from "./sessionDirectory.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
-import { simulatorAgentDriver, simulatorAgentDriverRegistryLive } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Stable project root used as a realistic Codex workspace path in registry routing tests. */
@@ -68,7 +68,7 @@ const makeCodexHeaders = (): Readonly<Record<string, string>> => ({
 
 /** Codex-style request body using a non-Claude kind for registry routing assertions. */
 const geminiRequestBody = {
-  model: "gemini/pro",
+  model: "gemini/reasoning",
   input: [
     {
       type: "message",
@@ -135,7 +135,7 @@ interface RegistryRoutingLayerOptions {
   readonly loggedInputs: Array<Schema.Json>;
   readonly loggedDiagnostics: Array<ResponsesRequestDiagnostics>;
   readonly relayEvents: Array<RelayLogEvent>;
-  readonly driverRegistryLayer?: typeof simulatorAgentDriverRegistryLive;
+  readonly driverRegistryLayer?: typeof diagnosticAgentDriverRegistryLive;
 }
 
 /** Builds the full scoped provider test layer for registry routing assertions. */
@@ -143,7 +143,7 @@ const makeRegistryRoutingTestLayer = ({
   loggedInputs,
   loggedDiagnostics,
   relayEvents,
-  driverRegistryLayer = simulatorAgentDriverRegistryLive,
+  driverRegistryLayer = diagnosticAgentDriverRegistryLive,
 }: RegistryRoutingLayerOptions) => {
   const stateDir = path.join(projectRoot, "temp.local", `registry-routing-${randomUUID()}`);
   return mockResponsesServerLayer.pipe(
@@ -228,7 +228,7 @@ function routesExternalAgentKindThroughDriverRegistry() {
   const relayEvents: Array<RelayLogEvent> = [];
   const driverRegistryLayer = singleKindAgentDriverRegistryLayer({
     externalAgentKind: "gemini",
-    driver: simulatorAgentDriver,
+    driver: diagnosticAgentDriver,
   });
 
   return Effect.gen(function* () {
@@ -266,9 +266,9 @@ function routesExternalAgentKindThroughDriverRegistry() {
     assert.deepStrictEqual(relayEvents[1], {
       _tag: "TargetSelected",
       externalAgentKind: "gemini",
-      externalModelSpecifier: "pro",
+      externalModelSpecifier: "reasoning",
       rawDriverOptions: {},
-      requestedModel: "gemini/pro",
+      requestedModel: "gemini/reasoning",
       threadId: "codex-thread-registry-routing",
       turnId: makeTurnId(),
     });

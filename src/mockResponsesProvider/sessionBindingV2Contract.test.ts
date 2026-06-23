@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Result } from "effect";
 
 import { type AgentDriverTurn, AgentDriverError } from "./agentDriver.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
+import { diagnosticAgentDriver } from "./diagnosticDriver.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 import {
   CaaraSessionBinding,
@@ -19,7 +20,6 @@ import {
   prepareSessionBinding,
   SessionDirectory,
 } from "./sessionDirectory.ts";
-import { simulatorAgentDriver } from "./simulatorDriver.ts";
 
 /** Codex context without cwd sources, representing a follow-up-only request. */
 const followUpCodex = new CodexTurnContext({
@@ -31,23 +31,23 @@ const followUpCodex = new CodexTurnContext({
   requestKind: "turn",
   subagentKind: "caara",
   originator: "codex_cli_rs",
-  requestedModel: "claude/test",
+  requestedModel: "diagnostic/basic",
   workspacePaths: [],
   cwdCandidates: [],
 });
 
 /** Target used for v2 binding lookup contract tests. */
-const claudeTarget = new AgentTarget({
-  requestedModel: "claude/test",
-  externalAgentKind: "claude",
-  externalModelSpecifier: "test",
+const diagnosticTarget = new AgentTarget({
+  requestedModel: "diagnostic/basic",
+  externalAgentKind: "diagnostic",
+  externalModelSpecifier: "basic",
   rawDriverOptions: {},
 });
 
 /** Builds a stored binding fixture with configurable key and cursor details. */
 const storedBinding = ({
-  externalAgentKind = "claude",
-  driverResumeCursor = '{"sessionId":"simulator-session"}',
+  externalAgentKind = "diagnostic",
+  driverResumeCursor = '{"sessionId":"diagnostic-session"}',
 }: {
   readonly externalAgentKind?: string;
   readonly driverResumeCursor?: string;
@@ -62,8 +62,8 @@ const storedBinding = ({
     },
     parentCodexSessionId: makeCodexParentSessionId(followUpCodex.parentSessionId),
     requestedTarget: {
-      requestedModel: makeRequestedModelSpecifier("claude/test"),
-      externalModelSpecifier: makeExternalModelSpecifier("test"),
+      requestedModel: makeRequestedModelSpecifier("diagnostic/basic"),
+      externalModelSpecifier: makeExternalModelSpecifier("basic"),
       rawDriverOptions: {},
     },
     externalSession: new DurableExternalSession({
@@ -92,14 +92,14 @@ const invalidRequestMessage = (result: Result.Result<unknown, unknown>): string 
   return error.message;
 };
 
-/** Builds a simulator driver turn from a prepared v2 binding. */
-const simulatorTurn = (binding: CaaraSessionBinding): AgentDriverTurn => ({
+/** Builds a Diagnostic driver turn from a prepared v2 binding. */
+const diagnosticTurn = (binding: CaaraSessionBinding): AgentDriverTurn => ({
   codex: followUpCodex,
-  target: claudeTarget,
+  target: diagnosticTarget,
   prompt: { input: [] },
   cwd: binding.cwd,
   requestedCwd: binding.cwd,
-  previousTarget: claudeTarget,
+  previousTarget: diagnosticTarget,
   externalSession: binding.externalSession,
 });
 
@@ -107,7 +107,7 @@ describe("session binding v2 contracts", () => {
   it.effect("fails follow-up lookup when the required binding is missing", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        prepareSessionBinding({ codex: followUpCodex, target: claudeTarget }).pipe(
+        prepareSessionBinding({ codex: followUpCodex, target: diagnosticTarget }).pipe(
           Effect.provide(sessionDirectoryLayer(Option.none())),
         ),
       );
@@ -119,7 +119,7 @@ describe("session binding v2 contracts", () => {
   it.effect("fails follow-up lookup when the stored binding belongs to another driver", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        prepareSessionBinding({ codex: followUpCodex, target: claudeTarget }).pipe(
+        prepareSessionBinding({ codex: followUpCodex, target: diagnosticTarget }).pipe(
           Effect.provide(
             sessionDirectoryLayer(Option.some(storedBinding({ externalAgentKind: "gemini" }))),
           ),
@@ -134,7 +134,7 @@ describe("session binding v2 contracts", () => {
     Effect.gen(function* () {
       const binding = storedBinding({ driverResumeCursor: "not-json" });
       const result = yield* Effect.result(
-        simulatorAgentDriver.startOrResumeTurn(simulatorTurn(binding)),
+        diagnosticAgentDriver.startOrResumeTurn(diagnosticTurn(binding)),
       );
       const failure = Result.match(result, {
         onFailure: (error) => error,

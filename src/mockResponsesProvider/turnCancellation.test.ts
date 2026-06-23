@@ -9,6 +9,7 @@ import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive, diagnosticDriverFixture } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -18,7 +19,6 @@ import {
 import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
-import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for cancellation setup and response inspection. */
@@ -100,12 +100,14 @@ const makeHeaders = ({
 /** Builds a Codex-shaped streaming Responses request body for one cancellation test turn. */
 const makeBody = ({
   turnId,
+  model,
   includeCwd,
 }: {
   readonly turnId: string;
+  readonly model: string;
   readonly includeCwd: boolean;
 }): Schema.Json => ({
-  model: "claude/test",
+  model,
   input: [
     {
       type: "message",
@@ -229,17 +231,19 @@ const providerLayer = ({
     ),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
 /** Builds a POST /v1/responses request for one cancellation test turn. */
 const makeRequest = Effect.fnUntraced(function* ({
   turnId,
+  model = "diagnostic/basic",
   url,
   includeWorkspace,
   includeCwd,
 }: {
   readonly turnId: string;
+  readonly model?: string;
   readonly url: string;
   readonly includeWorkspace: boolean;
   readonly includeCwd: boolean;
@@ -247,13 +251,13 @@ const makeRequest = Effect.fnUntraced(function* ({
   return setHeaders({
     request: yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post(url),
-      makeBody({ turnId, includeCwd }),
+      makeBody({ turnId, model, includeCwd }),
     ),
     headers: makeHeaders({ turnId, includeWorkspace }),
   });
 });
 
-/** Runs one completed simulator turn and returns its assistant text. */
+/** Runs one completed Diagnostic turn and returns its assistant text. */
 const runCompletedTurn = Effect.fnUntraced(function* ({
   stateDir,
   turnId,
@@ -289,7 +293,7 @@ const runCompletedTurn = Effect.fnUntraced(function* ({
   return assistantTextFromResponseFrames(frames);
 });
 
-/** Runs a held simulator turn and interrupts the client response stream. */
+/** Runs a held Diagnostic turn and interrupts the client response stream. */
 const runCancelledTurn = Effect.fnUntraced(function* ({
   stateDir,
   turnId,
@@ -315,7 +319,8 @@ const runCancelledTurn = Effect.fnUntraced(function* ({
   });
   const request = yield* makeRequest({
     turnId,
-    url: `/v1/responses?simulator_hold=open&simulator_cancel=${cancelOption}`,
+    model: "diagnostic/hangs-until-cancel",
+    url: `/v1/responses?diagnostic_cancel=${cancelOption}`,
     includeWorkspace: true,
     includeCwd: true,
   });
@@ -356,7 +361,7 @@ describe("turn cancellation", () => {
         includeWorkspace: true,
         includeCwd: true,
       });
-      assert.strictEqual(firstText, simulatorDriverFixture.assistantText);
+      assert.strictEqual(firstText, diagnosticDriverFixture.basicAnswerText);
 
       const relayEvents = yield* runCancelledTurn({
         stateDir,
@@ -368,7 +373,7 @@ describe("turn cancellation", () => {
         [
           {
             _tag: "TurnCancelled",
-            externalAgentKind: "claude",
+            externalAgentKind: "diagnostic",
             codexThreadId: cancellationScenarioIds.thread,
             turnId: cancellationScenarioIds.reusableCancelTurn,
             outcomeTag: "Interrupted",
@@ -383,7 +388,7 @@ describe("turn cancellation", () => {
         includeWorkspace: false,
         includeCwd: false,
       });
-      assert.strictEqual(resumedText, simulatorDriverFixture.resumedAssistantText);
+      assert.strictEqual(resumedText, diagnosticDriverFixture.resumedBasicAnswerText);
     }),
   );
 
@@ -396,7 +401,7 @@ describe("turn cancellation", () => {
         includeWorkspace: true,
         includeCwd: true,
       });
-      assert.strictEqual(firstText, simulatorDriverFixture.assistantText);
+      assert.strictEqual(firstText, diagnosticDriverFixture.basicAnswerText);
 
       const relayEvents = yield* runCancelledTurn({
         stateDir,
@@ -408,7 +413,7 @@ describe("turn cancellation", () => {
         [
           {
             _tag: "TurnCancelled",
-            externalAgentKind: "claude",
+            externalAgentKind: "diagnostic",
             codexThreadId: cancellationScenarioIds.thread,
             turnId: cancellationScenarioIds.abandonedCancelTurn,
             outcomeTag: "Abandoned",
@@ -423,7 +428,7 @@ describe("turn cancellation", () => {
         includeWorkspace: true,
         includeCwd: true,
       });
-      assert.strictEqual(freshText, simulatorDriverFixture.assistantText);
+      assert.strictEqual(freshText, diagnosticDriverFixture.basicAnswerText);
     }),
   );
 });

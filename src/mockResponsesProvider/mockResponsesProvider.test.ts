@@ -8,6 +8,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive, diagnosticDriverFixture } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { mockResponsesFixture } from "./protocol.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
@@ -18,7 +19,6 @@ import {
 import { isAssistantMessageDoneData } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
-import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Stable project root used as a realistic Codex workspace path in transport tests. */
@@ -71,7 +71,7 @@ const makeCodexHeaders = ({
 
 /** Codex-style request body used to verify the mock provider's public contract. */
 const requestBody = {
-  model: "claude/test",
+  model: "diagnostic/reasoning",
   input: [
     {
       type: "message",
@@ -94,7 +94,7 @@ const requestBody = {
 
 /** Codex-style unsupported request body used to verify explicit hard failure. */
 const nonStreamingRequestBody = {
-  model: "claude/test",
+  model: "diagnostic/reasoning",
   input: requestBody.input,
   stream: false,
   tools: [],
@@ -163,7 +163,7 @@ const makeProviderTestLayer = (
     Layer.provideMerge(makeCaptureRelayLoggerLayer(relayEvents)),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 };
 
@@ -257,7 +257,7 @@ function streamsFakeReasoningAndFinalAnswer() {
   return Effect.gen(function* () {
     const request = setCodexHeaders({
       request: (yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post("/v1/responses?effort=max"),
+        HttpClientRequest.post("/v1/responses"),
         requestBody,
       )).pipe(HttpClientRequest.setHeader("Authorization", "Bearer diagnostic-test-secret")),
     });
@@ -279,17 +279,20 @@ function streamsFakeReasoningAndFinalAnswer() {
     const diagnostics = loggedDiagnostics[0];
     assert.ok(diagnostics, "request diagnostics must be logged");
     assert.strictEqual(diagnostics.method, "POST");
-    assert.strictEqual(diagnostics.url, "/v1/responses?effort=max");
+    assert.strictEqual(diagnostics.url, "/v1/responses");
     assert.strictEqual(diagnostics.headers["content-type"], "application/json");
     assert.strictEqual(diagnostics.headers.authorization, "[redacted]");
     assert.deepStrictEqual(diagnostics.body, requestBody);
     assert.deepStrictEqual(diagnostics.cwdCandidates, [projectRoot]);
-    assert.strictEqual(reasoningData.delta, simulatorDriverFixture.reasoningText);
+    assert.strictEqual(reasoningData.delta, diagnosticDriverFixture.reasoningText);
     assert.strictEqual(messageData.item.type, "message");
     assert.deepStrictEqual(messageData.item.content, [
-      { type: "output_text", text: simulatorDriverFixture.assistantText, annotations: [] },
+      { type: "output_text", text: diagnosticDriverFixture.basicAnswerText, annotations: [] },
     ]);
-    assert.notStrictEqual(simulatorDriverFixture.assistantText, mockResponsesFixture.assistantText);
+    assert.notStrictEqual(
+      diagnosticDriverFixture.basicAnswerText,
+      mockResponsesFixture.assistantText,
+    );
     assert.strictEqual(completedData.type, "response.completed");
     assert.deepStrictEqual(
       relayEvents.slice(0, 4).map((event) => event._tag),
@@ -311,12 +314,10 @@ function streamsFakeReasoningAndFinalAnswer() {
     assert.strictEqual(relayEvents.at(-1)?._tag, "TurnCompleted");
     assert.deepStrictEqual(relayEvents[1], {
       _tag: "TargetSelected",
-      externalAgentKind: "claude",
-      externalModelSpecifier: "test",
-      rawDriverOptions: {
-        effort: "max",
-      },
-      requestedModel: "claude/test",
+      externalAgentKind: "diagnostic",
+      externalModelSpecifier: "reasoning",
+      rawDriverOptions: {},
+      requestedModel: "diagnostic/reasoning",
       threadId: "codex-thread-1",
       turnId: makeTurnId(),
     });
@@ -394,25 +395,25 @@ function rejectsInvalidCodexRequest({
   }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
 }
 
-/** Test program for simulator driver failure visibility through relay logs. */
-function logsSimulatorDriverFailures() {
+/** Test program for Diagnostic driver failure visibility through relay logs. */
+function logsDiagnosticDriverFailures() {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
   const relayEvents: Array<RelayLogEvent> = [];
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
-      request: yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post("/v1/responses?simulator_failure=start"),
-        requestBody,
-      ),
+      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), {
+        ...requestBody,
+        model: "diagnostic/unknown",
+      }),
     });
     const response = yield* HttpClient.execute(request);
     const responseBody = yield* response.json;
 
     assert.strictEqual(response.status, 500);
     assert.strictEqual(getField(getField(responseBody, "error"), "type"), "server_error");
-    assert.match(String(getField(getField(responseBody, "error"), "message")), /simulator/i);
+    assert.match(String(getField(getField(responseBody, "error"), "message")), /diagnostic/i);
     assert.deepStrictEqual(
       relayEvents.map((event) => event._tag),
       ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted", "TurnFailed"],
@@ -421,7 +422,7 @@ function logsSimulatorDriverFailures() {
       _tag: "TurnFailed",
       threadId: "codex-thread-1",
       turnId: makeTurnId(),
-      message: simulatorDriverFixture.startFailureMessage,
+      message: "Unsupported diagnostic scenario: unknown.",
     });
     assert.deepStrictEqual(loggedInputs, []);
     assert.strictEqual(loggedDiagnostics.length, 1);
@@ -492,7 +493,7 @@ describe("mock Responses provider", () => {
     }),
   );
 
-  it.effect("logs simulator driver failures with an OpenAI-shaped transport error", () =>
-    logsSimulatorDriverFailures(),
+  it.effect("logs Diagnostic driver failures with an OpenAI-shaped transport error", () =>
+    logsDiagnosticDriverFailures(),
   );
 });

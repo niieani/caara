@@ -17,7 +17,8 @@ In scope:
 
 Out of scope:
 
-- Interleaving later PRDs unless a dependency requires it and fp/user direction permits it.
+- Interleaving later PRDs except for the user-authorized dependency-order execution across
+  `CAARA-zoksjrdd`, `CAARA-wkwdmzxd`, and `CAARA-nsldrqnt`.
 - Preserving legacy Claude CLI production behavior once SDK path covers normal turns.
 - Silent fallback paths for missing required driver/session state.
 
@@ -44,4 +45,5 @@ Out of scope:
 
 ## Execution Shape
 
-Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-iqbzhbva, SDK prompt input mapping.
+Sliced fp execution. One shared workdesk for all queued PRDs. Current dependency-interleaved slice:
+`CAARA-kbdhghin`, Diagnostic basic scenario and simulator seam retirement.

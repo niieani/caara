@@ -14,6 +14,7 @@ import {
   type AgentDriverTurnResult,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { diagnosticAgentDriver } from "../mockResponsesProvider/diagnosticDriver.ts";
 import {
   DurableExternalSession,
   makeDriverResumeCursor,
@@ -424,6 +425,7 @@ export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
         Match.when("claude", () =>
           Effect.succeed(createClaudeAgentSdkAgentDriver({ client, generator, pathService })),
         ),
+        Match.when("diagnostic", () => Effect.succeed(diagnosticAgentDriver)),
         Match.orElse((externalAgentKind) =>
           Effect.fail(
             unsupportedExternalAgentKindError({

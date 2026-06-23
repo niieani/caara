@@ -9,6 +9,7 @@ import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { diagnosticAgentDriverRegistryLive } from "./diagnosticDriver.ts";
 import { InputLogger } from "./inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "./relayLogger.ts";
 import {
@@ -17,7 +18,6 @@ import {
 } from "./requestDiagnosticsLogger.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
-import { simulatorAgentDriverRegistryLive } from "./simulatorDriver.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Test fixture failure for concurrency setup and response inspection. */
@@ -94,11 +94,13 @@ const makeHeaders = ({
 const makeBody = ({
   threadId,
   turnId,
+  model,
 }: {
   readonly threadId: string;
   readonly turnId: string;
+  readonly model: string;
 }): Schema.Json => ({
-  model: "claude/test",
+  model,
   input: [
     {
       type: "message",
@@ -192,23 +194,25 @@ const providerLayer = ({
     ),
     Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
     Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(simulatorAgentDriverRegistryLive),
+    Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 
 /** Builds a POST /v1/responses request for one turn. */
 const makeRequest = Effect.fnUntraced(function* ({
   threadId,
   turnId,
+  model = "diagnostic/basic",
   url,
 }: {
   readonly threadId: string;
   readonly turnId: string;
+  readonly model?: string;
   readonly url: string;
 }) {
   return setHeaders({
     request: yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post(url),
-      makeBody({ threadId, turnId }),
+      makeBody({ threadId, turnId, model }),
     ),
     headers: makeHeaders({ threadId, turnId }),
   });
@@ -225,7 +229,8 @@ const runProvidedConcurrencyRequests = Effect.fnUntraced(function* ({
   const heldRequest = yield* makeRequest({
     threadId: concurrencyScenarioIds.sameThread,
     turnId: concurrencyScenarioIds.heldTurn,
-    url: "/v1/responses?simulator_hold=open",
+    model: "diagnostic/hangs-until-cancel",
+    url: "/v1/responses",
   });
   const heldFiber = yield* HttpClient.execute(heldRequest).pipe(
     Effect.flatMap((response) => Stream.runDrain(response.stream)),
@@ -262,7 +267,7 @@ const runProvidedConcurrencyRequests = Effect.fnUntraced(function* ({
     [
       {
         _tag: "TurnConcurrencyConflict",
-        externalAgentKind: "claude",
+        externalAgentKind: "diagnostic",
         codexThreadId: concurrencyScenarioIds.sameThread,
         incomingTurnId: concurrencyScenarioIds.overlappingTurn,
         runningTurnId: concurrencyScenarioIds.heldTurn,

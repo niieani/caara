@@ -3,9 +3,10 @@
 Caara is a Codex subagent bridge for running external code agents while Codex still speaks the
 Responses-compatible subagent transport it already supports.
 
-The current v1 implementation supports Claude Code. Codex sends a normal streaming
-`POST /v1/responses` request to Caara, Caara resolves `model = "claude/<external-model>"`, starts or
-resumes the matching Claude Code session, and relays normalized runtime events back as OpenAI
+The current v1 implementation supports Claude Code through the Claude Agent SDK and an
+always-available Diagnostic driver for smoke testing. Codex sends a normal streaming
+`POST /v1/responses` request to Caara, Caara resolves `model = "<external-agent>/<external-model>"`,
+starts or resumes the matching driver session, and relays normalized runtime events back as OpenAI
 Responses SSE events.
 
 ## Current Behavior
@@ -22,7 +23,8 @@ Supported request shape:
 
 Implemented external agent kinds:
 
-- `claude/*`: routed to the Claude Code process driver.
+- `claude/*`: routed to the Claude Agent SDK driver.
+- `diagnostic/*`: routed to the always-available Diagnostic driver.
 
 For each valid streaming turn, Caara:
 
@@ -136,6 +138,7 @@ Examples:
 claude/haiku
 claude/sonnet
 claude/opus
+diagnostic/basic
 ```
 
 Caara core parses only the first `/`. The segment before it selects the external agent kind and its
@@ -190,6 +193,33 @@ Caara does not hand-build Claude CLI argv or parse Claude stdout for normal turn
 messages are translated into Caara runtime events. Assistant text, displayable reasoning, permission
 denials, and terminal SDK results stay behind the driver/runtime boundary. Terminal SDK failures
 become driver errors.
+
+## Diagnostic Driver
+
+The Diagnostic driver is a first-class Caara driver for smoke-testing Caara behavior without
+invoking an external agent. It is always available on localhost and selected with
+`model = "diagnostic/<scenario>"`.
+
+Supported v1 scenario names:
+
+- `diagnostic/basic`
+- `diagnostic/reasoning`
+- `diagnostic/fails-before-output`
+- `diagnostic/fails-after-partial`
+- `diagnostic/hangs-until-cancel`
+- `diagnostic/recovery`
+
+`diagnostic/basic` emits deterministic assistant output, persists an opaque Diagnostic driver
+resume cursor, and returns distinct resumed output on follow-up turns for the same Codex thread.
+Driver-owned options are bounded:
+
+- `diagnostic_answer_text`
+- `diagnostic_chunk_count`
+- `diagnostic_delay_ms`
+
+Unsupported Diagnostic option names, invalid option values, and unknown scenarios fail explicitly.
+The retired simulator driver and `simulator_*` query options are not part of the public or test
+interface.
 
 ## Session Directory
 

@@ -63,7 +63,7 @@ export const createRuntimeResponse = ({
   readonly request: ResponsesCreateRequest;
   readonly output: readonly RuntimeOutputItem[];
 }) => ({
-  id: "resp_simulator_driver",
+  id: "resp_diagnostic_driver",
   object: "response" as const,
   model: request.model,
   created_at: mockResponsesFixture.createdAtEpochSeconds,
