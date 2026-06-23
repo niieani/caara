@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs/promises";
 import path from "node:path";
 
 import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
@@ -19,6 +20,7 @@ import {
 import { isAssistantMessageDoneData } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
+import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
 
 /** Stable project root used as a realistic Codex workspace path in transport tests. */
@@ -154,8 +156,8 @@ const makeProviderTestLayer = (
   loggedInputs: Array<Schema.Json>,
   loggedDiagnostics: Array<ResponsesRequestDiagnostics>,
   relayEvents: Array<RelayLogEvent>,
+  stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`),
 ) => {
-  const stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`);
   return mockResponsesServerLayer.pipe(
     Layer.provideMerge(BunHttpServer.layerTest),
     Layer.provideMerge(makeCaptureLoggerLayer(loggedInputs)),
@@ -166,6 +168,20 @@ const makeProviderTestLayer = (
     Layer.provideMerge(diagnosticAgentDriverRegistryLive),
   );
 };
+
+/** Reads the persisted Diagnostic binding for the default provider test thread. */
+const readDiagnosticBinding = ({ stateDir }: { readonly stateDir: string }) =>
+  Effect.tryPromise(() =>
+    fs.readFile(
+      sessionBindingFilePath({
+        stateDir,
+        externalAgentKind: "diagnostic",
+        driverInstanceId: "diagnostic",
+        codexThreadId: "codex-thread-1",
+      }),
+      "utf8",
+    ),
+  ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)));
 
 /** Parsed Responses SSE frame decoded through Effect's OpenAI stream-event schema. */
 interface ResponseSseFrame {
@@ -253,6 +269,7 @@ function streamsFakeReasoningAndFinalAnswer() {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
   const relayEvents: Array<RelayLogEvent> = [];
+  const stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`);
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
@@ -321,7 +338,20 @@ function streamsFakeReasoningAndFinalAnswer() {
       threadId: "codex-thread-1",
       turnId: makeTurnId(),
     });
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
+    const binding = yield* readDiagnosticBinding({ stateDir });
+    assert.strictEqual(getField(binding, "lastTurnId"), makeTurnId());
+    assert.strictEqual(
+      getField(getField(binding, "externalSession"), "driverResumeCursor"),
+      diagnosticDriverFixture.basicExternalSessionCursor,
+    );
+    assert.deepStrictEqual(getField(binding, "requestedTarget"), {
+      requestedModel: "diagnostic/reasoning",
+      externalModelSpecifier: "reasoning",
+      rawDriverOptions: {},
+    });
+  }).pipe(
+    Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents, stateDir)),
+  );
 }
 
 /** Test program for the unsupported non-streaming Responses request contract. */

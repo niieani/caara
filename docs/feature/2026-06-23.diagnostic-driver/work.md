@@ -47,3 +47,21 @@ Implemented shape:
 Verification:
 
 - `bun run test src/mockResponsesProvider/diagnosticDriverEcho.test.ts --run`
+
+## Completed Slice: CAARA-vioqooox
+
+Target:
+
+- Keep `diagnostic/reasoning` on the runtime reasoning lifecycle, not assistant commentary.
+- Verify ordering from reasoning item lifecycle through final assistant answer and terminal success.
+- Verify successful reasoning turns persist the Diagnostic session binding.
+
+Implemented shape:
+
+- Existing Diagnostic runtime stream emits `reasoning` item events followed by final assistant text.
+- Provider-boundary test now asserts reasoning SSE delta, runtime event ordering, final completion,
+  relay target selection, and persisted Diagnostic binding cursor.
+
+Verification:
+
+- `bun run test src/mockResponsesProvider/mockResponsesProvider.test.ts --run`
