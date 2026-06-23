@@ -14,6 +14,7 @@ import {
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
 import { makeAntigravityDriverResumeCursor } from "./cursor.ts";
+import { buildAntigravityCliArgv, parseAntigravityCliOptions } from "./options.ts";
 import { extractAntigravityCliPrompt } from "./prompt.ts";
 import { AntigravityCliSettings, type AntigravityCliSettingsValue } from "./settings.ts";
 import {
@@ -79,15 +80,6 @@ const readAntigravityLogFile = Effect.fnUntraced(function* ({
     ),
   );
 });
-
-/** Builds the first-turn Antigravity CLI argv. */
-const firstTurnArgv = ({
-  prompt,
-  logFilePath,
-}: {
-  readonly prompt: string;
-  readonly logFilePath: string;
-}): readonly string[] => ["--prompt", prompt, "--print", "--log-file", logFilePath];
 
 /** Returns true when a configured command should be resolved as a filesystem path. */
 const isPathCommand = ({
@@ -205,7 +197,18 @@ export const makeAntigravityCliAgentDriver = ({
 }): AgentDriver => ({
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     const prompt = yield* extractAntigravityCliPrompt(turn.prompt);
-    const logFilePath = antigravityLogFilePath({ pathService, homeDir: settings.homeDir, turn });
+    const options = yield* parseAntigravityCliOptions({
+      externalModelSpecifier: turn.target.externalModelSpecifier,
+      rawDriverOptions: turn.target.rawDriverOptions,
+      pathService,
+      settings,
+    });
+    const defaultLogFilePath = antigravityLogFilePath({
+      pathService,
+      homeDir: settings.homeDir,
+      turn,
+    });
+    const logFilePath = options.logFile ?? defaultLogFilePath;
     yield* fileSystem.makeDirectory(pathService.dirname(logFilePath), { recursive: true }).pipe(
       Effect.mapError(
         (error) =>
@@ -220,7 +223,7 @@ export const makeAntigravityCliAgentDriver = ({
       settings,
       spawner,
       turn,
-      argv: firstTurnArgv({ prompt, logFilePath }),
+      argv: buildAntigravityCliArgv({ prompt, options, logFilePath }),
     });
     const logContent = yield* readAntigravityLogFile({ fileSystem, logFilePath });
     const conversationId = yield* conversationIdFromLog(logContent);

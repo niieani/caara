@@ -21,13 +21,8 @@ import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDi
 import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
 import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts";
 import { antigravityCliDriverLayer } from "./driver.ts";
+import { fakeAgyFixture, fakeAgyScript } from "./fakeAgyScript.ts";
 import { AntigravityCliSettings } from "./settings.ts";
-
-/** Fake Antigravity transcript fixture values shared by the process script and assertions. */
-const fakeAgyFixture = {
-  conversationId: "9c59875d-eb16-4436-9c52-d27da2c60a91",
-  finalAnswer: "agy transcript final answer",
-} as const;
 
 /** Project root used as the Codex workspace path in Antigravity driver tests. */
 const projectRoot = process.cwd();
@@ -187,6 +182,7 @@ const providerLayer = ({
       Layer.succeed(AntigravityCliSettings, {
         command: fakeAgyPath,
         homeDir: fakeHomeDir,
+        allowDangerousSkipPermissions: fakeMode === "trusted-skip-permissions",
         environment: {
           AGY_FAKE_INVOCATION_LOG: invocationLogPath,
           AGY_FAKE_MODE: fakeMode,
@@ -211,6 +207,7 @@ const runTurn = ({
   fakeHomeDir,
   invocationLogPath,
   fakeMode,
+  queryString,
   relayEvents,
 }: {
   readonly stateDir: string;
@@ -218,12 +215,14 @@ const runTurn = ({
   readonly fakeHomeDir: string;
   readonly invocationLogPath: string;
   readonly fakeMode: string;
+  readonly queryString?: string;
   readonly relayEvents: Array<RelayLogEvent>;
 }) =>
   Effect.gen(function* () {
+    const url = `/v1/responses${queryString ?? ""}`;
     const request = setHeaders({
       request: yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post("/v1/responses"),
+        HttpClientRequest.post(url),
         makeBody({ turnId: "turn-1" }),
       ),
       headers: makeHeaders({ turnId: "turn-1" }),
@@ -338,60 +337,6 @@ const PersistedAntigravityBinding = Schema.Struct({
   }),
 });
 
-/** Bun executable fixture that simulates the Antigravity CLI transcript/log contract. */
-const fakeAgyScript = `#!/usr/bin/env bun
-import * as fs from "node:fs";
-import path from "node:path";
-
-const args = process.argv.slice(2);
-const valueAfter = (name) => args.at(args.indexOf(name) + 1);
-const logFile = valueAfter("--log-file");
-const prompt = valueAfter("--prompt") ?? "";
-const invocationLog = process.env.AGY_FAKE_INVOCATION_LOG;
-const mode = process.env.AGY_FAKE_MODE ?? "success";
-const conversationId = "${fakeAgyFixture.conversationId}";
-
-if (!invocationLog) {
-  process.stderr.write("missing invocation log");
-  process.exit(70);
-}
-
-fs.mkdirSync(path.dirname(invocationLog), { recursive: true });
-fs.writeFileSync(invocationLog, JSON.stringify({ cwd: process.cwd(), args, prompt }) + "\\n");
-
-if (mode === "process-failure") {
-  process.stderr.write("fake agy failed");
-  process.exit(23);
-}
-
-if (mode !== "missing-log" && logFile) {
-  fs.mkdirSync(path.dirname(logFile), { recursive: true });
-  fs.writeFileSync(logFile, "I0622 20:09:01.708030 server.go:789] Created conversation " + conversationId + "\\n");
-}
-
-if (mode !== "missing-transcript") {
-  const transcriptPath = path.join(process.env.HOME ?? "", ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl");
-  const legacyTranscriptPath = path.join(process.env.HOME ?? "", ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript.jsonl");
-  if (mode === "transcript-jsonl-only") {
-    fs.mkdirSync(path.dirname(legacyTranscriptPath), { recursive: true });
-    fs.writeFileSync(legacyTranscriptPath, JSON.stringify({ step_index: 0, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", content: "legacy transcript answer" }) + "\\n");
-    process.stdout.write("stdout also must not become the answer\\n");
-    process.exit(0);
-  }
-  fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-  const records = [
-    { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
-    { step_index: 1, source: "SYSTEM", type: "CONVERSATION_HISTORY", status: "DONE", created_at: "2026-06-23T03:09:01Z" },
-  ];
-  if (mode !== "missing-final") {
-    records.push({ step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "${fakeAgyFixture.finalAnswer}" });
-  }
-  fs.writeFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
-}
-
-process.stdout.write("stdout must not become the answer\\n");
-`;
-
 describe("Antigravity CLI driver", () => {
   it.effect("drives a first turn through a fake agy executable and persists an opaque cursor", () =>
     Effect.gen(function* () {
@@ -406,6 +351,7 @@ describe("Antigravity CLI driver", () => {
       });
       assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "turn turn-1"]);
       assert.ok(invocation.args.includes("--print"));
+      assert.deepStrictEqual(invocation.args.slice(3, 5), ["--model", "gemini-3.5-flash"]);
       assert.ok(invocation.args.includes("--log-file"));
       assert.strictEqual(invocation.cwd, projectRoot);
 
@@ -415,6 +361,55 @@ describe("Antigravity CLI driver", () => {
         decoded.externalSession.driverResumeCursor.conversationId,
         fakeAgyFixture.conversationId,
       );
+    }),
+  );
+
+  it.effect("maps validated Antigravity options into exact agy argv", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const logOverride = path.join(fixture.fakeHomeDir, "logs", "override.log");
+      const addDirs = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)([
+        "/tmp/one",
+        "/tmp/two",
+      ]);
+      const query = new URLSearchParams({
+        model: "gemini-3.5-pro",
+        print_timeout_seconds: "900",
+        sandbox: "true",
+        add_dirs: addDirs,
+        log_file: logOverride,
+        dangerously_skip_permissions: "true",
+        reasoning: "off",
+        activity: "off",
+      });
+      const result = yield* runTurn({
+        ...fixture,
+        fakeMode: "trusted-skip-permissions",
+        queryString: `?${query.toString()}`,
+        relayEvents: [],
+      });
+
+      assert.deepStrictEqual(result, { _tag: "Success", text: fakeAgyFixture.finalAnswer });
+      const invocation = yield* readFakeInvocation({
+        invocationLogPath: fixture.invocationLogPath,
+      });
+      assert.deepStrictEqual(invocation.args, [
+        "--prompt",
+        "turn turn-1",
+        "--print",
+        "--model",
+        "gemini-3.5-pro",
+        "--print-timeout",
+        "900s",
+        "--sandbox",
+        "--dangerously-skip-permissions",
+        "--add-dir",
+        "/tmp/one",
+        "--add-dir",
+        "/tmp/two",
+        "--log-file",
+        logOverride,
+      ]);
     }),
   );
 

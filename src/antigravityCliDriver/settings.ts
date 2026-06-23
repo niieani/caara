@@ -4,6 +4,7 @@ import { Context, Layer, Option } from "effect";
 export interface AntigravityCliSettingsValue {
   readonly command: string;
   readonly homeDir: string;
+  readonly allowDangerousSkipPermissions: boolean;
   readonly environment: Readonly<Record<string, string>>;
 }
 
@@ -26,5 +27,6 @@ export const antigravityCliSettingsFromEnvironment = ({
   Layer.succeed(AntigravityCliSettings, {
     command: "agy",
     homeDir: homeDirFromEnv(env),
+    allowDangerousSkipPermissions: false,
     environment: {},
   });
