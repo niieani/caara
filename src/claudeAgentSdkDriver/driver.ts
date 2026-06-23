@@ -28,7 +28,11 @@ import {
   type ClaudeAgentSdkQueryRuntime,
 } from "./claudeAgentSdkClient.ts";
 import { runtimeEventsFromClaudeAgentSdkQuery } from "./events.ts";
-import { buildClaudeAgentSdkQueryOptions, type ClaudeAgentSdkSessionStartup } from "./options.ts";
+import {
+  buildClaudeAgentSdkQueryOptions,
+  parseClaudeAgentSdkActivityTransportVisibility,
+  type ClaudeAgentSdkSessionStartup,
+} from "./options.ts";
 import { extractClaudeAgentSdkPrompt } from "./prompt.ts";
 
 /** Service used to generate SDK session ids behind an injectable seam. */
@@ -240,13 +244,16 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
     rawDriverOptions: turn.target.rawDriverOptions,
     startup,
   });
+  const activityTransportVisibility = yield* parseClaudeAgentSdkActivityTransportVisibility(
+    turn.target.rawDriverOptions,
+  );
   const runtime = yield* client
     .query({ prompt, options })
     .pipe(Effect.mapError(clientErrorToDriverError));
   yield* applyInPlaceTargetChanges({ runtime, turn });
 
   return {
-    runtimeEvents: runtimeEventsFromClaudeAgentSdkQuery({ runtime }),
+    runtimeEvents: runtimeEventsFromClaudeAgentSdkQuery({ runtime, activityTransportVisibility }),
     externalSession: durableSession(cursor),
     cancel: cancelRuntime(runtime),
   } satisfies AgentDriverTurnResult;

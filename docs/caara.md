@@ -174,6 +174,7 @@ Driver options accepted from provider query parameters:
 - `allowed_tools`
 - `disallowed_tools`
 - `include_partial_messages`
+- `activity`
 
 Unsupported option names and invalid option values fail the turn explicitly.
 
@@ -191,9 +192,12 @@ Current-turn input mapping:
 - Opaque `file_id` content and unknown content item types fail explicitly.
 
 Caara does not hand-build Claude CLI argv or parse Claude stdout for normal turns. Claude Agent SDK
-messages are translated into Caara runtime events. Assistant text, displayable reasoning, permission
-denials, and terminal SDK results stay behind the driver/runtime boundary. Terminal SDK failures
-become driver errors.
+messages are translated into Caara runtime events. Assistant text becomes `phase: "final_answer"`;
+displayable reasoning stays on the reasoning-summary path; SDK tool, tool-result, task, and
+progress activity becomes terse `phase: "commentary"` assistant messages by default. `activity=off`
+keeps that activity lifecycle in relay logs while hiding commentary from the Codex-visible
+Responses stream. Permission denials and terminal SDK results stay behind the driver/runtime
+boundary. Terminal SDK failures become driver errors.
 
 ## Diagnostic Driver
 

@@ -54,6 +54,7 @@ const supportedClaudeAgentSdkOptionNames = new Set([
   "allowed_tools",
   "disallowed_tools",
   "include_partial_messages",
+  "activity",
 ]);
 
 /** Schema for effort values supported by the installed Claude Agent SDK. */
@@ -182,6 +183,19 @@ const parseBooleanOption = Effect.fnUntraced(function* ({
         Match.orElse(() => optionError(`Claude Agent SDK ${name} must be true or false.`)),
       ),
   });
+});
+
+/** Parses the optional Claude SDK activity commentary visibility option. */
+export const parseClaudeAgentSdkActivityTransportVisibility = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  return yield* Match.value(rawDriverOptions.activity ?? "on").pipe(
+    Match.when("on", () => Effect.succeed("visible" as const)),
+    Match.when("off", () => Effect.succeed("relay_only" as const)),
+    Match.orElse((value) =>
+      optionError(`Claude Agent SDK activity must be on or off, received ${value}.`),
+    ),
+  );
 });
 
 /** Builds the optional SDK effort options object. */

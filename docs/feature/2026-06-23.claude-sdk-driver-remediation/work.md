@@ -212,3 +212,22 @@ Test seam:
 
 - `prompt.test.ts` covers text-only, data-url image, workspace path, opaque file-id rejection, unknown content rejection, and history-not-replayed behavior.
 - `claudeAgentSdkDriver.test.ts` asserts SDK driver requests now carry SDK user-message prompt streams while retaining session/options behavior.
+
+## Completed Slice: CAARA-cgjfrhwf
+
+Problem:
+
+- Claude SDK tool, task, and progress messages were not surfaced through Caara's runtime item lifecycle.
+- Codex-visible activity needed to be concise assistant commentary, not Responses tool-call items or raw SDK payloads.
+- Users needed a driver-owned option to hide SDK activity chatter without dropping relay observability.
+
+Target:
+
+- Map SDK tool-use, tool-result, task-started, and task-progress messages to runtime `ItemCreated` events.
+- Emit terse commentary-phase assistant messages by default, such as `Reading src/server.ts`.
+- Add `activity=off` to retain relay log records while suppressing Codex-visible activity commentary.
+
+Test seam:
+
+- `claudeAgentSdkActivity.test.ts` covers a fake SDK tool lifecycle plus task/progress messages through SSE output, relay logs, payload redaction, and `activity=off` behavior.
+- Existing SDK driver tests assert final assistant text remains `phase: "final_answer"` after the runtime phase split.

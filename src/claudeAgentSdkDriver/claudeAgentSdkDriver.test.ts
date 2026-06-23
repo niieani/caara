@@ -161,6 +161,7 @@ describe("Claude Agent SDK driver", () => {
           ...createAssistantTextRuntimeEvents({
             itemId: "claude-sdk-message-0",
             text: "hello",
+            messagePhase: "final_answer",
           }),
           createRuntimeTurnSucceededEvent(),
         ] satisfies readonly AgentRuntimeEvent[]);
