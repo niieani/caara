@@ -3,8 +3,10 @@
 Caara is a Codex subagent bridge for running external code agents while Codex still speaks the
 Responses-compatible subagent transport it already supports.
 
-The current implementation is a local placeholder that proves the Codex role and Responses
-transport wiring before connecting a real external agent such as Claude Code or Antigravity.
+The current v1 implementation supports Claude Code. Codex sends a normal streaming
+`POST /v1/responses` request to Caara, Caara resolves `model = "claude/<external-model>"`, starts or
+resumes the matching Claude Code session, and relays normalized runtime events back as OpenAI
+Responses SSE events.
 
 ## Current Behavior
 
@@ -12,39 +14,33 @@ Caara serves `POST /v1/responses` on `http://127.0.0.1:8787`.
 
 Supported request shape:
 
-- `model`: required string
-- `input`: required JSON value
-- `stream`: must be `true`
+- `model`: required string in `<external-agent-kind>/<external-model>` form.
+- `input`: required JSON value.
+- `stream`: must be `true`.
+- Codex identity headers and `x-codex-turn-metadata`: validated before driver code runs.
+- Provider query parameters: passed as driver-owned options.
 
-For every valid request, Caara:
+Implemented external agent kinds:
 
-- logs request diagnostics and request `input`
-- streams OpenAI Responses SSE events
-- emits fake reasoning text: `thinking how best to respond`
-- emits final assistant text: `Yes, the mock subagent seems to be working`
-- ends with `response.completed`
+- `claude/*`: routed to the Claude Code process driver.
 
-Malformed requests and non-streaming requests fail explicitly with an OpenAI-shaped `invalid_request_error`.
+For each valid streaming turn, Caara:
 
-## Planned Architecture
+- decodes Codex turn identity and workspace context at the transport boundary
+- resolves the requested model into an agent target
+- prepares or loads a session binding keyed by external agent kind and Codex thread id
+- starts or resumes a Claude Code session in the resolved working directory
+- maps Claude Code output into normalized runtime events
+- encodes runtime events as OpenAI Responses SSE frames
+- persists updated session metadata after successful turns
+- cancels in-flight driver work when the Codex response stream disconnects
 
-The Responses transport is only the Codex-facing outer shape. Caara should decode Codex-specific
-metadata, the requested model, and provider query parameters into a compact `CodexTurnContext`,
-resolve an `AgentTarget`, drive a driver, and relay normalized agent runtime events back as
-Responses SSE.
+Malformed requests, unsupported model strings, conflicting required identity, missing working
+directory, invalid driver options, and unrecoverable driver failures fail explicitly.
 
-### Codex Turn Context
+## Codex Turn Context
 
-Codex turn context decoding should be its own deep module, separate from both HTTP routing and
-drivers.
-
-Recommended interface:
-
-```ts
-decodeCodexTurnContext({ headers, url, body }) -> CodexTurnContext
-```
-
-The module owns:
+Codex turn context decoding is isolated from HTTP routing and driver logic. The decoder owns:
 
 - Effect Schemas for Codex request headers, `client_metadata`, and `x-codex-turn-metadata`.
 - JSON parsing for `x-codex-turn-metadata`.
@@ -53,25 +49,25 @@ The module owns:
 - Working-directory candidate extraction.
 - Explicit hard failures for missing or conflicting required Codex identity.
 
-Suggested decoded shape:
+Decoded shape:
 
 ```ts
 class CodexTurnContext extends Schema.Class("CodexTurnContext")({
   parentSessionId: Schema.String,
   threadId: Schema.String,
   turnId: Schema.String,
+  parentThreadId: Schema.String,
   windowId: Schema.String,
   requestKind: Schema.Literal("turn"),
   subagentKind: Schema.String,
   originator: Schema.String,
   requestedModel: Schema.String,
-  providerQueryParams: Schema.Record({ key: Schema.String, value: Schema.String }),
   workspacePaths: Schema.Array(Schema.String),
   cwdCandidates: Schema.Array(Schema.String),
 }) {}
 ```
 
-Suggested raw header schema:
+Required raw header shape:
 
 ```ts
 const CodexRequestHeaders = Schema.Struct({
@@ -86,7 +82,7 @@ const CodexRequestHeaders = Schema.Struct({
 });
 ```
 
-Suggested turn metadata schema:
+Required turn metadata shape:
 
 ```ts
 const CodexTurnMetadata = Schema.Struct({
@@ -99,16 +95,8 @@ const CodexTurnMetadata = Schema.Struct({
   parent_thread_id: Schema.String,
   subagent_kind: Schema.String,
   sandbox: Schema.String,
-  workspaces: Schema.optional(
-    Schema.Record({
-      key: Schema.String,
-      value: Schema.Struct({
-        latest_git_commit_hash: Schema.String,
-        has_changes: Schema.Boolean,
-      }),
-    }),
-  ),
-  turn_started_at_unix_ms: Schema.Number,
+  workspaces: Schema.optional(Schema.Record(Schema.String, codexWorkspaceMetadataSchema)),
+  turn_started_at_unix_ms: Schema.Finite,
 });
 ```
 
@@ -123,17 +111,20 @@ Decoder invariants:
 - Body `model` must be a non-empty string.
 - Provider query parameters must not contain duplicate keys.
 
+Real Codex has been observed to send `x-openai-subagent = "collab_spawn"` while turn metadata
+contains `subagent_kind = "thread_spawn"`. Caara treats validated metadata as the durable subagent
+kind and does not require that header to match metadata.
+
 Codex-specific headers and `x-codex-turn-metadata` are the authoritative source for turn identity.
-`client_metadata` is a duplicate body-level observation used for validation and captured context,
-not route selection.
+`client_metadata` is duplicate body-level context for validation, not route selection.
 
-### Agent Target Selection
+## Agent Target Selection
 
-Caara should select the external agent target from `body.model`, not from the URL path. A single
-Codex model provider can point at one Caara base URL, and each Codex custom agent can choose a
-different `model` string.
+Caara selects the external agent target from `body.model`, not from the URL path. A single Codex
+model provider can point at one Caara base URL, and each Codex custom agent can choose a different
+`model` string.
 
-Recommended first model specifier shape:
+Model specifier shape:
 
 ```text
 <external-agent-kind>/<external-model>
@@ -142,9 +133,9 @@ Recommended first model specifier shape:
 Examples:
 
 ```text
-claude/opus
+claude/haiku
 claude/sonnet
-gemini/pro
+claude/opus
 ```
 
 Caara core parses only the first `/`. The segment before it selects the external agent kind and its
@@ -156,51 +147,67 @@ Provider query parameters become driver options. Caara parses them generically a
 global option names or require option prefixes. The selected external agent kind scopes the option
 names, so `effort` can mean different things for different drivers.
 
-Each driver ships its own target parser and driver option schema. The driver interprets the opaque
-external model specifier, validates its options, and decides which invalid values should reject a
-turn and which valid changes can be applied on initial start or between turns.
-
-Suggested selected target shape:
+Selected target shape:
 
 ```ts
 interface AgentTarget {
   readonly requestedModel: string;
   readonly externalAgentKind: string;
   readonly externalModelSpecifier: string;
-  readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly rawDriverOptions: Record<string, string>;
 }
 ```
 
-### Session Directory
+## Claude Code Driver
 
-Caara should persist a session binding keyed by external agent kind and Codex thread id. Codex
-thread id is stable across follow-up turns for one subagent; parent session id is shared by multiple
-subagents and is not a Caara session key. Requested model and driver options are mutable desired
-state for that driver binding, not durable identity.
+The Claude Code driver is the only production driver in v1.
 
-Session bindings live in Caara's user-state directory, not in the project repository. For durable
-drivers, they contain external session ids and runtime state that should survive Caara restarts but
-should not become source-controlled project artifacts.
+Driver options accepted from provider query parameters:
 
-The session directory stores resume metadata only. Caara does not persist transcript or event replay
-state in the session directory for v1; durable external agents own their own conversation
-durability. Caara may write relay logs for observability, but those logs are not a source of truth
-for resuming or replaying a session.
+- `effort`
+- `max_budget_usd`
+- `tools`
+- `debug_file`
+- `include_partial_messages`
 
-Recommended state directory resolution:
+Unsupported option names and invalid option values fail the turn explicitly.
+
+For a first turn, the driver starts `claude` in print mode with a generated durable session id. For a
+follow-up turn, it resumes the stored Claude Code session id. The prompt extractor selects the latest
+Codex user `input_text` from the full Responses message history so previous assistant `output_text`
+does not become a new Claude prompt.
+
+Claude Code stdout is parsed as JSONL contract events. Assistant text and reasoning deltas are
+translated into Caara runtime events. Terminal Claude Code failures become driver errors.
+
+## Session Directory
+
+Caara persists a session binding keyed by external agent kind and Codex thread id. Codex thread id
+is stable across follow-up turns for one subagent; parent session id is shared by multiple subagents
+and is not a Caara session key. Requested model and driver options are mutable desired state for that
+driver binding, not durable identity.
+
+Session bindings live in Caara's user-state directory, not in the project repository. They contain
+external session ids and runtime state that should survive Caara restarts but should not become
+source-controlled project artifacts.
+
+The session directory stores resume metadata only. Caara does not persist transcripts or event
+replay state; durable external agents own their own conversation durability. Relay logs are
+observability records, not a source of truth for resuming or replaying a session.
+
+State directory resolution:
 
 1. Use `CAARA_STATE_DIR` when set.
-2. Else use the platform user-state directory for Caara.
-3. Else use `$XDG_STATE_HOME/caara`.
-4. Else use `$HOME/.local/state/caara`.
+2. Else use `$XDG_STATE_HOME/caara`.
+3. Else use `$HOME/.local/state/caara`.
 
-Recommended session directory path:
+Session directory path:
 
 ```text
 <caara-state-dir>/sessions
 ```
 
-Recommended durable identity:
+Durable identity:
 
 ```ts
 interface CaaraSessionKey {
@@ -209,7 +216,7 @@ interface CaaraSessionKey {
 }
 ```
 
-Recommended session binding shape:
+Session binding shape:
 
 ```ts
 type ExternalSessionState =
@@ -222,7 +229,7 @@ interface CaaraSessionBinding {
   readonly externalAgentKind: string;
   readonly requestedModel: string;
   readonly externalModelSpecifier: string;
-  readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly rawDriverOptions: Record<string, string>;
   readonly externalSession: ExternalSessionState;
   readonly cwd: string;
   readonly createdFromTurnId: string;
@@ -231,167 +238,174 @@ interface CaaraSessionBinding {
 ```
 
 For an existing binding, incoming requested model and raw driver options are compared with the
-persisted binding. If they differ, Caara passes the desired target state and the previous binding
-state to the driver. Drivers that support model or option changes should apply them before handling
-the turn. Drivers that cannot apply a requested change should log a warning and continue with the
-existing external agent session.
+persisted binding. If they differ, Caara passes desired target state and previous target state to the
+driver.
 
-Drivers that do not support session durability use `ExternalSessionState._tag === "Ephemeral"`.
-Caara may still keep a binding for target diffing, cwd reuse, and observability, but it must not
-pretend the external agent has retained prior conversation state.
-
-Ephemeral drivers are out of scope for the initial Claude Code driver. Future ephemeral support
-requires Codex context reconstruction from Codex thread logs; Caara should not ask the managing
-agent to restate context for ordinary ephemeral-driver turns.
-
-Recommended cwd resolution:
+Working-directory resolution:
 
 1. Use persisted cwd for an existing Codex thread.
 2. Else use the first path from `x-codex-turn-metadata.workspaces`.
 3. Else use validated cwd candidates extracted from the body.
 4. Else fail explicitly; external code agents need a working directory.
 
-### Session Recovery
+## Session Recovery
 
-If a durable driver cannot resume the external session id stored in a binding, Caara should keep the
-Codex turn flow alive when the driver can start a fresh external session. Caara logs a warning,
-updates the binding to the fresh external session id, and returns an assistant message asking the
-managing agent to provide the lost context and restate the question.
+If Claude Code cannot resume the external session id stored in a binding, Caara keeps the Codex turn
+flow alive when Claude Code can start a fresh external session. Caara updates the binding to the
+fresh external session id and returns a normal assistant message asking the managing agent to provide
+lost context and restate the question.
 
-Recommended recovery message:
+Recovery message:
 
 ```text
 I couldn't resume the previous external agent session, so I lost the prior context of this subagent conversation. Please send me the relevant past context and restate the question.
 ```
 
-This is a normal agent reply, not a transport error. Caara should not silently continue as if the
-old context was present.
+This is a normal agent reply, not a transport error. Caara does not silently continue as if old
+context were present.
 
-If the driver can neither resume the stored external session nor start a fresh external session,
-Caara fails the turn with an OpenAI-shaped transport error, logs the driver failure, and leaves the
-existing binding unchanged for inspection.
+If Claude Code can neither resume the stored session nor start a fresh session, Caara fails the turn
+with an OpenAI-shaped transport error and leaves the existing binding unchanged for inspection.
 
-### Turn Concurrency
+## Turn Concurrency
 
-Caara should allow at most one in-flight turn per session key. Overlapping turns for the same
-`{ externalAgentKind, codexThreadId }` should not happen in normal Codex subagent behavior and
-should be treated as a protocol anomaly.
+Caara allows at most one in-flight turn per session key. Overlapping turns for the same
+`{ externalAgentKind, codexThreadId }` are treated as a protocol anomaly.
 
-For v1, Caara rejects the overlapping turn and logs a relay event with the session key, incoming
-turn id, and already-running turn id. It does not queue the turn and does not drive one external
-agent session concurrently.
+Caara rejects the overlapping turn and logs a relay event with the session key, incoming turn id, and
+already-running turn id. It does not queue the turn and does not drive one external agent session
+concurrently.
 
-### Turn Cancellation
+## Turn Cancellation
 
 If Codex disconnects the Responses SSE stream while a turn is in flight, Caara treats the disconnect
-as turn cancellation. Caara asks the driver to cancel the current turn and logs the cancellation
-with the session key and turn id.
+as turn cancellation. Caara asks the selected driver to cancel the current turn and logs the
+cancellation with the session key, turn id, outcome tag, and session reusability.
 
-Drivers own the cancellation mechanism for their external agent kind. If a driver supports
-interrupting the turn without damaging the external session, it should do so. If it cannot interrupt
-safely, it returns a cancellation outcome that tells Caara whether the external session is still
-reusable.
+The Claude Code driver sends `SIGINT` to the process. If the process exits within the cancellation
+timeout, the driver reports `Interrupted` and keeps the session reusable. If the process does not
+settle, the driver reports `Abandoned` with `sessionReusable = false`. Process-level failures during
+cancellation report `Terminated`.
 
-Turn abandonment means Caara stops relaying to Codex while the external harness may continue
-running. This is not safe cancellation by itself. If abandoned work can mutate a durable external
-session in a way Codex never observes, the driver must report the session as not reusable so Caara
-does not resume into hidden context.
+Turn abandonment means Caara stops relaying to Codex while the external harness may continue running.
+This is not safe cancellation by itself. If abandoned work can mutate a durable external session in a
+way Codex never observes, the driver marks the session not reusable so Caara does not resume into
+hidden context.
 
-### Driver Seam
+## Driver Seam
 
-The driver-facing module should expose one deep entrypoint for a Codex turn, not separate public
-start/resume/send lifecycle operations.
+Drivers expose one deep entrypoint for a Codex turn, not separate public start/resume/send lifecycle
+operations.
 
-Drivers declare whether they support session durability and driver residency. These capabilities are
-separate:
-
-- A durable, non-resident driver may spawn the external harness for every turn and resume with an
-  external session id.
-- A resident driver may keep a live harness between turns for performance.
-- An ephemeral driver has no external session to resume and handles each turn without claiming prior
-  external-agent context.
-
-Residency TTL applies only to drivers that explicitly opt into driver residency. Non-resident
-drivers are torn down after each turn and do not need idle reaping.
-
-Suggested capability shape:
+Driver-facing turn shape:
 
 ```ts
-interface DriverCapabilities {
-  readonly sessionDurability: "durable" | "ephemeral";
-  readonly supportsResidency: boolean;
-  readonly supportsOptionChanges: boolean;
+interface AgentDriverTurn {
+  readonly codex: CodexTurnContext;
+  readonly target: AgentTarget;
+  readonly prompt: AgentTurnInput;
+  readonly cwd: string;
+  readonly previousTarget: AgentTarget | undefined;
+  readonly externalSession: ExternalSessionState | undefined;
 }
 ```
 
-Suggested cancellation outcome shape:
+Runtime events:
 
 ```ts
-type DriverCancellationOutcome =
+type AgentRuntimeEvent =
+  | { readonly _tag: "ReasoningDelta"; readonly text: string }
+  | { readonly _tag: "AssistantMessage"; readonly text: string };
+```
+
+Cancellation outcome:
+
+```ts
+type AgentCancellationOutcome =
   | { readonly _tag: "Interrupted"; readonly sessionReusable: true }
   | { readonly _tag: "Abandoned"; readonly sessionReusable: boolean }
   | { readonly _tag: "Terminated"; readonly sessionReusable: false };
 ```
 
-Recommended interface:
+Driver result:
 
 ```ts
-startOrResumeTurn({
-  codex: CodexTurnContext,
-  target: AgentTarget,
-  previousTarget: AgentTarget | undefined,
-  prompt: AgentTurnInput,
-  signal: AbortSignal,
-}) -> Stream<AgentRuntimeEvent>
+interface AgentDriverTurnResult {
+  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError>;
+  readonly externalSession: ExternalSessionState;
+  readonly cancel: () => Effect.Effect<AgentCancellationOutcome, never>;
+}
 ```
 
-The driver implementation owns process reuse and external agent session ids when available. One
-driver might keep a process warm, another might respawn a CLI with a resume id, and another might
-start a fresh harness every turn. Callers should not know which lifecycle policy is active.
+Driver interface:
 
-The caller owns target selection, Codex turn context decoding, and relaying normalized agent runtime
-events back onto the Responses transport.
+```ts
+interface AgentDriver {
+  readonly startOrResumeTurn: (turn: AgentDriverTurn) => Effect.Effect<AgentDriverTurnResult, AgentDriverError>;
+}
+```
+
+The driver implementation owns process lifecycle and external agent session ids. The caller owns
+target selection, Codex turn context decoding, session binding persistence, concurrency control, and
+relaying normalized runtime events onto the Responses transport.
 
 ## Codex Role Configuration
 
-The local Codex role lives at `.codex/agents/caara.toml`. It is self-contained: the role file includes both the `caara` agent config and the `[model_providers.caara]` provider block.
+The local Codex role lives at `.codex/agents/caara.toml`. It is self-contained: the role file
+includes both the `caara` agent config and the `[model_providers.caara]` provider block.
 
-The provider block is intentionally embedded in the role file because Codex validates role config layers before merging project-level provider config.
+The provider block is intentionally embedded in the role file because Codex validates role config
+layers before merging project-level provider config.
 
-Codex custom agent files can set a Caara-interpreted model string:
+Current local role:
 
 ```toml
-name = "claude-opus"
-description = "Delegates to Claude Code Opus through Caara."
-developer_instructions = "Use the Caara-backed Claude Code agent."
+name = "caara"
+description = "Delegates to the local Caara Responses provider backed by Claude Code."
+developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"
-model = "claude/opus"
+model = "claude/haiku"
 
 [model_providers.caara]
-name = "Caara"
+name = "Caara Responses"
 base_url = "http://127.0.0.1:8787/v1"
 wire_api = "responses"
 requires_openai_auth = false
-query_params = { effort = "high" }
+request_max_retries = 0
+stream_max_retries = 0
 ```
 
 `query_params` is a model-provider setting in Codex. Caara receives those parameters on the
 `/v1/responses` request URL and treats them as driver options.
 
+Example with Claude Code options:
+
+```toml
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+query_params = { effort = "high", max_budget_usd = "1" }
+```
+
 ## Effect Usage
 
 The HTTP server is built on Effect v4 and `@effect/platform-bun`.
 
-SSE framing uses Effect's native `effect/unstable/encoding/Sse` encoder. Tests decode streamed bytes with the same Effect SSE decoder and validate payloads against `@effect/ai-openai/OpenAiSchema.ResponseStreamEvent`.
+SSE framing uses Effect's native `effect/unstable/encoding/Sse` encoder. Tests decode streamed bytes
+with the same Effect SSE decoder and validate payloads against
+`@effect/ai-openai/OpenAiSchema.ResponseStreamEvent`.
 
 ## Validation
 
 Primary checks:
 
 ```bash
-bun run test mockResponsesProvider.test.ts
-bun run typecheck
+bun run fmt
 bun lint
+bun run typecheck
+bun run test --run
 ```
 
 Manual Codex subagent smoke testing is documented in `docs/agents/smoke-testing.md`.

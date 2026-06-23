@@ -58,6 +58,11 @@ _Avoid_: Agent route, backend config
 The adapter role for one external agent family, such as Claude Code or an ACP-speaking agent.
 _Avoid_: Backend, provider, client
 
+**Diagnostic driver**:
+A first-class Caara driver that emits predefined runtime events for smoke-testing Caara behavior
+without depending on an external agent harness.
+_Avoid_: Fake driver, simulation driver, mock provider
+
 **Session durability**:
 An external agent capability to preserve conversation state across Caara turns through an agent
 session or equivalent resume handle.
@@ -69,8 +74,14 @@ session key.
 _Avoid_: Session durability, persistence, resume support
 
 **Driver option change support**:
-A driver capability to apply changed driver options between turns for an existing session binding.
+A driver capability to apply changed driver options between turns for an existing session binding,
+either in place or by recycling the external harness while preserving resumable conversation state.
 _Avoid_: Session reset, route change
+
+**External harness recycling**:
+Replacing a live external harness for an existing session binding while preserving the driver
+resume cursor and external-agent conversation continuity.
+_Avoid_: Fresh session, new Codex thread, session reset
 
 **Residency TTL**:
 The optional idle timeout after which Caara may dispose a resident driver handle without deleting
@@ -100,19 +111,24 @@ The conversation identity owned by an external agent when that agent supports se
 _Avoid_: Codex thread, Codex session
 
 **Session recovery prompt**:
-An agent reply asking the managing agent to restate lost context after Caara cannot resume an
-external agent session.
+An agent reply asking the managing agent to restate lost context after Caara cannot resume or
+preserve continuity for an external agent session.
 _Avoid_: Fatal resume error, silent reset
 
 **Unrecoverable session start failure**:
-A driver failure where Caara can neither resume the stored external agent session nor start a fresh
-one.
+A driver failure where Caara can neither resume or preserve the stored external agent session nor
+start a fresh one.
 _Avoid_: Lost context, recovery prompt
 
 **Session binding**:
 The association between one external agent kind, one Codex thread, and the driver state Caara keeps
 for that pair. Requested model and driver options are mutable binding state.
 _Avoid_: Session map entry, cache entry, thread-only mapping
+
+**Driver resume cursor**:
+An opaque string owned by a driver that lets it resume an external agent session for a later Codex
+turn. Caara persists it but does not interpret its internal structure.
+_Avoid_: External session id, Claude session schema, resume metadata object
 
 **Caara session key**:
 The durable identity for a session binding, composed from the external agent kind and Codex thread.
@@ -130,6 +146,11 @@ _Avoid_: Session cache, registry, transcript store
 **Relay log**:
 An observability record of Codex turns, driver activity, and relayed events.
 _Avoid_: Transcript, replay log, source of truth
+
+**Transcript observation surface**:
+A driver-owned local stream or file Caara reads to observe external-agent activity during a turn
+relay, without treating it as Caara's replay log or session-durability source.
+_Avoid_: Relay log, session directory, resume cursor
 
 **Turn relay**:
 The act of translating one Codex turn into external-agent activity and streaming the resulting
@@ -153,9 +174,39 @@ _Avoid_: Raw headers, request metadata
 The normalized prompt and context Caara gives to a driver for one turn.
 _Avoid_: Responses input, raw prompt
 
+**Path-based file reference**:
+A driver input reference to a file that is already addressable from the external agent's workspace,
+rather than an opaque uploaded file id that Caara must fetch or decode.
+_Avoid_: File upload, file attachment blob, OpenAI file id
+
 **Agent runtime event**:
 A normalized event emitted by a driver while processing a turn.
 _Avoid_: Provider event, SDK message
+
+**Agent activity commentary**:
+Human-readable assistant commentary that Caara streams to Codex to summarize external-agent
+activity, such as tool use or progress, without exposing the underlying runtime payload as a Codex
+tool call.
+_Avoid_: Structured tool event, raw tool payload, function call
+
+**Displayable reasoning**:
+External-agent thinking content that a driver has classified as intended for Codex-visible reasoning
+output rather than private model scratchpad or assistant text.
+_Avoid_: Raw thinking, hidden chain of thought, activity commentary
+
+**Driver permission posture**:
+The driver-specific setting bundle that controls what an external agent is allowed to attempt
+without asking. Caara forwards it as driver options rather than defining one global permission mode.
+_Avoid_: Caara permission mode, global safety tier
+
+**Permission prompt**:
+A runtime approval request from an external agent or harness to perform an action during a turn
+relay.
+_Avoid_: AskUserQuestion, driver permission posture
+
+**Agent question prompt**:
+A runtime request from an external agent for managing-agent input during a turn relay.
+_Avoid_: Permission prompt, follow-up task, recovery prompt
 
 **Responses transport**:
 The Codex-facing OpenAI Responses-compatible HTTP and SSE shape Caara speaks.

@@ -38,7 +38,7 @@ Expected first-turn response includes:
 
 ```text
 cwd=/Volumes/Projects/Software/code-agents-as-responses-api
-readme_line_5=Current implementation is a mock provider for Codex: it logs request `input`,
+readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 ```
 
 4. Send a follow-up prompt on the same subagent handle:

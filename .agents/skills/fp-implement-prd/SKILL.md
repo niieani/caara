@@ -10,7 +10,7 @@ Implement one fp PRD and every child issue beneath it. Treat fp as the source of
 
 ## Argument
 
-Collect every unique `JUL-...` issue id in the user's message, preserving order.
+Collect every unique fp issue id in the user's message, preserving order.
 
 - If no id is present, ask for one and stop.
 - If one id is present, implement that PRD exactly as below.
@@ -37,27 +37,28 @@ For each PRD id being executed:
    - `fp context <prd-id>`
    - `fp tree <prd-id>`
    - `fp guide implement`
-2. Use `$builder-workflow` for the PRD and for each child issue.
-3. Mark the PRD issue `in-progress` and add a short start comment.
+2. Use `$builder-workflow` once for the PRD execution. Maintain one PRD-level workdesk for the whole run, and use it across all child issues and subagents; do not create a separate workdesk per child issue unless the user explicitly asks.
+3. Mark the PRD issue `in-progress`.
 4. Read every child issue before editing code.
 5. Work child issues in dependency order. Only start a child issue when all dependencies are `done`.
 6. For each child issue:
+   - read the PRD, the child issue, all linked docs, relevant ADRs, and enough related code to understand how the slice fits the whole PRD;
    - run `fp context <issue-id>`;
    - mark it `in-progress`;
-   - add a start comment naming the first implementation step;
    - write focused red tests first;
    - implement until focused validation passes;
    - apply the Slice Completion Rules;
    - add a completion report with `fp comment`;
    - mark the issue `done`;
    - create an atomic semantic commit mentioning the issue id.
-7. After all child issues are `done`, re-read the PRD and verify every acceptance-relevant requirement is satisfied.
-8. Add a final PRD report comment, mark the PRD `done`, and create a final semantic commit if any final verification/docs changes were made.
+7. After all child issues are `done`, spawn an independent subagent for an in-depth PRD implementation review before marking the PRD `done`. Ask it to inspect the PRD, child issues, commits, changed code/docs, tests, and validation evidence; verify the PRD is implemented in full; perform a code-review pass for correctness, missing tests, regressions, and documentation gaps; and return blocking findings versus non-blocking follow-ups.
+8. Resolve every blocking subagent review finding before continuing. If a finding requires code/docs changes, make those changes, run the relevant validation, commit them, and ask for another focused subagent review or document why the finding is no longer blocking.
+9. Add a final PRD report comment that includes the final validation commands and the subagent review summary, mark the PRD `done`, and create a final semantic commit if any final verification/docs changes were made.
 
-Completion criterion: the PRD and every child issue are `done`, dependency order was respected, each child has a completion report comment, and every completed child has an atomic commit.
+Completion criterion: the PRD and every child issue are `done`, dependency order was respected, each child has a completion report comment, every completed child has an atomic commit, and the independent subagent PRD review found no unresolved blocking gaps.
 
 As you work, run lint/typecheck and focused tests for the changed storage/runtime/operator area to save time.
-Full test suite only before making the marking the child issue `done` to verify integration and catch any missed edge cases.
+Run the full test suite before marking each child issue `done` to verify integration and catch any missed edge cases.
 
 ## Slice Completion Rules
 
