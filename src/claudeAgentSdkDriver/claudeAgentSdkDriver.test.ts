@@ -62,7 +62,7 @@ const makeTarget = ({
     rawDriverOptions,
   });
 
-/** Builds one direct driver turn with latest-user prompt history. */
+/** Builds one direct driver turn with core-normalized current-user prompt input. */
 const makeTurn = ({
   target = makeTarget(),
   previousTarget,
@@ -80,16 +80,6 @@ const makeTurn = ({
   target,
   prompt: {
     input: [
-      {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: "first request" }],
-      },
-      {
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "previous answer" }],
-      },
       {
         type: "message",
         role: "user",

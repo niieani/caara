@@ -1,6 +1,6 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Match, Result, Stream } from "effect";
+import { Effect, Match, Stream } from "effect";
 import * as Path from "effect/Path";
 
 import type { ClaudeAgentSdkQueryPrompt } from "./claudeAgentSdkClient.ts";
@@ -48,32 +48,10 @@ const failureMessage = (error: unknown): string =>
     Match.orElse(String),
   );
 
-/** Extracts the driver error message from an expected prompt mapping failure. */
-const promptErrorMessage = (result: Result.Result<unknown, unknown>): string =>
-  Result.match(result, {
-    onFailure: failureMessage,
-    onSuccess: () => assert.fail("expected prompt mapping failure"),
-  });
-
 describe("Claude Agent SDK prompt mapping", () => {
-  it.effect("maps current-turn text only and does not replay assistant or tool history", () =>
+  it.effect("maps normalized current-turn text", () =>
     Effect.gen(function* () {
       const messages = yield* promptMessagesFromInput([
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "first request" }],
-        },
-        {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "previous assistant answer" }],
-        },
-        {
-          type: "function_call_output",
-          call_id: "call_previous",
-          output: "previous tool output",
-        },
         {
           type: "message",
           role: "user",
@@ -91,6 +69,72 @@ describe("Claude Agent SDK prompt mapping", () => {
           },
         } satisfies SDKUserMessage,
       ]);
+    }),
+  );
+
+  it.effect("fails raw mixed Codex history instead of selecting the latest user locally", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        promptMessagesFromInput([
+          {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: "developer instructions" }],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "# AGENTS.md instructions\n<INSTRUCTIONS>Use Bun.</INSTRUCTIONS>",
+              },
+              {
+                type: "input_text",
+                text: "<environment_context><cwd>/workspace</cwd></environment_context>",
+              },
+            ],
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "previous assistant answer" }],
+          },
+          {
+            type: "function_call_output",
+            call_id: "call_previous",
+            output: "previous tool output",
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "current request" }],
+          },
+        ]),
+      );
+
+      assert.match(failureMessage(error), /normalized current-turn user input/i);
+    }),
+  );
+
+  it.effect("fails multiple user messages instead of selecting a stale or latest request", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        promptMessagesFromInput([
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "first request" }],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "current request" }],
+          },
+        ]),
+      );
+
+      assert.match(failureMessage(error), /exactly one normalized current user message/i);
     }),
   );
 
@@ -161,7 +205,7 @@ describe("Claude Agent SDK prompt mapping", () => {
 
   it.effect("rejects opaque file ids and unknown current-turn content explicitly", () =>
     Effect.gen(function* () {
-      const fileIdResult = yield* Effect.result(
+      const fileIdError = yield* Effect.flip(
         promptMessagesFromInput([
           {
             type: "message",
@@ -170,7 +214,7 @@ describe("Claude Agent SDK prompt mapping", () => {
           },
         ]),
       );
-      const unknownContentResult = yield* Effect.result(
+      const unknownContentError = yield* Effect.flip(
         promptMessagesFromInput([
           {
             type: "message",
@@ -180,9 +224,9 @@ describe("Claude Agent SDK prompt mapping", () => {
         ]),
       );
 
-      assert.match(promptErrorMessage(fileIdResult), /file_id.*unsupported/i);
+      assert.match(failureMessage(fileIdError), /file_id.*unsupported/i);
       assert.match(
-        promptErrorMessage(unknownContentResult),
+        failureMessage(unknownContentError),
         /Unsupported Claude Agent SDK current-turn content: input_audio/,
       );
     }),

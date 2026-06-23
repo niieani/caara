@@ -21,12 +21,9 @@ const responseRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 /** Responses message item shape accepted by the Claude Agent SDK prompt extractor. */
 const responseInputMessageSchema = Schema.Struct({
   type: Schema.Literal("message"),
-  role: Schema.String,
+  role: Schema.Literal("user"),
   content: Schema.Array(responseRecordSchema),
 });
-
-/** Responses input shape accepted by the Claude Agent SDK prompt extractor. */
-const responseInputSchema = Schema.Array(responseRecordSchema);
 
 /** Supported image MIME handlers for Anthropic base64 image blocks. */
 const base64ImageBlockByMediaType: Readonly<Record<string, (data: string) => ImageBlockParam>> = {
@@ -81,18 +78,6 @@ const firstStringProperty = ({
       )
       .at(0),
   );
-
-/** Finds the latest user message item while ignoring non-message history items. */
-const latestUserMessage = (items: readonly ResponseRecord[]) =>
-  items
-    .flatMap((item) =>
-      Option.match(Schema.decodeUnknownOption(responseInputMessageSchema)(item), {
-        onNone: () => [],
-        onSome: (message) => [message],
-      }),
-    )
-    .filter((message) => message.role === "user")
-    .at(-1);
 
 /** Converts one SDK user message into a one-shot async iterable prompt. */
 const sdkUserMessagePrompt = (message: SDKUserMessage): ClaudeAgentSdkQueryPrompt => ({
@@ -273,21 +258,41 @@ const sdkBlocksFromContent = Effect.fnUntraced(function* ({
   );
 });
 
-/** Extracts the latest user message as a Claude Agent SDK user-message prompt. */
+/** Returns the single normalized user message expected at the driver boundary. */
+const singleCurrentUserMessage = Effect.fnUntraced(function* (
+  messages: readonly (typeof responseInputMessageSchema.Type)[],
+) {
+  const message = yield* Option.match(Option.fromUndefinedOr(messages.at(0)), {
+    onNone: () => promptError("Claude Agent SDK driver requires a current user message."),
+    onSome: Effect.succeed,
+  });
+  yield* Match.value(messages.length).pipe(
+    Match.when(1, () => Effect.void),
+    Match.orElse(() =>
+      Effect.fail(
+        promptError(
+          "Claude Agent SDK driver requires exactly one normalized current user message.",
+        ),
+      ),
+    ),
+  );
+  return message;
+});
+
+/** Extracts normalized current user input as a Claude Agent SDK user-message prompt. */
 export const extractClaudeAgentSdkPrompt = Effect.fnUntraced(function* ({
   cwd,
   input,
 }: ExtractClaudeAgentSdkPromptOptions) {
   const pathService = yield* Path.Path;
-  const items = yield* Schema.decodeUnknownEffect(responseInputSchema)(input).pipe(
+  const messages = yield* Schema.decodeUnknownEffect(Schema.Array(responseInputMessageSchema))(
+    input,
+  ).pipe(
     Effect.mapError(() =>
-      promptError("Claude Agent SDK driver requires Responses input message history."),
+      promptError("Claude Agent SDK driver requires normalized current-turn user input."),
     ),
   );
-  const message = yield* Option.match(Option.fromUndefinedOr(latestUserMessage(items)), {
-    onNone: () => promptError("Claude Agent SDK driver requires a current user message."),
-    onSome: Effect.succeed,
-  });
+  const message = yield* singleCurrentUserMessage(messages);
   const contentBlocks = yield* Effect.forEach(message.content, (content) =>
     sdkBlocksFromContent({ content, cwd, pathService }),
   ).pipe(Effect.map((blocks) => blocks.flat()));

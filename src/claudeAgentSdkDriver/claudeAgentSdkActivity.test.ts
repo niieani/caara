@@ -18,7 +18,11 @@ import {
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
 import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts";
-import { fakeSdkHarness, sdkTextDelta } from "./claudeAgentSdkDriverTestHarness.ts";
+import {
+  collectPromptMessages,
+  fakeSdkHarness,
+  sdkTextDelta,
+} from "./claudeAgentSdkDriverTestHarness.ts";
 
 /** Project root used as the Codex workspace path in SDK activity tests. */
 const projectRoot = process.cwd();
@@ -182,21 +186,57 @@ const makeHeaders = (turnId: string): Readonly<Record<string, string>> => ({
 });
 
 /** Builds a Codex-shaped streaming Responses request body for Claude SDK activity. */
-const makeBody = (turnId: string): Schema.Json => ({
-  model: "claude/sonnet",
-  input: [
+const makeBody = ({
+  turnId,
+  input = [
     {
       type: "message",
       role: "user",
       content: [{ type: "input_text", text: `activity ${turnId}` }],
     },
   ],
+}: {
+  readonly turnId: string;
+  readonly input?: Schema.Json;
+}): Schema.Json => ({
+  model: "claude/sonnet",
+  input,
   stream: true,
   client_metadata: {
     thread_id: makeThreadId(),
     turn_id: turnId,
   },
   metadata: { cwd: projectRoot },
+});
+
+/** Builds the developer message that Codex Desktop sends before workspace user context. */
+const developerMessage = (): Schema.Json => ({
+  type: "message",
+  role: "developer",
+  content: [{ type: "input_text", text: "Use Codex developer instructions." }],
+});
+
+/** Builds the AGENTS/environment prelude user message observed in real Codex subagent input. */
+const codexPreludeMessage = (): Schema.Json => ({
+  type: "message",
+  role: "user",
+  content: [
+    {
+      type: "input_text",
+      text: "# AGENTS.md instructions for /workspace/project\n\n<INSTRUCTIONS>\nUse Bun.\n</INSTRUCTIONS>",
+    },
+    {
+      type: "input_text",
+      text: "<environment_context>\n  <cwd>/workspace/project</cwd>\n</environment_context>",
+    },
+  ],
+});
+
+/** Builds one current managing-agent user request message. */
+const currentUserMessage = (text: string): Schema.Json => ({
+  type: "message",
+  role: "user",
+  content: [{ type: "input_text", text }],
 });
 
 /** Applies Codex identity headers to one outgoing test request. */
@@ -247,8 +287,8 @@ const sdkActivityMessages = (): readonly SDKMessage[] => [
   sdkTextDelta({ sessionId: sdkSessionId(), text: "SDK final answer" }),
 ];
 
-/** Builds a fresh provider layer backed by one fake Claude SDK runtime. */
-const providerLayer = ({
+/** Builds a fresh provider harness backed by one fake Claude SDK runtime. */
+const providerHarness = ({
   stateDir,
   inputs,
   diagnostics,
@@ -263,15 +303,18 @@ const providerLayer = ({
     sessionIds: [sdkSessionId()],
     runtimeMessages: [sdkActivityMessages()],
   });
-  return mockResponsesServerLayer.pipe(
-    Layer.provideMerge(BunHttpServer.layerTest),
-    Layer.provideMerge(inputLoggerLayer(inputs)),
-    Layer.provideMerge(diagnosticsLoggerLayer(diagnostics)),
-    Layer.provideMerge(relayLoggerLayer(relayEvents)),
-    Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
-    Layer.provideMerge(turnConcurrencyLive),
-    Layer.provideMerge(harness.layer),
-  );
+  return {
+    ...harness,
+    layer: mockResponsesServerLayer.pipe(
+      Layer.provideMerge(BunHttpServer.layerTest),
+      Layer.provideMerge(inputLoggerLayer(inputs)),
+      Layer.provideMerge(diagnosticsLoggerLayer(diagnostics)),
+      Layer.provideMerge(relayLoggerLayer(relayEvents)),
+      Layer.provideMerge(sessionDirectoryBunTestLayer({ stateDir })),
+      Layer.provideMerge(turnConcurrencyLive),
+      Layer.provideMerge(harness.layer),
+    ),
+  };
 };
 
 /** Decodes raw Responses SSE frame data without dropping extension fields such as phase. */
@@ -301,6 +344,7 @@ const runClaudeSdkActivityTurn = ({
   stateDir,
   turnId,
   url,
+  input,
   inputs,
   diagnostics,
   relayEvents,
@@ -308,20 +352,29 @@ const runClaudeSdkActivityTurn = ({
   readonly stateDir: string;
   readonly turnId: string;
   readonly url: string;
+  readonly input?: Schema.Json;
   readonly inputs: Array<Schema.Json>;
   readonly diagnostics: Array<ResponsesRequestDiagnostics>;
   readonly relayEvents: Array<RelayLogEvent>;
-}) =>
-  Effect.gen(function* () {
+}) => {
+  const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents });
+  return Effect.gen(function* () {
     const request = setHeaders({
-      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post(url), makeBody(turnId)),
+      request: yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post(url),
+        makeBody({ turnId, input }),
+      ),
       headers: makeHeaders(turnId),
     });
     const response = yield* HttpClient.execute(request);
     const frames = yield* decodeUnknownResponseSseFrames(response.stream);
     assert.strictEqual(response.status, 200);
-    return frames;
-  }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
+    return {
+      frames,
+      recordedRequests: harness.recordedRequests,
+    };
+  }).pipe(Effect.provide(harness.layer));
+};
 
 /** Schema used to extract assistant message completion items from raw SSE data. */
 const AssistantMessageDoneData = Schema.Struct({
@@ -374,7 +427,7 @@ describe("Claude Agent SDK activity commentary", () => {
       const diagnostics: Array<ResponsesRequestDiagnostics> = [];
       const relayEvents: Array<RelayLogEvent> = [];
 
-      const frames = yield* runClaudeSdkActivityTurn({
+      const result = yield* runClaudeSdkActivityTurn({
         stateDir,
         turnId: "turn-claude-sdk-activity-default",
         url: "/v1/responses",
@@ -382,7 +435,7 @@ describe("Claude Agent SDK activity commentary", () => {
         diagnostics,
         relayEvents,
       });
-      const messages = assistantMessageDoneData(frames);
+      const messages = assistantMessageDoneData(result.frames);
 
       assert.deepStrictEqual(
         messages.map((message) => [message.item.phase, messageText(message)]),
@@ -395,11 +448,11 @@ describe("Claude Agent SDK activity commentary", () => {
         ],
       );
       assert.strictEqual(
-        eventNames(frames).includes("response.function_call_arguments.delta"),
+        eventNames(result.frames).includes("response.function_call_arguments.delta"),
         false,
       );
       assert.strictEqual(
-        eventNames(frames).includes("response.custom_tool_call_input.delta"),
+        eventNames(result.frames).includes("response.custom_tool_call_input.delta"),
         false,
       );
       assert.strictEqual(
@@ -415,6 +468,54 @@ describe("Claude Agent SDK activity commentary", () => {
     }),
   );
 
+  it.effect("passes only normalized current-turn text to the SDK for real Codex input", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+
+      const result = yield* runClaudeSdkActivityTurn({
+        stateDir,
+        turnId: "turn-claude-sdk-codex-prelude",
+        url: "/v1/responses",
+        input: [
+          developerMessage(),
+          codexPreludeMessage(),
+          currentUserMessage("Read README.md line 5."),
+        ],
+        inputs,
+        diagnostics,
+        relayEvents,
+      });
+      const request = result.recordedRequests.at(0);
+      assert.ok(request, "missing SDK query request");
+      const promptMessages = yield* collectPromptMessages(request.prompt);
+
+      assert.deepStrictEqual(promptMessages, [
+        {
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Read README.md line 5." }],
+          },
+        },
+      ]);
+      const promptText = Schema.encodeSync(Schema.UnknownFromJsonString)(promptMessages);
+      assert.strictEqual(promptText.includes("Use Codex developer instructions"), false);
+      assert.strictEqual(promptText.includes("AGENTS.md instructions"), false);
+      assert.strictEqual(promptText.includes("<environment_context>"), false);
+      assert.deepStrictEqual(inputs, [
+        [developerMessage(), codexPreludeMessage(), currentUserMessage("Read README.md line 5.")],
+      ]);
+      assert.deepStrictEqual(
+        relayEvents.slice(0, 4).map((event) => event._tag),
+        ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted"],
+      );
+    }),
+  );
+
   it.effect("hides SDK activity commentary when activity is disabled but keeps relay records", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
@@ -422,7 +523,7 @@ describe("Claude Agent SDK activity commentary", () => {
       const diagnostics: Array<ResponsesRequestDiagnostics> = [];
       const relayEvents: Array<RelayLogEvent> = [];
 
-      const frames = yield* runClaudeSdkActivityTurn({
+      const result = yield* runClaudeSdkActivityTurn({
         stateDir,
         turnId: "turn-claude-sdk-activity-off",
         url: "/v1/responses?activity=off",
@@ -430,7 +531,7 @@ describe("Claude Agent SDK activity commentary", () => {
         diagnostics,
         relayEvents,
       });
-      const messages = assistantMessageDoneData(frames);
+      const messages = assistantMessageDoneData(result.frames);
 
       assert.deepStrictEqual(
         messages.map((message) => [message.item.phase, messageText(message)]),
