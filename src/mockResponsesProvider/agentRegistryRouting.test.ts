@@ -193,6 +193,12 @@ const getField = (value: unknown, field: string): unknown => {
   return value[field];
 };
 
+/** Extracts normalized runtime lifecycle tags from captured relay events. */
+const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =>
+  events
+    .filter((event) => event._tag === "RuntimeEventRelayed")
+    .map((event) => event.runtimeEventTag);
+
 /** Decodes and validates the terminal response completion event shape. */
 const decodeCompletedEvent = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -225,17 +231,23 @@ function routesExternalAgentKindThroughDriverRegistry() {
     assert.deepStrictEqual(loggedInputs, [geminiRequestBody.input]);
     assert.strictEqual(loggedDiagnostics.length, 1);
     assert.deepStrictEqual(
-      relayEvents.map((event) => event._tag),
-      [
-        "TurnAccepted",
-        "TargetSelected",
-        "TurnInFlightAcquired",
-        "DriverStarted",
-        "RuntimeEventRelayed",
-        "RuntimeEventRelayed",
-        "TurnCompleted",
-      ],
+      relayEvents.slice(0, 4).map((event) => event._tag),
+      ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted"],
     );
+    assert.deepStrictEqual(runtimeEventTags(relayEvents), [
+      "ItemCreated",
+      "ContentStarted",
+      "ContentDelta",
+      "ContentCompleted",
+      "ItemCompleted",
+      "ItemCreated",
+      "ContentStarted",
+      "ContentDelta",
+      "ContentCompleted",
+      "ItemCompleted",
+      "TurnSucceeded",
+    ]);
+    assert.strictEqual(relayEvents.at(-1)?._tag, "TurnCompleted");
     assert.deepStrictEqual(relayEvents[1], {
       _tag: "TargetSelected",
       externalAgentKind: "gemini",

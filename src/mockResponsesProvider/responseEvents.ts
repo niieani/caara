@@ -1,103 +1,9 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
-import { Effect, Match, Stream } from "effect";
+import { Effect, Match, Option, Stream } from "effect";
 
 import type { AgentRuntimeEvent } from "./agentDriver.ts";
 import { mockResponsesFixture, type ResponsesCreateRequest } from "./protocol.ts";
 import type { SseEvent } from "./sse.ts";
-
-/** Builds the minimal Responses API event stream Codex needs for this mock. */
-export const createMockResponseEvents = ({
-  request,
-}: {
-  readonly request: ResponsesCreateRequest;
-}): readonly SseEvent[] => {
-  const reasoningItem = {
-    id: mockResponsesFixture.reasoningItemId,
-    type: "reasoning",
-    summary: [],
-  } as const;
-
-  const messageItem = {
-    id: mockResponsesFixture.messageItemId,
-    type: "message",
-    status: "completed",
-    role: "assistant",
-    content: [
-      {
-        type: "output_text",
-        text: mockResponsesFixture.assistantText,
-        annotations: [],
-      },
-    ],
-  } as const;
-
-  /** Minimal response object required by Effect OpenAI stream-event schemas. */
-  const createResponse = (output: readonly (typeof reasoningItem | typeof messageItem)[]) => ({
-    id: mockResponsesFixture.responseId,
-    object: "response" as const,
-    model: request.model,
-    created_at: mockResponsesFixture.createdAtEpochSeconds,
-    output,
-  });
-
-  const createdEvent = {
-    type: "response.created",
-    response: createResponse([]),
-    sequence_number: 0,
-  } as const satisfies OpenAiSchema.ResponseStreamEvent;
-
-  const reasoningAddedEvent = {
-    type: "response.output_item.added",
-    output_index: 0,
-    sequence_number: 1,
-    item: reasoningItem,
-  } as const satisfies OpenAiSchema.ResponseStreamEvent;
-
-  const reasoningDeltaEvent = {
-    type: "response.reasoning_summary_text.delta",
-    item_id: mockResponsesFixture.reasoningItemId,
-    output_index: 0,
-    summary_index: 0,
-    delta: mockResponsesFixture.reasoningText,
-    sequence_number: 2,
-  } as const satisfies OpenAiSchema.ResponseStreamEvent;
-
-  const messageDoneEvent = {
-    type: "response.output_item.done",
-    output_index: 1,
-    sequence_number: 3,
-    item: messageItem,
-  } as const satisfies OpenAiSchema.ResponseStreamEvent;
-
-  const completedEvent = {
-    type: "response.completed",
-    response: createResponse([reasoningItem, messageItem]),
-    sequence_number: 4,
-  } as const satisfies OpenAiSchema.ResponseStreamEvent;
-
-  return [
-    {
-      event: createdEvent.type,
-      data: createdEvent,
-    },
-    {
-      event: reasoningAddedEvent.type,
-      data: reasoningAddedEvent,
-    },
-    {
-      event: reasoningDeltaEvent.type,
-      data: reasoningDeltaEvent,
-    },
-    {
-      event: messageDoneEvent.type,
-      data: messageDoneEvent,
-    },
-    {
-      event: completedEvent.type,
-      data: completedEvent,
-    },
-  ];
-};
 
 /** Minimal reasoning output item emitted into the Responses stream. */
 interface RuntimeReasoningItem {
@@ -125,13 +31,22 @@ interface RuntimeMessageItem {
 type RuntimeOutputItem = RuntimeReasoningItem | RuntimeMessageItem;
 
 /** Terminal state tracked while converting runtime events into Responses frames. */
-type RuntimeResponseTerminalState = "open" | "failed";
+type RuntimeResponseTerminalState = "open" | "succeeded" | "failed";
+
+/** Runtime item state accumulated until the item is completed or terminal output is emitted. */
+interface RuntimeItemState {
+  readonly itemId: string;
+  readonly itemKind: "assistant_message" | "reasoning";
+  readonly outputIndex: number;
+  readonly text: string;
+}
 
 /** Stateful encoder position for streaming runtime event conversion. */
 interface RuntimeResponseState {
   readonly sequenceNumber: number;
-  readonly outputIndex: number;
+  readonly nextOutputIndex: number;
   readonly output: readonly RuntimeOutputItem[];
+  readonly items: readonly RuntimeItemState[];
   readonly terminal: RuntimeResponseTerminalState;
 }
 
@@ -144,15 +59,6 @@ type RuntimeTransportEvent =
   | {
       readonly _tag: "RuntimeFailure";
     };
-
-/** Builds a stable item id for a runtime event output item. */
-const runtimeItemId = ({
-  prefix,
-  outputIndex,
-}: {
-  readonly prefix: string;
-  readonly outputIndex: number;
-}): string => `${prefix}_simulator_${outputIndex}`;
 
 /** Builds a minimal Responses object for the current stream state. */
 const createRuntimeResponse = ({
@@ -180,8 +86,9 @@ const initialRuntimeResponseState = ({
 } => ({
   state: {
     sequenceNumber: 1,
-    outputIndex: 0,
+    nextOutputIndex: 0,
     output: [],
+    items: [],
     terminal: "open",
   },
   createdEvent: {
@@ -194,131 +101,54 @@ const initialRuntimeResponseState = ({
   },
 });
 
-/** Appends Responses SSE frames for one reasoning runtime event. */
-const appendReasoningResponseEvents = ({
-  events,
-  output,
-  runtimeEvent,
-  outputIndex,
-  sequenceNumber,
+/** Builds a minimal reasoning item for Responses output. */
+const createReasoningItem = ({ itemId }: { readonly itemId: string }): RuntimeReasoningItem => ({
+  id: itemId,
+  type: "reasoning",
+  summary: [],
+});
+
+/** Builds a completed assistant message item for Responses output. */
+const createMessageItem = ({
+  itemId,
+  text,
 }: {
-  readonly events: SseEvent[];
-  readonly output: RuntimeOutputItem[];
-  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ReasoningDelta" }>;
-  readonly outputIndex: number;
-  readonly sequenceNumber: number;
-}): number => {
-  const reasoningItem = {
-    id: runtimeItemId({ prefix: "rs", outputIndex }),
-    type: "reasoning",
-    summary: [],
-  } as const satisfies RuntimeReasoningItem;
-  events.push({
-    event: "response.output_item.added",
-    data: {
-      type: "response.output_item.added",
-      output_index: outputIndex,
-      sequence_number: sequenceNumber,
-      item: reasoningItem,
-    } satisfies OpenAiSchema.ResponseStreamEvent,
-  });
-  events.push({
-    event: "response.reasoning_summary_text.delta",
-    data: {
-      type: "response.reasoning_summary_text.delta",
-      item_id: reasoningItem.id,
-      output_index: outputIndex,
-      summary_index: 0,
-      delta: runtimeEvent.text,
-      sequence_number: sequenceNumber + 1,
-    } satisfies OpenAiSchema.ResponseStreamEvent,
-  });
-  output.push(reasoningItem);
-  return sequenceNumber + 2;
-};
-
-/** Appends Responses SSE frames for one assistant-message runtime event. */
-const appendAssistantMessageResponseEvents = ({
-  events,
-  output,
-  runtimeEvent,
-  outputIndex,
-  sequenceNumber,
-}: {
-  readonly events: SseEvent[];
-  readonly output: RuntimeOutputItem[];
-  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "AssistantMessage" }>;
-  readonly outputIndex: number;
-  readonly sequenceNumber: number;
-}): number => {
-  const messageItem = {
-    id: runtimeItemId({ prefix: "msg", outputIndex }),
-    type: "message",
-    status: "completed",
-    role: "assistant",
-    content: [
-      {
-        type: "output_text",
-        text: runtimeEvent.text,
-        annotations: [],
-      },
-    ],
-  } as const satisfies RuntimeMessageItem;
-  events.push({
-    event: "response.output_item.done",
-    data: {
-      type: "response.output_item.done",
-      output_index: outputIndex,
-      sequence_number: sequenceNumber,
-      item: messageItem,
-    } satisfies OpenAiSchema.ResponseStreamEvent,
-  });
-  output.push(messageItem);
-  return sequenceNumber + 1;
-};
-
-/** Appends Responses SSE frames for one normalized runtime event. */
-const appendRuntimeResponseEvents = (input: {
-  readonly events: SseEvent[];
-  readonly output: RuntimeOutputItem[];
-  readonly runtimeEvent: AgentRuntimeEvent;
-  readonly outputIndex: number;
-  readonly sequenceNumber: number;
-}): number =>
-  Match.valueTags(input.runtimeEvent, {
-    ReasoningDelta: (runtimeEvent) => appendReasoningResponseEvents({ ...input, runtimeEvent }),
-    AssistantMessage: (runtimeEvent) =>
-      appendAssistantMessageResponseEvents({ ...input, runtimeEvent }),
-  });
-
-/** Converts one runtime event plus encoder state into SSE frames and next state. */
-const runtimeEventToSseEvents = ({
-  state,
-  runtimeEvent,
-}: {
-  readonly state: RuntimeResponseState;
-  readonly runtimeEvent: AgentRuntimeEvent;
-}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
-  const events: SseEvent[] = [];
-  const output = [...state.output];
-  const sequenceNumber = appendRuntimeResponseEvents({
-    events,
-    output,
-    runtimeEvent,
-    outputIndex: state.outputIndex,
-    sequenceNumber: state.sequenceNumber,
-  });
-
-  return [
+  readonly itemId: string;
+  readonly text: string;
+}): RuntimeMessageItem => ({
+  id: itemId,
+  type: "message",
+  status: "completed",
+  role: "assistant",
+  content: [
     {
-      sequenceNumber,
-      outputIndex: state.outputIndex + 1,
-      output,
-      terminal: state.terminal,
+      type: "output_text",
+      text,
+      annotations: [],
     },
-    events,
-  ] as const;
-};
+  ],
+});
+
+/** Looks up the current state for one runtime item id. */
+const runtimeItemState = ({
+  items,
+  itemId,
+}: {
+  readonly items: readonly RuntimeItemState[];
+  readonly itemId: string;
+}): RuntimeItemState | undefined => items.find((item) => item.itemId === itemId);
+
+/** Replaces or inserts one runtime item state by item id. */
+const upsertRuntimeItemState = ({
+  items,
+  item,
+}: {
+  readonly items: readonly RuntimeItemState[];
+  readonly item: RuntimeItemState;
+}): readonly RuntimeItemState[] => [
+  ...items.filter((candidate) => candidate.itemId !== item.itemId),
+  item,
+];
 
 /** Builds the terminal completed event from final stream encoder state. */
 const completedEventFromState = ({
@@ -352,6 +182,206 @@ const failedEventFromState = ({
   } satisfies OpenAiSchema.ResponseStreamEvent,
 });
 
+/** Converts item creation into Responses frames and next encoder state. */
+const itemCreatedToSseEvents = ({
+  state,
+  runtimeEvent,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ItemCreated" }>;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
+  const item = {
+    itemId: runtimeEvent.itemId,
+    itemKind: runtimeEvent.itemKind,
+    outputIndex: state.nextOutputIndex,
+    text: "",
+  } satisfies RuntimeItemState;
+  const nextState = {
+    ...state,
+    nextOutputIndex: state.nextOutputIndex + 1,
+    items: upsertRuntimeItemState({ items: state.items, item }),
+  };
+
+  return Match.value(runtimeEvent.itemKind).pipe(
+    Match.when("reasoning", () => {
+      const reasoningItem = createReasoningItem({ itemId: runtimeEvent.itemId });
+      return [
+        {
+          ...nextState,
+          sequenceNumber: state.sequenceNumber + 1,
+          output: [...state.output, reasoningItem],
+        },
+        [
+          {
+            event: "response.output_item.added",
+            data: {
+              type: "response.output_item.added",
+              output_index: item.outputIndex,
+              sequence_number: state.sequenceNumber,
+              item: reasoningItem,
+            } satisfies OpenAiSchema.ResponseStreamEvent,
+          },
+        ],
+      ] as const;
+    }),
+    Match.orElse(() => [nextState, []] as const),
+  );
+};
+
+/** Converts content text deltas into Responses frames and next encoder state. */
+const contentDeltaToSseEvents = ({
+  state,
+  runtimeEvent,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ContentDelta" }>;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
+  return Option.match(
+    Option.fromUndefinedOr(runtimeItemState({ items: state.items, itemId: runtimeEvent.itemId })),
+    {
+      onNone: () => [state, []] as const,
+      onSome: (item) => {
+        const updatedItem = {
+          ...item,
+          text: `${item.text}${runtimeEvent.text}`,
+        } satisfies RuntimeItemState;
+        const nextState = {
+          ...state,
+          items: upsertRuntimeItemState({ items: state.items, item: updatedItem }),
+        };
+
+        return Match.value(runtimeEvent.contentKind).pipe(
+          Match.when(
+            "reasoning_summary_text",
+            () =>
+              [
+                {
+                  ...nextState,
+                  sequenceNumber: state.sequenceNumber + 1,
+                },
+                [
+                  {
+                    event: "response.reasoning_summary_text.delta",
+                    data: {
+                      type: "response.reasoning_summary_text.delta",
+                      item_id: runtimeEvent.itemId,
+                      output_index: item.outputIndex,
+                      summary_index: runtimeEvent.contentIndex,
+                      delta: runtimeEvent.text,
+                      sequence_number: state.sequenceNumber,
+                    } satisfies OpenAiSchema.ResponseStreamEvent,
+                  },
+                ],
+              ] as const,
+          ),
+          Match.orElse(() => [nextState, []] as const),
+        );
+      },
+    },
+  );
+};
+
+/** Converts item completion into Responses frames and next encoder state. */
+const itemCompletedToSseEvents = ({
+  state,
+  runtimeEvent,
+}: {
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: Extract<AgentRuntimeEvent, { readonly _tag: "ItemCompleted" }>;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
+  return Option.match(
+    Option.fromUndefinedOr(runtimeItemState({ items: state.items, itemId: runtimeEvent.itemId })),
+    {
+      onNone: () => [state, []] as const,
+      onSome: (item) =>
+        Match.value(item.itemKind).pipe(
+          Match.when("assistant_message", () => {
+            const messageItem = createMessageItem({ itemId: item.itemId, text: item.text });
+            return [
+              {
+                ...state,
+                sequenceNumber: state.sequenceNumber + 1,
+                output: [...state.output, messageItem],
+              },
+              [
+                {
+                  event: "response.output_item.done",
+                  data: {
+                    type: "response.output_item.done",
+                    output_index: item.outputIndex,
+                    sequence_number: state.sequenceNumber,
+                    item: messageItem,
+                  } satisfies OpenAiSchema.ResponseStreamEvent,
+                },
+              ],
+            ] as const;
+          }),
+          Match.orElse(() => [state, []] as const),
+        ),
+    },
+  );
+};
+
+/** Converts successful turn terminal events into one terminal Responses frame. */
+const turnSucceededToSseEvents = ({
+  request,
+  state,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] =>
+  [
+    {
+      ...state,
+      sequenceNumber: state.sequenceNumber + 1,
+      terminal: "succeeded",
+    },
+    [completedEventFromState({ request, state })],
+  ] as const;
+
+/** Converts failed turn terminal events into one terminal Responses frame. */
+const turnFailedToSseEvents = ({
+  request,
+  state,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] =>
+  [
+    {
+      ...state,
+      sequenceNumber: state.sequenceNumber + 1,
+      terminal: "failed",
+    },
+    [failedEventFromState({ request, state })],
+  ] as const;
+
+/** Converts one runtime lifecycle event plus encoder state into SSE frames and next state. */
+const runtimeEventToSseEvents = ({
+  request,
+  state,
+  runtimeEvent,
+}: {
+  readonly request: ResponsesCreateRequest;
+  readonly state: RuntimeResponseState;
+  readonly runtimeEvent: AgentRuntimeEvent;
+}): readonly [RuntimeResponseState, readonly SseEvent[]] => {
+  return Match.value(state.terminal).pipe(
+    Match.when("open", () =>
+      Match.valueTags(runtimeEvent, {
+        ItemCreated: (event) => itemCreatedToSseEvents({ state, runtimeEvent: event }),
+        ContentStarted: () => [state, []] as const,
+        ContentDelta: (event) => contentDeltaToSseEvents({ state, runtimeEvent: event }),
+        ContentCompleted: () => [state, []] as const,
+        ItemCompleted: (event) => itemCompletedToSseEvents({ state, runtimeEvent: event }),
+        TurnSucceeded: () => turnSucceededToSseEvents({ request, state }),
+        TurnFailed: () => turnFailedToSseEvents({ request, state }),
+      }),
+    ),
+    Match.orElse(() => [state, []] as const),
+  );
+};
+
 /** Converts one runtime transport value plus encoder state into SSE frames and next state. */
 const runtimeTransportEventToSseEvents = ({
   request,
@@ -363,7 +393,7 @@ const runtimeTransportEventToSseEvents = ({
   readonly transportEvent: RuntimeTransportEvent;
 }): readonly [RuntimeResponseState, readonly SseEvent[]] =>
   Match.valueTags(transportEvent, {
-    RuntimeEvent: ({ runtimeEvent }) => runtimeEventToSseEvents({ state, runtimeEvent }),
+    RuntimeEvent: ({ runtimeEvent }) => runtimeEventToSseEvents({ request, state, runtimeEvent }),
     RuntimeFailure: () =>
       [
         {
@@ -384,8 +414,9 @@ const terminalEventsFromState = ({
   readonly state: RuntimeResponseState;
 }): readonly SseEvent[] =>
   Match.value(state.terminal).pipe(
+    Match.when("succeeded", (): readonly SseEvent[] => []),
     Match.when("failed", (): readonly SseEvent[] => []),
-    Match.orElse((): readonly SseEvent[] => [completedEventFromState({ request, state })]),
+    Match.orElse((): readonly SseEvent[] => [failedEventFromState({ request, state })]),
   );
 
 /** Default no-op side effect run when a runtime stream fails. */
@@ -401,39 +432,16 @@ export const createResponseEventsFromRuntimeEvents = ({
   readonly request: ResponsesCreateRequest;
   readonly runtimeEvents: readonly AgentRuntimeEvent[];
 }): readonly SseEvent[] => {
-  const output: RuntimeOutputItem[] = [];
-  const events: SseEvent[] = [
-    {
-      event: "response.created",
-      data: {
-        type: "response.created",
-        response: createRuntimeResponse({ request, output }),
-        sequence_number: 0,
-      } satisfies OpenAiSchema.ResponseStreamEvent,
-    },
-  ];
-  let sequenceNumber = 1;
-  let outputIndex = 0;
+  const initial = initialRuntimeResponseState({ request });
+  const events: SseEvent[] = [initial.createdEvent];
+  let state = initial.state;
 
   for (const runtimeEvent of runtimeEvents) {
-    sequenceNumber = appendRuntimeResponseEvents({
-      events,
-      output,
-      runtimeEvent,
-      outputIndex,
-      sequenceNumber,
-    });
-    outputIndex += 1;
+    const [nextState, nextEvents] = runtimeEventToSseEvents({ request, state, runtimeEvent });
+    events.push(...nextEvents);
+    state = nextState;
   }
-
-  events.push({
-    event: "response.completed",
-    data: {
-      type: "response.completed",
-      response: createRuntimeResponse({ request, output }),
-      sequence_number: sequenceNumber,
-    } satisfies OpenAiSchema.ResponseStreamEvent,
-  });
+  events.push(...terminalEventsFromState({ request, state }));
 
   return events;
 };

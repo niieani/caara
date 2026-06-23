@@ -12,6 +12,9 @@ import {
   type AgentRuntimeEvent,
   type AgentRuntimeEventStream,
   type AgentRuntimeTerminalOutcome,
+  createAssistantTextRuntimeEvents,
+  createReasoningSummaryRuntimeEvents,
+  createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
 import { EphemeralExternalSession } from "./sessionDirectory.ts";
@@ -59,14 +62,15 @@ const contractTurn = (): AgentDriverTurn => ({
 
 /** Typed runtime events emitted by the contract-test driver. */
 const contractRuntimeEvents: readonly AgentRuntimeEvent[] = [
-  {
-    _tag: "ReasoningDelta",
+  ...createReasoningSummaryRuntimeEvents({
+    itemId: "contract-reasoning",
     text: "contract reasoning",
-  },
-  {
-    _tag: "AssistantMessage",
+  }),
+  ...createAssistantTextRuntimeEvents({
+    itemId: "contract-message",
     text: "contract answer",
-  },
+  }),
+  createRuntimeTurnSucceededEvent(),
 ];
 
 /** Contract-test stream typed through the explicit runtime stream alias. */

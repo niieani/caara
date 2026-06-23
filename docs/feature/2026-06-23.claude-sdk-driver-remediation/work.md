@@ -95,3 +95,23 @@ Test seam:
 - `sessionBinding.test.ts` proves first-turn creation, follow-up lookup, mutable model/options, and cursor persistence.
 - `sessionBindingV2Contract.test.ts` covers missing binding, wrong-driver binding, and invalid simulator cursor failures.
 - Claude Code policy/session tests assert durable session cursor persistence through the updated binding model.
+
+## Completed Slice: CAARA-nwpnzjlo
+
+Problem:
+
+- Runtime output was collapsed into two coarse events: reasoning delta and completed assistant message.
+- The stream encoder completed successful Responses output when a runtime stream ended, even if no explicit runtime terminal success was observed.
+
+Target:
+
+- Replace the coarse runtime event union with item/content lifecycle events for assistant text and displayable reasoning summaries.
+- Add explicit runtime terminal success and failure events.
+- Make the Responses encoder item-id-aware and terminal-aware, so terminal failure cannot become `response.completed`.
+- Update simulator and Claude Code driver shims to emit lifecycle events plus terminal success.
+
+Test seam:
+
+- `runtimeLifecycle.test.ts` covers complete assistant text, complete reasoning, and partial output followed by terminal failure.
+- Provider and registry-routing tests assert relay logs now expose the runtime lifecycle tag sequence.
+- Runtime failure tests continue proving failed streams emit `response.failed` and do not save completed bindings.

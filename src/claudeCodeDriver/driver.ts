@@ -13,6 +13,9 @@ import {
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEvent,
+  createAssistantTextRuntimeEvents,
+  createReasoningSummaryRuntimeEvents,
+  createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import {
@@ -80,63 +83,75 @@ const turnInvocationOptions = Effect.fnUntraced(function* ({
   } satisfies ClaudeCodePrintInvocationOptions;
 });
 
-/** Converts one Claude Code event into a normalized Caara runtime event when applicable. */
-const runtimeEventResult = (event: AgentRuntimeEvent): Result.Result<AgentRuntimeEvent, void> =>
-  Result.succeed(event);
+/** Stateful Claude stdout-to-runtime lifecycle conversion position. */
+interface ClaudeRuntimeEventState {
+  readonly nextItemIndex: number;
+}
 
-/** Result marker used by Stream.filterMapEffect to skip non-runtime Claude events. */
-const skippedRuntimeEvent = (): Result.Result<AgentRuntimeEvent, void> => Result.fail(undefined);
+/** Builds a stable runtime item id for one Claude stdout-derived output item. */
+const claudeRuntimeItemId = ({
+  state,
+  prefix,
+}: {
+  readonly state: ClaudeRuntimeEventState;
+  readonly prefix: string;
+}): string => `${prefix}-${state.nextItemIndex}`;
 
-/** Converts an optional runtime event into the Result shape expected by Stream.filterMapEffect. */
-const runtimeEventResultFromOption = (
-  event: Option.Option<AgentRuntimeEvent>,
-): Result.Result<AgentRuntimeEvent, void> => Result.fromOption(event, () => undefined);
+/** Advances the Claude runtime item counter after emitting one output item lifecycle. */
+const nextClaudeRuntimeEventState = (state: ClaudeRuntimeEventState): ClaudeRuntimeEventState => ({
+  nextItemIndex: state.nextItemIndex + 1,
+});
 
-/** Converts one Claude Code event into a normalized Caara runtime event when applicable. */
-const runtimeEventFromClaudeEvent = Effect.fnUntraced(function* (event: ClaudeCodeContractEvent) {
+/** Converts one Claude Code event into zero or more normalized Caara runtime events. */
+const runtimeEventsFromClaudeEvent = Effect.fnUntraced(function* ({
+  state,
+  event,
+}: {
+  readonly state: ClaudeRuntimeEventState;
+  readonly event: ClaudeCodeContractEvent;
+}) {
   return yield* Match.valueTags(event, {
     AssistantMessage: (event) =>
       Effect.succeed(
-        runtimeEventResultFromOption(
-          Option.fromUndefinedOr(
-            [event.text]
-              .filter((text) => text.length > 0)
-              .map(
-                (text) =>
-                  ({
-                    _tag: "AssistantMessage",
-                    text,
-                  }) satisfies AgentRuntimeEvent,
-              )
-              .at(0),
-          ),
-        ),
+        Option.match(Option.fromUndefinedOr([event.text].filter((text) => text.length > 0).at(0)), {
+          onNone: () => [state, []] as const,
+          onSome: (text) =>
+            [
+              nextClaudeRuntimeEventState(state),
+              createAssistantTextRuntimeEvents({
+                itemId: claudeRuntimeItemId({ state, prefix: "claude-message" }),
+                text,
+              }),
+            ] as const,
+        }),
       ),
     TextDelta: (event) =>
-      Effect.succeed(
-        runtimeEventResult({
-          _tag: "AssistantMessage",
+      Effect.succeed([
+        nextClaudeRuntimeEventState(state),
+        createAssistantTextRuntimeEvents({
+          itemId: claudeRuntimeItemId({ state, prefix: "claude-message" }),
           text: event.text,
-        } satisfies AgentRuntimeEvent),
-      ),
+        }),
+      ] as const),
     ReasoningDelta: (event) =>
-      Effect.succeed(
-        runtimeEventResult({
-          _tag: "ReasoningDelta",
+      Effect.succeed([
+        nextClaudeRuntimeEventState(state),
+        createReasoningSummaryRuntimeEvents({
+          itemId: claudeRuntimeItemId({ state, prefix: "claude-reasoning" }),
           text: event.text,
-        } satisfies AgentRuntimeEvent),
-      ),
+        }),
+      ] as const),
     Result: (event) =>
       Option.match(Option.fromUndefinedOr([event].filter((result) => result.isError).at(0)), {
-        onNone: () => Effect.succeed(skippedRuntimeEvent()),
+        onNone: () => Effect.succeed([state, [createRuntimeTurnSucceededEvent()]] as const),
         onSome: (result) =>
           new AgentDriverError({
             message: result.resultText ?? `Claude Code failed with subtype ${result.subtype}.`,
           }),
       }),
-    Init: () => Effect.succeed(skippedRuntimeEvent()),
-    UserMessage: () => Effect.succeed(skippedRuntimeEvent()),
-    Other: () => Effect.succeed(skippedRuntimeEvent()),
+    Init: () => Effect.succeed([state, []] as const),
+    UserMessage: () => Effect.succeed([state, []] as const),
+    Other: () => Effect.succeed([state, []] as const),
   });
 });
 
@@ -221,7 +236,10 @@ const runtimeEventsFromClaudeProcess = ({
     Stream.splitLines,
     Stream.filter((line) => line.trim().length > 0),
     Stream.mapEffect(parseClaudeCodeDriverStreamLine),
-    Stream.filterMapEffect(runtimeEventFromClaudeEvent),
+    Stream.mapAccumEffect(
+      () => ({ nextItemIndex: 0 }) satisfies ClaudeRuntimeEventState,
+      (state, event) => runtimeEventsFromClaudeEvent({ state, event }),
+    ),
   );
   const exitCheck = Stream.fromEffect(waitForClaudeCodeExit({ childProcess })).pipe(Stream.drain);
 
@@ -285,10 +303,11 @@ const recoveredClaudeTurnResult = ({
   readonly sessionId: string;
 }): AgentDriverTurnResult => ({
   runtimeEvents: Stream.fromIterable([
-    {
-      _tag: "AssistantMessage",
+    ...createAssistantTextRuntimeEvents({
+      itemId: "claude-recovery-message",
       text: lostSessionRecoveryAssistantText,
-    } satisfies AgentRuntimeEvent,
+    }),
+    createRuntimeTurnSucceededEvent(),
   ]),
   externalSession: new DurableExternalSession({
     driverResumeCursor: makeDriverResumeCursor(sessionId),

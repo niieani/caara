@@ -19,20 +19,70 @@ export interface AgentDriverTurn {
   readonly externalSession: ExternalSessionState | undefined;
 }
 
-/** Driver runtime event carrying incremental reasoning text. */
-export interface AgentReasoningDelta {
-  readonly _tag: "ReasoningDelta";
+/** Runtime item kind emitted by driver-neutral lifecycle events. */
+export type AgentRuntimeItemKind = "assistant_message" | "reasoning";
+
+/** Runtime content kind emitted by driver-neutral lifecycle events. */
+export type AgentRuntimeContentKind = "assistant_text" | "reasoning_summary_text";
+
+/** Runtime event emitted when a driver starts an output item. */
+export interface AgentRuntimeItemCreated {
+  readonly _tag: "ItemCreated";
+  readonly itemId: string;
+  readonly itemKind: AgentRuntimeItemKind;
+}
+
+/** Runtime event emitted when a driver starts one content part for an item. */
+export interface AgentRuntimeContentStarted {
+  readonly _tag: "ContentStarted";
+  readonly itemId: string;
+  readonly contentIndex: number;
+  readonly contentKind: AgentRuntimeContentKind;
+}
+
+/** Runtime event emitted when a driver streams text for one content part. */
+export interface AgentRuntimeContentDelta {
+  readonly _tag: "ContentDelta";
+  readonly itemId: string;
+  readonly contentIndex: number;
+  readonly contentKind: AgentRuntimeContentKind;
   readonly text: string;
 }
 
-/** Driver runtime event carrying a completed assistant message. */
-export interface AgentAssistantMessage {
-  readonly _tag: "AssistantMessage";
-  readonly text: string;
+/** Runtime event emitted when a driver completes one content part for an item. */
+export interface AgentRuntimeContentCompleted {
+  readonly _tag: "ContentCompleted";
+  readonly itemId: string;
+  readonly contentIndex: number;
+  readonly contentKind: AgentRuntimeContentKind;
+}
+
+/** Runtime event emitted when a driver completes one output item. */
+export interface AgentRuntimeItemCompleted {
+  readonly _tag: "ItemCompleted";
+  readonly itemId: string;
+}
+
+/** Runtime event emitted when a driver completes the turn successfully. */
+export interface AgentRuntimeTurnSucceeded {
+  readonly _tag: "TurnSucceeded";
+}
+
+/** Runtime event emitted when a driver reports a terminal turn failure. */
+export interface AgentRuntimeTurnFailed {
+  readonly _tag: "TurnFailed";
+  readonly error: AgentDriverError;
 }
 
 /** Normalized runtime event emitted by an external agent driver. */
-export type AgentRuntimeEvent = AgentReasoningDelta | AgentAssistantMessage;
+export type AgentRuntimeEvent =
+  | AgentRuntimeItemCreated
+  | AgentRuntimeContentStarted
+  | AgentRuntimeContentDelta
+  | AgentRuntimeContentCompleted
+  | AgentRuntimeItemCompleted
+  | AgentRuntimeTurnSucceeded
+  | AgentRuntimeTurnFailed;
 
 /** Driver runtime stream carrying normalized runtime events or a typed driver failure. */
 export type AgentRuntimeEventStream = Stream.Stream<AgentRuntimeEvent, AgentDriverError>;
@@ -101,6 +151,87 @@ export const unsupportedExternalAgentKindError = ({
   readonly externalAgentKind: string;
 }): AgentDriverError =>
   new AgentDriverError({ message: `Unsupported external agent kind: ${externalAgentKind}.` });
+
+/** Builds a complete assistant text lifecycle for one runtime item. */
+export const createAssistantTextRuntimeEvents = ({
+  itemId,
+  text,
+}: {
+  readonly itemId: string;
+  readonly text: string;
+}): readonly AgentRuntimeEvent[] => [
+  {
+    _tag: "ItemCreated",
+    itemId,
+    itemKind: "assistant_message",
+  },
+  {
+    _tag: "ContentStarted",
+    itemId,
+    contentIndex: 0,
+    contentKind: "assistant_text",
+  },
+  {
+    _tag: "ContentDelta",
+    itemId,
+    contentIndex: 0,
+    contentKind: "assistant_text",
+    text,
+  },
+  {
+    _tag: "ContentCompleted",
+    itemId,
+    contentIndex: 0,
+    contentKind: "assistant_text",
+  },
+  {
+    _tag: "ItemCompleted",
+    itemId,
+  },
+];
+
+/** Builds a complete displayable reasoning-summary lifecycle for one runtime item. */
+export const createReasoningSummaryRuntimeEvents = ({
+  itemId,
+  text,
+}: {
+  readonly itemId: string;
+  readonly text: string;
+}): readonly AgentRuntimeEvent[] => [
+  {
+    _tag: "ItemCreated",
+    itemId,
+    itemKind: "reasoning",
+  },
+  {
+    _tag: "ContentStarted",
+    itemId,
+    contentIndex: 0,
+    contentKind: "reasoning_summary_text",
+  },
+  {
+    _tag: "ContentDelta",
+    itemId,
+    contentIndex: 0,
+    contentKind: "reasoning_summary_text",
+    text,
+  },
+  {
+    _tag: "ContentCompleted",
+    itemId,
+    contentIndex: 0,
+    contentKind: "reasoning_summary_text",
+  },
+  {
+    _tag: "ItemCompleted",
+    itemId,
+  },
+];
+
+/** Builds the single successful terminal event for one runtime turn. */
+export const createRuntimeTurnSucceededEvent = (): AgentRuntimeTurnSucceeded => ({
+  _tag: "TurnSucceeded",
+});
 
 /** Contract for starting or resuming one driver-owned turn. */
 export type AgentDriverStart = (

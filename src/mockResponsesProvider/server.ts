@@ -201,14 +201,38 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);
-  const runtimeStreamFailed = yield* Ref.make(false);
+  const runtimeTurnFailed = yield* Ref.make(false);
+  const runtimeTurnSucceeded = yield* Ref.make(false);
   const runtimeEvents = driverTurnResult.runtimeEvents.pipe(
     Stream.tap((runtimeEvent) =>
-      relayLogger.log({
-        _tag: "RuntimeEventRelayed",
-        threadId: responsesRequest.codex.threadId,
-        turnId: responsesRequest.codex.turnId,
-        runtimeEventTag: runtimeEvent._tag,
+      Effect.gen(function* () {
+        yield* relayLogger.log({
+          _tag: "RuntimeEventRelayed",
+          threadId: responsesRequest.codex.threadId,
+          turnId: responsesRequest.codex.turnId,
+          runtimeEventTag: runtimeEvent._tag,
+        });
+        yield* Match.valueTags(runtimeEvent, {
+          TurnSucceeded: () => Ref.set(runtimeTurnSucceeded, true),
+          TurnFailed: (event) =>
+            Effect.all(
+              [
+                Ref.set(runtimeTurnFailed, true),
+                relayLogger.log({
+                  _tag: "TurnFailed",
+                  threadId: responsesRequest.codex.threadId,
+                  turnId: responsesRequest.codex.turnId,
+                  message: event.error.message,
+                }),
+              ],
+              { discard: true },
+            ),
+          ItemCreated: () => Effect.void,
+          ContentStarted: () => Effect.void,
+          ContentDelta: () => Effect.void,
+          ContentCompleted: () => Effect.void,
+          ItemCompleted: () => Effect.void,
+        });
       }),
     ),
   );
@@ -227,10 +251,18 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   }).pipe(Effect.ensuring(lease.release));
   const releaseFailedTurn = lease.release;
   const completeOrReleaseTurn = Effect.gen(function* () {
-    const failed = yield* Ref.get(runtimeStreamFailed);
-    return yield* Match.value(failed).pipe(
-      Match.when(true, () => releaseFailedTurn),
-      Match.orElse(() => completeTurn),
+    const failed = yield* Ref.get(runtimeTurnFailed);
+    const succeeded = yield* Ref.get(runtimeTurnSucceeded);
+    return yield* Match.value({ failed, succeeded }).pipe(
+      Match.when(
+        ({ failed }) => failed,
+        () => releaseFailedTurn,
+      ),
+      Match.when(
+        ({ succeeded }) => succeeded,
+        () => completeTurn,
+      ),
+      Match.orElse(() => releaseFailedTurn),
     );
   });
   const cancelTurn = Effect.gen(function* () {
@@ -279,7 +311,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     runtimeEvents,
     onRuntimeFailure: (error) =>
       Effect.gen(function* () {
-        yield* Ref.set(runtimeStreamFailed, true);
+        yield* Ref.set(runtimeTurnFailed, true);
         yield* relayLogger.log({
           _tag: "TurnFailed",
           threadId: responsesRequest.codex.threadId,

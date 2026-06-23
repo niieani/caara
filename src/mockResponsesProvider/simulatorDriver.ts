@@ -8,6 +8,9 @@ import {
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEvent,
+  createAssistantTextRuntimeEvents,
+  createReasoningSummaryRuntimeEvents,
+  createRuntimeTurnSucceededEvent,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
 import { DurableExternalSession, makeDriverResumeCursor } from "./sessionDirectory.ts";
@@ -24,6 +27,8 @@ export const simulatorDriverFixture = {
   runtimeFailureAfterPartialMessage: "simulator driver runtime failed after partial output",
   unrecoverableSessionFailureMessage:
     "simulator driver could not resume prior session or start a fresh external session",
+  reasoningItemId: "simulator-reasoning",
+  assistantItemId: "simulator-message",
   externalSessionId: "simulator-session-codex-thread-session-binding",
   recoveredExternalSessionId: "simulator-session-recovered-codex-thread-session-binding",
   externalSessionCursor: '{"sessionId":"simulator-session-codex-thread-session-binding"}',
@@ -59,23 +64,25 @@ const createSimulatorEvents = (turn: AgentDriverTurn): readonly AgentRuntimeEven
   });
 
   return [
-    {
-      _tag: "ReasoningDelta",
+    ...createReasoningSummaryRuntimeEvents({
+      itemId: simulatorDriverFixture.reasoningItemId,
       text: simulatorDriverFixture.reasoningText,
-    },
-    {
-      _tag: "AssistantMessage",
+    }),
+    ...createAssistantTextRuntimeEvents({
+      itemId: simulatorDriverFixture.assistantItemId,
       text: assistantText,
-    },
+    }),
+    createRuntimeTurnSucceededEvent(),
   ];
 };
 
 /** Builds the deterministic recovery reply when a durable simulator session cannot be resumed. */
 const createSimulatorRecoveryEvents = (): readonly AgentRuntimeEvent[] => [
-  {
-    _tag: "AssistantMessage",
+  ...createAssistantTextRuntimeEvents({
+    itemId: simulatorDriverFixture.assistantItemId,
     text: simulatorDriverFixture.recoveryAssistantText,
-  },
+  }),
+  createRuntimeTurnSucceededEvent(),
 ];
 
 /** Returns the existing durable simulator session after validating its driver-owned cursor. */
@@ -146,7 +153,21 @@ const simulatorPartialRuntimeFailureStream = (
   Stream.concat(
     Stream.fromIterable<AgentRuntimeEvent>([
       {
-        _tag: "ReasoningDelta",
+        _tag: "ItemCreated",
+        itemId: simulatorDriverFixture.reasoningItemId,
+        itemKind: "reasoning",
+      },
+      {
+        _tag: "ContentStarted",
+        itemId: simulatorDriverFixture.reasoningItemId,
+        contentIndex: 0,
+        contentKind: "reasoning_summary_text",
+      },
+      {
+        _tag: "ContentDelta",
+        itemId: simulatorDriverFixture.reasoningItemId,
+        contentIndex: 0,
+        contentKind: "reasoning_summary_text",
         text: simulatorDriverFixture.reasoningText,
       },
     ]),
