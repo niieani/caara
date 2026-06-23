@@ -388,8 +388,8 @@ const terminalEventsFromState = ({
     Match.orElse((): readonly SseEvent[] => [completedEventFromState({ request, state })]),
   );
 
-/** Type-shape function for side effects run when a runtime stream fails. */
-const runtimeFailureHandlerShape = Effect.fnUntraced(function* () {
+/** Default no-op side effect run when a runtime stream fails. */
+const defaultRuntimeFailureHandler = Effect.fnUntraced(function* () {
   yield* Effect.void;
 });
 
@@ -442,11 +442,11 @@ export const createResponseEventsFromRuntimeEvents = ({
 export const createResponseEventStreamFromRuntimeEvents = <E, R>({
   request,
   runtimeEvents,
-  onRuntimeFailure = () => runtimeFailureHandlerShape(),
+  onRuntimeFailure = () => defaultRuntimeFailureHandler(),
 }: {
   readonly request: ResponsesCreateRequest;
   readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, E, R>;
-  readonly onRuntimeFailure?: (error: E) => ReturnType<typeof runtimeFailureHandlerShape>;
+  readonly onRuntimeFailure?: (error: E) => ReturnType<typeof defaultRuntimeFailureHandler>;
 }): Stream.Stream<SseEvent, never, R> => {
   const initial = initialRuntimeResponseState({ request });
   const transportEvents = runtimeEvents.pipe(

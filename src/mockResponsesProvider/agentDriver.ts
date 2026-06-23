@@ -1,7 +1,8 @@
-import { Context, Effect, Option, Schema, Stream } from "effect";
+import { Context, Schema, type Stream } from "effect";
+import type { Effect as EffectContract } from "effect/Effect";
 
 import type { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
-import { EphemeralExternalSession, type ExternalSessionState } from "./sessionDirectory.ts";
+import type { ExternalSessionState } from "./sessionDirectory.ts";
 
 /** Normalized prompt data sent from Caara transport into an external agent driver. */
 export interface AgentTurnInput {
@@ -33,6 +34,24 @@ export interface AgentAssistantMessage {
 /** Normalized runtime event emitted by an external agent driver. */
 export type AgentRuntimeEvent = AgentReasoningDelta | AgentAssistantMessage;
 
+/** Driver runtime stream carrying normalized runtime events or a typed driver failure. */
+export type AgentRuntimeEventStream = Stream.Stream<AgentRuntimeEvent, AgentDriverError>;
+
+/** Terminal runtime outcome for a successfully completed driver turn. */
+export interface AgentRuntimeSucceeded {
+  readonly _tag: "Succeeded";
+  readonly externalSession: ExternalSessionState;
+}
+
+/** Terminal runtime outcome for a failed driver turn. */
+export interface AgentRuntimeFailed {
+  readonly _tag: "Failed";
+  readonly error: AgentDriverError;
+}
+
+/** Terminal runtime outcome contract shared by driver and transport layers. */
+export type AgentRuntimeTerminalOutcome = AgentRuntimeSucceeded | AgentRuntimeFailed;
+
 /** Cancellation outcome for a turn interrupted before hidden session mutation. */
 export interface AgentCancellationInterrupted {
   readonly _tag: "Interrupted";
@@ -57,23 +76,14 @@ export type AgentCancellationOutcome =
   | AgentCancellationAbandoned
   | AgentCancellationTerminated;
 
-/** Default cancellation outcome for drivers whose test shape has no custom cancellation behavior. */
-const defaultCancellationOutcome = (): AgentCancellationOutcome => ({
-  _tag: "Interrupted",
-  sessionReusable: true,
-});
-
-/** Type-shape function for cancelling one driver-owned in-flight turn. */
-export const agentDriverCancelShape = Effect.fnUntraced(function* () {
-  yield* Effect.void;
-  return defaultCancellationOutcome();
-});
+/** Contract for cancelling one driver-owned in-flight turn. */
+export type AgentDriverCancel = EffectContract<AgentCancellationOutcome>;
 
 /** Driver start result containing runtime events and durable external session state. */
 export interface AgentDriverTurnResult {
-  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError>;
+  readonly runtimeEvents: AgentRuntimeEventStream;
   readonly externalSession: ExternalSessionState;
-  readonly cancel: typeof agentDriverCancelShape;
+  readonly cancel: AgentDriverCancel;
 }
 
 /** Driver failure surfaced to the Responses transport as a server error. */
@@ -84,45 +94,25 @@ export class AgentDriverError extends Schema.TaggedErrorClass<AgentDriverError>(
   },
 ) {}
 
-/** Type-shape function for driver turn starts, used to avoid hand-written Effect channel tuples. */
-export const agentDriverStartShape = Effect.fnUntraced(function* (_turn: AgentDriverTurn) {
-  const shapeFailure = Option.none<AgentDriverError>();
-  yield* Option.match(shapeFailure, {
-    onNone: () => Effect.void,
-    onSome: (error) => error,
-  });
-  const externalSessionChoices: readonly ExternalSessionState[] = [new EphemeralExternalSession()];
-  const externalSession = Option.getOrThrow(Option.fromUndefinedOr(externalSessionChoices.at(0)));
-  const runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError> =
-    Stream.fromIterable<AgentRuntimeEvent>([]);
-  return {
-    runtimeEvents,
-    externalSession,
-    cancel: agentDriverCancelShape,
-  } satisfies AgentDriverTurnResult;
-});
+/** Contract for starting or resuming one driver-owned turn. */
+export type AgentDriverStart = (
+  turn: AgentDriverTurn,
+) => EffectContract<AgentDriverTurnResult, AgentDriverError>;
 
 /** Driver implementation selected for one external agent kind. */
 export interface AgentDriver {
-  readonly startOrResumeTurn: typeof agentDriverStartShape;
+  readonly startOrResumeTurn: AgentDriverStart;
 }
 
-/** Type-shape function for driver registry resolution. */
-export const agentDriverResolveShape = Effect.fnUntraced(function* (_target: AgentTarget) {
-  const shapeFailure = Option.none<AgentDriverError>();
-  yield* Option.match(shapeFailure, {
-    onNone: () => Effect.void,
-    onSome: (error) => error,
-  });
-  return {
-    startOrResumeTurn: agentDriverStartShape,
-  } satisfies AgentDriver;
-});
+/** Contract for resolving a selected agent target into a concrete driver. */
+export type AgentDriverResolve = (
+  target: AgentTarget,
+) => EffectContract<AgentDriver, AgentDriverError>;
 
 /** Registry that resolves the selected target into a concrete driver implementation. */
 export class AgentDriverRegistry extends Context.Service<
   AgentDriverRegistry,
   {
-    readonly resolve: typeof agentDriverResolveShape;
+    readonly resolve: AgentDriverResolve;
   }
 >()("@caara/AgentDriverRegistry") {}

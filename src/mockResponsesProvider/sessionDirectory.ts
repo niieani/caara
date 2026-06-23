@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { Context, Effect, Layer, Option, Schema } from "effect";
+import type { Effect as EffectContract } from "effect/Effect";
 
 import { AgentTarget, type CodexTurnContext } from "./codexTurnContext.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
@@ -63,11 +64,9 @@ export interface PreparedSessionBinding {
 export class SessionDirectory extends Context.Service<
   SessionDirectory,
   {
-    readonly get: (key: SessionBindingKey) => ReturnType<typeof getSessionBindingEffectShape>;
-    readonly save: (
-      binding: CaaraSessionBinding,
-    ) => ReturnType<typeof saveSessionBindingEffectShape>;
-    readonly delete: (key: SessionBindingKey) => ReturnType<typeof deleteSessionBindingEffectShape>;
+    readonly get: SessionDirectoryGet;
+    readonly save: SessionDirectorySave;
+    readonly delete: SessionDirectoryDelete;
   }
 >()("@caara/SessionDirectory") {}
 
@@ -82,37 +81,20 @@ export interface SessionBindingFilePathOptions extends SessionBindingKey {
   readonly stateDir: string;
 }
 
-/** Type-shape function for session binding lookup effects. */
-export const getSessionBindingEffectShape = Effect.fnUntraced(function* (_key: SessionBindingKey) {
-  const shapeFailure = Option.none<SessionDirectoryError>();
-  yield* Option.match(shapeFailure, {
-    onNone: () => Effect.void,
-    onSome: (error) => error,
-  });
-  return Option.none<CaaraSessionBinding>();
-});
+/** Contract for looking up one persisted session binding. */
+export type SessionDirectoryGet = (
+  key: SessionBindingKey,
+) => EffectContract<Option.Option<CaaraSessionBinding>, SessionDirectoryError>;
 
-/** Type-shape function for session binding write effects. */
-export const saveSessionBindingEffectShape = Effect.fnUntraced(function* (
-  _binding: CaaraSessionBinding,
-) {
-  const shapeFailure = Option.none<SessionDirectoryError>();
-  yield* Option.match(shapeFailure, {
-    onNone: () => Effect.void,
-    onSome: (error) => error,
-  });
-});
+/** Contract for saving one persisted session binding. */
+export type SessionDirectorySave = (
+  binding: CaaraSessionBinding,
+) => EffectContract<void, SessionDirectoryError>;
 
-/** Type-shape function for session binding delete effects. */
-export const deleteSessionBindingEffectShape = Effect.fnUntraced(function* (
-  _key: SessionBindingKey,
-) {
-  const shapeFailure = Option.none<SessionDirectoryError>();
-  yield* Option.match(shapeFailure, {
-    onNone: () => Effect.void,
-    onSome: (error) => error,
-  });
-});
+/** Contract for deleting one persisted session binding. */
+export type SessionDirectoryDelete = (
+  key: SessionBindingKey,
+) => EffectContract<void, SessionDirectoryError>;
 
 /** Encodes one session key component into a safe filesystem segment. */
 const encodeSessionPathSegment = (segment: string): string => encodeURIComponent(segment);

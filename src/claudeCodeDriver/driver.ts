@@ -240,7 +240,7 @@ const claudeProcessTurnResult = ({
 }): AgentDriverTurnResult => ({
   runtimeEvents: runtimeEventsFromClaudeProcess({ childProcess, stdout }),
   externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
-  cancel: Effect.fnUntraced(function* () {
+  cancel: Effect.gen(function* () {
     yield* Effect.sync(() => childProcess.kill("SIGINT"));
     const exitResult = yield* Effect.result(
       Effect.tryPromise({
@@ -285,7 +285,7 @@ const recoveredClaudeTurnResult = ({
     } satisfies AgentRuntimeEvent,
   ]),
   externalSession: new DurableExternalSession({ externalSessionId: sessionId }),
-  cancel: Effect.fnUntraced(function* () {
+  cancel: Effect.gen(function* () {
     yield* Effect.void;
     return {
       _tag: "Interrupted",

@@ -235,7 +235,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     );
   });
   const cancelTurn = Effect.gen(function* () {
-    const cancellation = yield* driverTurnResult.cancel();
+    const cancellation = yield* driverTurnResult.cancel;
     yield* relayLogger.log({
       _tag: "TurnCancelled",
       externalAgentKind: responsesRequest.target.externalAgentKind,

@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Option, Schema } from "effect";
+import type { Effect as EffectContract } from "effect/Effect";
 
 /** Session key used by the in-flight turn guard. */
 export interface TurnConcurrencyKey {
@@ -24,30 +25,24 @@ export class TurnConcurrencyConflict extends Schema.TaggedErrorClass<TurnConcurr
   },
 ) {}
 
-/** Type-shape release effect for acquired turn leases. */
-export const turnLeaseReleaseShape = Effect.void;
+/** Contract for releasing an acquired in-flight turn lease. */
+export type TurnLeaseRelease = EffectContract<void>;
 
 /** In-flight turn lease that must be released when turn processing exits. */
 export interface TurnConcurrencyLease {
-  readonly release: typeof turnLeaseReleaseShape;
+  readonly release: TurnLeaseRelease;
 }
 
-/** Type-shape function for turn guard acquisition. */
-export const turnConcurrencyAcquireShape = Effect.fnUntraced(function* (
-  _input: TurnConcurrencyAcquire,
-) {
-  const conflict = Option.none<TurnConcurrencyConflict>();
-  return yield* Option.match(conflict, {
-    onNone: () => Effect.succeed({ release: turnLeaseReleaseShape } satisfies TurnConcurrencyLease),
-    onSome: (error) => error,
-  });
-});
+/** Contract for acquiring in-flight ownership for one turn. */
+export type TurnConcurrencyAcquireEffect = (
+  input: TurnConcurrencyAcquire,
+) => EffectContract<TurnConcurrencyLease, TurnConcurrencyConflict>;
 
 /** Service that enforces one in-flight turn per external-agent-kind and Codex thread. */
 export class TurnConcurrency extends Context.Service<
   TurnConcurrency,
   {
-    readonly acquire: typeof turnConcurrencyAcquireShape;
+    readonly acquire: TurnConcurrencyAcquireEffect;
   }
 >()("@caara/TurnConcurrency") {}
 

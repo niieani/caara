@@ -193,7 +193,7 @@ const simulatorCancellationOutcome = (turn: AgentDriverTurn): AgentCancellationO
 const simulatorTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
   runtimeEvents: simulatorRuntimeEventStream(turn),
   externalSession: simulatorExternalSession(turn),
-  cancel: Effect.fnUntraced(function* () {
+  cancel: Effect.gen(function* () {
     yield* Effect.void;
     return simulatorCancellationOutcome(turn);
   }),
@@ -203,7 +203,7 @@ const simulatorTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
 const simulatorRecoveryTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
   runtimeEvents: Stream.fromIterable(createSimulatorRecoveryEvents()),
   externalSession: recoveredSimulatorExternalSession(),
-  cancel: Effect.fnUntraced(function* () {
+  cancel: Effect.gen(function* () {
     yield* Effect.void;
     return simulatorCancellationOutcome(turn);
   }),
