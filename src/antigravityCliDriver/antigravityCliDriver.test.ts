@@ -383,8 +383,8 @@ describe("Antigravity CLI driver", () => {
         invocationLogPath: fixture.invocationLogPath,
       });
       assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "turn turn-1"]);
-      assert.ok(invocation.args.includes("--print"));
-      assert.deepStrictEqual(invocation.args.slice(3, 5), ["--model", "gemini-3.5-flash"]);
+      assert.ok(!invocation.args.includes("--print"));
+      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "gemini-3.5-flash"]);
       assert.ok(invocation.args.includes("--log-file"));
       assert.strictEqual(invocation.cwd, projectRoot);
 
@@ -429,7 +429,6 @@ describe("Antigravity CLI driver", () => {
       assert.deepStrictEqual(invocation.args, [
         "--prompt",
         "turn turn-1",
-        "--print",
         "--model",
         "gemini-3.5-pro",
         "--print-timeout",

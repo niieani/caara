@@ -128,7 +128,6 @@ describe("Antigravity CLI options", () => {
         [
           "--prompt",
           "turn turn-1",
-          "--print",
           "--model",
           "gemini-3.5-pro",
           "--print-timeout",

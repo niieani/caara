@@ -328,7 +328,6 @@ export const buildAntigravityCliArgv = ({
 }): readonly string[] => [
   "--prompt",
   prompt,
-  "--print",
   ...Option.match(Option.fromUndefinedOr(conversationId), {
     onNone: () => [],
     onSome: (id) => ["--conversation", id],

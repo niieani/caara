@@ -6,6 +6,9 @@ For Caara-core smokes that do not need Claude, use the Diagnostic driver roles a
 `docs/agents/diagnostic-smoke-runbooks.md`. Keep the Claude SDK flow below for the real
 Claude-backed subagent path.
 
+For Antigravity-backed smokes, use `docs/agents/antigravity-smoke-runbook.md`. It covers the real
+`agy` CLI canary, Caara first/resume validation, reasoning/activity checks, and evidence fields.
+
 ## Claude SDK Subagent Flow
 
 1. Start the local provider:

@@ -261,10 +261,9 @@ describe("Antigravity CLI driver resume", () => {
       });
       const resumeInvocation = invocations.at(1);
       assert.ok(resumeInvocation, "missing resume invocation");
-      assert.deepStrictEqual(resumeInvocation.args.slice(0, 5), [
+      assert.deepStrictEqual(resumeInvocation.args.slice(0, 4), [
         "--prompt",
         "turn turn-resume-followup",
-        "--print",
         "--conversation",
         fakeAgyFixture.conversationId,
       ]);
