@@ -1,4 +1,4 @@
-import { Effect, Fiber, Layer, Match, Option, Stream } from "effect";
+import { Effect, Layer, Match, Option, Stream } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -27,6 +27,13 @@ import {
   decodeAntigravityDriverResumeCursor,
   makeAntigravityDriverResumeCursor,
 } from "./cursor.ts";
+import {
+  failOnImmediateResumeExit,
+  forkAntigravityProcessExit,
+  runtimeEventsFromProcessExitFiber,
+  runtimeEventsFromRunningProcess,
+  transcriptPathForConversation,
+} from "./liveRuntimeEvents.ts";
 import { parseAntigravityCliOptions, type AntigravityCliOptions } from "./options.ts";
 import { extractAntigravityCliPrompt } from "./prompt.ts";
 import { AntigravityCliSettings, type AntigravityCliSettingsValue } from "./settings.ts";
@@ -34,7 +41,6 @@ import {
   antigravityTranscriptFullPath,
   emptyAntigravityTranscriptObservationState,
   readAntigravityTranscriptObservation,
-  readAntigravityTranscriptRuntimeEvents,
   type AntigravityTranscriptObservation,
 } from "./transcript.ts";
 
@@ -76,22 +82,6 @@ const cancellationOutcomeFromTranscriptContent = (hasTranscriptContent: boolean)
     Match.orElse(interruptedCancellationOutcome),
   );
 
-/** Builds the transcript path for one Antigravity conversation id. */
-const transcriptPathForConversation = ({
-  pathService,
-  settings,
-  conversationId,
-}: {
-  readonly pathService: Path.Path;
-  readonly settings: AntigravityCliSettingsValue;
-  readonly conversationId: string;
-}): string =>
-  antigravityTranscriptFullPath({
-    pathService,
-    homeDir: settings.homeDir,
-    conversationId,
-  });
-
 /** Returns true when the transcript path has any bytes, including an incomplete JSONL tail. */
 const transcriptHasContent = Effect.fnUntraced(function* ({
   fileSystem,
@@ -122,62 +112,6 @@ const cancelRunningAntigravityTurn = ({
     Effect.map(cancellationOutcomeFromTranscriptContent),
     Effect.orElseSucceed(terminatedCancellationOutcome),
   );
-
-/** Builds a runtime stream that waits for a live Antigravity process before reading transcript. */
-const runtimeEventsFromRunningProcess = ({
-  fileSystem,
-  pathService,
-  settings,
-  conversationId,
-  options,
-  runningProcess,
-}: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly pathService: Path.Path;
-  readonly settings: AntigravityCliSettingsValue;
-  readonly conversationId: string;
-  readonly options: AntigravityCliOptions;
-  readonly runningProcess: AntigravityRunningProcess;
-}) =>
-  Stream.fromEffect(
-    Effect.gen(function* () {
-      const awaitExitFiber = yield* Effect.forkDetach(runningProcess.awaitExit);
-      yield* Fiber.join(awaitExitFiber);
-      return yield* readRuntimeEventsForConversation({
-        fileSystem,
-        pathService,
-        settings,
-        conversationId,
-        options,
-      });
-    }),
-  ).pipe(Stream.flatMap((runtimeEvents) => Stream.fromIterable(runtimeEvents)));
-
-/** Reads runtime events from the transcript owned by one Antigravity conversation id. */
-const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
-  fileSystem,
-  pathService,
-  settings,
-  conversationId,
-  observation,
-  options,
-}: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly pathService: Path.Path;
-  readonly settings: AntigravityCliSettingsValue;
-  readonly conversationId: string;
-  readonly observation?: AntigravityTranscriptObservation;
-  readonly options: AntigravityCliOptions;
-}) {
-  const transcriptPath = transcriptPathForConversation({ pathService, settings, conversationId });
-  return yield* readAntigravityTranscriptRuntimeEvents({
-    fileSystem,
-    transcriptPath,
-    state: observation?.state,
-    reasoning: options.reasoning,
-    activity: options.activity,
-  });
-});
 
 /** Builds the common successful Antigravity driver turn result. */
 const antigravityTurnResult = ({
@@ -246,6 +180,67 @@ const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
       runningProcess,
     }),
   };
+});
+
+/** Starts a resumed Antigravity conversation and maps only newly appended transcript records. */
+const startResumedAntigravityTurn = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
+  settings,
+  spawner,
+  turn,
+  prompt,
+  options,
+  logFilePath,
+  conversationId,
+  observation,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly prompt: string;
+  readonly options: AntigravityCliOptions;
+  readonly logFilePath: string;
+  readonly conversationId: string;
+  readonly observation: AntigravityTranscriptObservation;
+}) {
+  const runningProcess = yield* startAntigravityTurnProcess({
+    fileSystem,
+    pathService,
+    settings,
+    spawner,
+    turn,
+    prompt,
+    options,
+    logFilePath,
+    conversationId,
+  });
+  const exitFiber = yield* forkAntigravityProcessExit(runningProcess);
+  yield* failOnImmediateResumeExit(exitFiber);
+  const transcriptPath = transcriptPathForConversation({
+    pathService,
+    settings,
+    conversationId: runningProcess.conversationId,
+  });
+  return antigravityTurnResult({
+    conversationId: runningProcess.conversationId,
+    runtimeEvents: runtimeEventsFromProcessExitFiber({
+      fileSystem,
+      pathService,
+      settings,
+      conversationId: runningProcess.conversationId,
+      observation,
+      options,
+      exitFiber,
+    }),
+    cancel: cancelRunningAntigravityTurn({
+      fileSystem,
+      transcriptPath,
+      runningProcess,
+    }),
+  });
 });
 
 /** Starts a fresh Antigravity session after continuity loss and returns recovery metadata. */
@@ -421,7 +416,7 @@ export const makeAntigravityCliAgentDriver = ({
                   }),
                 onSuccess: (observation) =>
                   Effect.matchEffect(
-                    runAntigravityTurnProcess({
+                    startResumedAntigravityTurn({
                       fileSystem,
                       pathService,
                       settings,
@@ -431,6 +426,7 @@ export const makeAntigravityCliAgentDriver = ({
                       options,
                       logFilePath,
                       conversationId: cursor.conversationId,
+                      observation,
                     }),
                     {
                       onFailure: (error) =>
@@ -448,23 +444,7 @@ export const makeAntigravityCliAgentDriver = ({
                             message: error.message,
                           },
                         }),
-                      onSuccess: () =>
-                        Effect.map(
-                          readRuntimeEventsForConversation({
-                            fileSystem,
-                            pathService,
-                            settings,
-                            conversationId: cursor.conversationId,
-                            observation,
-                            options,
-                          }),
-                          (runtimeEvents) =>
-                            antigravityTurnResult({
-                              cancel: Effect.succeed(terminatedCancellationOutcome()),
-                              conversationId: cursor.conversationId,
-                              runtimeEvents: Stream.fromIterable(runtimeEvents),
-                            }),
-                        ),
+                      onSuccess: Effect.succeed,
                     },
                   ),
               },

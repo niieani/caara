@@ -222,8 +222,10 @@ const terminateAntigravityProcess = ({
 }: {
   readonly handle: ChildProcessSpawner.ChildProcessHandle;
   readonly close: EffectContract<void>;
-}) =>
-  handle.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }).pipe(
+}) => {
+  const ignoreExitCode = handle.exitCode.pipe(Effect.ignore);
+  return handle.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }).pipe(
+    Effect.flatMap(() => ignoreExitCode),
     Effect.mapError(
       (error) =>
         new AgentDriverError({
@@ -232,6 +234,7 @@ const terminateAntigravityProcess = ({
     ),
     Effect.ensuring(close),
   );
+};
 
 /** Waits for a fresh Antigravity process to reveal its conversation id or fail first. */
 const waitForFreshConversationId = ({

@@ -371,15 +371,35 @@ describe("Antigravity transcript runtime mapping", () => {
     }),
   );
 
+  it.effect("does not treat planner tool-call progress text as a final answer", () =>
+    Effect.gen(function* () {
+      const records = yield* decodeFixtureRecords([
+        plannerRecord({
+          stepIndex: 0,
+          content: "Inspecting source",
+          toolCalls: [{ id: "call-list", name: "LIST_DIRECTORY", path: "src" }],
+        }),
+      ]);
+
+      const failure = yield* Effect.flip(runtimeEventsFromAntigravityTranscript({ records }));
+
+      assert.match(failure.message, /completed final model response/u);
+    }),
+  );
+
   it.effect("hides activity commentary when activity relay is disabled", () =>
     Effect.gen(function* () {
       const records = yield* decodeFixtureRecords([
         plannerRecord({
           stepIndex: 0,
-          content: "Final answer remains",
+          content: "Inspecting source",
           toolCalls: [{ id: "call-search", name: "GREP_SEARCH", path: "src" }],
         }),
         toolResultRecord({ stepIndex: 1, type: "VIEW_FILE", filePath: "src/server.ts" }),
+        plannerRecord({
+          stepIndex: 2,
+          content: "Final answer remains",
+        }),
       ]);
 
       const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({

@@ -32,7 +32,7 @@ interface AntigravityToolMetadata {
 }
 
 /** Stateful Antigravity transcript conversion position for stable runtime item ids. */
-interface AntigravityRuntimeEventState {
+export interface AntigravityRuntimeEventState {
   readonly nextReasoningIndex: number;
   readonly nextActivityIndex: number;
 }
@@ -44,7 +44,7 @@ type AntigravityRuntimeEventResult = readonly [
 ];
 
 /** Initial Antigravity runtime event conversion state for one transcript snapshot. */
-const initialRuntimeEventState = (): AntigravityRuntimeEventState => ({
+export const initialAntigravityRuntimeEventState = (): AntigravityRuntimeEventState => ({
   nextReasoningIndex: 0,
   nextActivityIndex: 0,
 });
@@ -150,19 +150,21 @@ const activityTransportVisibility = (
     Match.orElse(() => "visible" as const),
   );
 
+/** Returns whether one planner response can terminate the turn as the final answer. */
+const isFinalPlannerResponse = (record: AntigravityTranscriptRecord): boolean =>
+  record.source === "MODEL" &&
+  record.type === "PLANNER_RESPONSE" &&
+  record.status === "DONE" &&
+  record.content !== undefined &&
+  (record.tool_calls === undefined || record.tool_calls.length === 0);
+
 /** Returns the final completed planner response content, if present. */
 const finalPlannerContentOption = (
   records: readonly AntigravityTranscriptRecord[],
 ): Option.Option<string> =>
   Option.fromUndefinedOr(
     records
-      .filter(
-        (record) =>
-          record.source === "MODEL" &&
-          record.type === "PLANNER_RESPONSE" &&
-          record.status === "DONE" &&
-          record.content !== undefined,
-      )
+      .filter(isFinalPlannerResponse)
       .map((record) => record.content)
       .at(-1),
   );
@@ -312,38 +314,39 @@ const runtimeEventsFromTranscriptRecord = ({
 };
 
 /** Converts all validated Antigravity transcript records into non-final runtime events. */
-const runtimeEventsFromTranscriptRecords = ({
+export const runtimeEventsFromAntigravityTranscriptRecords = ({
   records,
-  reasoning,
-  transportVisibility,
+  reasoning = "on",
+  activity = "on",
+  state = initialAntigravityRuntimeEventState(),
 }: {
   readonly records: readonly AntigravityTranscriptRecord[];
-  readonly reasoning: AntigravityRelayMode;
-  readonly transportVisibility: AgentRuntimeTransportVisibility;
-}): readonly AgentRuntimeEvent[] => {
-  let state = initialRuntimeEventState();
+  readonly reasoning?: AntigravityRelayMode;
+  readonly activity?: AntigravityRelayMode;
+  readonly state?: AntigravityRuntimeEventState;
+}): readonly [AntigravityRuntimeEventState, readonly AgentRuntimeEvent[]] => {
+  let currentState = state;
+  const transportVisibility = activityTransportVisibility(activity);
   const events: AgentRuntimeEvent[] = [];
   for (const record of records) {
     const [nextState, nextEvents] = runtimeEventsFromTranscriptRecord({
-      state,
+      state: currentState,
       record,
       reasoning,
       transportVisibility,
     });
-    state = nextState;
+    currentState = nextState;
     events.push(...nextEvents);
   }
-  return events;
+  return [currentState, events] as const;
 };
 
-/** Converts validated Antigravity transcript records into runtime lifecycle events. */
-export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function* ({
+/** Builds the terminal Antigravity final-answer lifecycle once the process exits. */
+export const terminalRuntimeEventsFromAntigravityTranscript = Effect.fnUntraced(function* ({
   records,
-  reasoning = "on",
-  activity = "on",
 }: {
   readonly records: readonly AntigravityTranscriptRecord[];
-} & AntigravityTranscriptRuntimeOptions) {
+}) {
   const content = yield* Option.match(finalPlannerContentOption(records), {
     onNone: () =>
       Effect.fail(
@@ -353,14 +356,7 @@ export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function
       ),
     onSome: Effect.succeed,
   });
-  const transportVisibility = activityTransportVisibility(activity);
-  const mappedEvents = runtimeEventsFromTranscriptRecords({
-    records,
-    reasoning,
-    transportVisibility,
-  });
   return [
-    ...mappedEvents,
     ...createAssistantTextRuntimeEvents({
       itemId: "msg_antigravity_cli_final",
       text: content,
@@ -368,4 +364,21 @@ export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function
     }),
     createRuntimeTurnSucceededEvent(),
   ] satisfies readonly AgentRuntimeEvent[];
+});
+
+/** Converts validated Antigravity transcript records into runtime lifecycle events. */
+export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function* ({
+  records,
+  reasoning = "on",
+  activity = "on",
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+} & AntigravityTranscriptRuntimeOptions) {
+  const [, mappedEvents] = runtimeEventsFromAntigravityTranscriptRecords({
+    records,
+    reasoning,
+    activity,
+  });
+  const terminalEvents = yield* terminalRuntimeEventsFromAntigravityTranscript({ records });
+  return [...mappedEvents, ...terminalEvents] satisfies readonly AgentRuntimeEvent[];
 });
