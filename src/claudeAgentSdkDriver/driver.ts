@@ -2,8 +2,15 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Context, Crypto, Effect, Layer, Match, Option, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { makeAntigravityCliAgentDriver } from "../antigravityCliDriver/driver.ts";
+import {
+  AntigravityCliSettings,
+  antigravityCliSettingsFromEnvironment,
+} from "../antigravityCliDriver/settings.ts";
 import {
   AgentDriverError,
   AgentDriverRegistry,
@@ -445,9 +452,51 @@ export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
   }),
 );
 
-/** Live Claude Agent SDK driver stack for the application entrypoint. */
+/** Live Claude Agent SDK driver stack for Claude and Diagnostic registry tests. */
 export const claudeAgentSdkDriverLive = claudeAgentSdkAgentDriverRegistryLive.pipe(
   Layer.provideMerge(claudeAgentSdkClientLive),
   Layer.provideMerge(claudeAgentSdkSessionIdGeneratorLive),
+  Layer.provideMerge(BunServices.layer),
+);
+
+/** Live application registry layer that routes every supported external agent kind. */
+export const caaraAgentDriverRegistryLive = Layer.effect(
+  AgentDriverRegistry,
+  Effect.gen(function* () {
+    const client = yield* ClaudeAgentSdkClient;
+    const generator = yield* ClaudeAgentSdkSessionIdGenerator;
+    const pathService = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const antigravityCliSettings = yield* AntigravityCliSettings;
+    const claudeDriver = createClaudeAgentSdkAgentDriver({ client, generator, pathService });
+    const antigravityCliDriver = makeAntigravityCliAgentDriver({
+      settings: antigravityCliSettings,
+      fileSystem,
+      pathService,
+      spawner,
+    });
+    const resolve: AgentDriverResolve = (target) =>
+      Match.value(target.externalAgentKind).pipe(
+        Match.when("claude", () => Effect.succeed(claudeDriver)),
+        Match.when("diagnostic", () => Effect.succeed(diagnosticAgentDriver)),
+        Match.when("agy", () => Effect.succeed(antigravityCliDriver)),
+        Match.orElse((externalAgentKind) =>
+          Effect.fail(
+            unsupportedExternalAgentKindError({
+              externalAgentKind,
+            }),
+          ),
+        ),
+      );
+    return { resolve };
+  }),
+);
+
+/** Live application driver stack for the Caara entrypoint. */
+export const caaraAgentDriverLive = caaraAgentDriverRegistryLive.pipe(
+  Layer.provideMerge(claudeAgentSdkClientLive),
+  Layer.provideMerge(claudeAgentSdkSessionIdGeneratorLive),
+  Layer.provideMerge(antigravityCliSettingsFromEnvironment()),
   Layer.provideMerge(BunServices.layer),
 );

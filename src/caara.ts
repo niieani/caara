@@ -4,7 +4,7 @@ import { BunHttpServer, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Layer } from "effect";
 import { HttpServer } from "effect/unstable/http";
 
-import { claudeAgentSdkDriverLive } from "./claudeAgentSdkDriver/driver.ts";
+import { caaraAgentDriverLive } from "./claudeAgentSdkDriver/driver.ts";
 import { inputLoggerLive } from "./mockResponsesProvider/inputLogger.ts";
 import { relayLoggerLive } from "./mockResponsesProvider/relayLogger.ts";
 import { requestDiagnosticsLoggerLive } from "./mockResponsesProvider/requestDiagnosticsLogger.ts";
@@ -27,7 +27,7 @@ export const mainLayer = mockResponsesServerLayer.pipe(
   Layer.provideMerge(requestDiagnosticsLoggerLive),
   Layer.provideMerge(sessionDirectoryLayer),
   Layer.provideMerge(turnConcurrencyLive),
-  Layer.provideMerge(claudeAgentSdkDriverLive),
+  Layer.provideMerge(caaraAgentDriverLive),
   Layer.provideMerge(
     HttpServer.withLogAddress(BunHttpServer.layer({ port: defaultMockResponsesPort })),
   ),
