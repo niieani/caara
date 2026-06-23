@@ -2,9 +2,9 @@
 
 Use this flow to verify the local Caara provider through Codex's real subagent path.
 
-For Caara-core smokes that do not need Claude, use the Diagnostic driver runbooks in
-`docs/agents/diagnostic-smoke-runbooks.md`. Keep the Claude SDK flow below for the real Claude-backed
-subagent path.
+For Caara-core smokes that do not need Claude, use the Diagnostic driver roles and runbooks in
+`docs/agents/diagnostic-smoke-runbooks.md`. Keep the Claude SDK flow below for the real
+Claude-backed subagent path.
 
 ## Claude SDK Subagent Flow
 

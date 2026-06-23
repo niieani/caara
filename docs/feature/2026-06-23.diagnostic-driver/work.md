@@ -122,6 +122,8 @@ Implemented shape:
 
 - Diagnostic recovery returns Caara-owned `lostSessionRecoveryAssistantText`, records
   `LostSessionRecovered`, and writes a fresh Diagnostic resume cursor.
+- `diagnostic/recovery` now selects recovery directly; `diagnostic_resume=unresumable` remains a
+  valid explicit mode and unsupported recovery option values fail explicitly.
 - Recovery runtime events now explicitly mark the prompt message as `phase: "final_answer"`.
 - Failure option `diagnostic_fresh_start=failure` returns OpenAI-shaped failure and preserves the
   original binding for inspection.
@@ -161,13 +163,14 @@ Target:
 
 Implemented shape:
 
+- Added `.codex/agents/caara-diagnostic-*.toml` roles for Diagnostic Codex-path smokes.
 - Ran a real local provider with isolated `CAARA_STATE_DIR`.
 - Exercised all v1 Diagnostic scenarios via Codex-shaped direct HTTP requests.
 - Captured JSON summary, provider relay log, and state directory under
   `temp.local/2026-06-23/diagnostic-smoke/`.
 - Added committed summary in `smoke-evidence.md`.
-- Recorded Codex-path blocker: current thread exposes only the Claude-backed `caara` role.
-  Follow-up issue: CAARA-feujtevl.
+- Recorded Codex-path blocker: current thread's multi-agent role registry rejected newly added
+  Diagnostic roles as unknown. Follow-up issue: CAARA-feujtevl.
 
 Verification:
 

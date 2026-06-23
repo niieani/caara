@@ -234,6 +234,11 @@ lifecycle in relay logs while hiding commentary from the Codex-visible Responses
 seen by the Diagnostic driver. It ignores prior assistant/tool history and fails explicitly for
 unsupported or malformed current-turn content.
 
+`diagnostic/recovery` emits Caara's standard lost-session recovery prompt as a final-answer
+assistant message, records lost-continuity diagnostics, and updates the binding to a fresh
+Diagnostic resume cursor. `diagnostic_fresh_start=failure` forces the unrecoverable failure path for
+smoke testing.
+
 Unsupported Diagnostic option names, invalid option values, and unknown scenarios fail explicitly.
 The retired simulator driver and `simulator_*` query options are not part of the public or test
 interface.

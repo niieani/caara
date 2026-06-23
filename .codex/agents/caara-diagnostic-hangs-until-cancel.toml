@@ -1,0 +1,13 @@
+name = "caara-diagnostic-hangs-until-cancel"
+description = "Delegates to the local Caara Responses provider with the Diagnostic hangs-until-cancel scenario."
+developer_instructions = "Use the local Caara Diagnostic hangs-until-cancel scenario. This response is expected to stay open until the managing Codex agent closes the subagent."
+model_provider = "caara"
+model = "diagnostic/hangs-until-cancel"
+
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0

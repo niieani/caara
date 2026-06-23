@@ -1,0 +1,13 @@
+name = "caara-diagnostic-fails-after-partial"
+description = "Delegates to the local Caara Responses provider with the Diagnostic fails-after-partial scenario."
+developer_instructions = "Use the local Caara Diagnostic fails-after-partial scenario. The expected provider result is terminal failure."
+model_provider = "caara"
+model = "diagnostic/fails-after-partial"
+
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0

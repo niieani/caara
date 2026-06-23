@@ -1,0 +1,13 @@
+name = "caara-diagnostic-basic"
+description = "Delegates to the local Caara Responses provider with the Diagnostic basic scenario."
+developer_instructions = "Use the local Caara Diagnostic basic scenario. Relay the provider response as-is."
+model_provider = "caara"
+model = "diagnostic/basic"
+
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0

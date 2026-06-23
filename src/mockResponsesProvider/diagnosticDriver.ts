@@ -101,6 +101,55 @@ const parseBoundedIntegerOption = Effect.fnUntraced(function* ({
   });
 });
 
+/** Validates optional Diagnostic recovery mode query parameter values. */
+const validateDiagnosticResumeOption = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  return yield* Option.match(Option.fromUndefinedOr(rawDriverOptions.diagnostic_resume), {
+    onNone: () => Effect.void,
+    onSome: (mode) =>
+      Match.value(mode).pipe(
+        Match.when("unresumable", () => Effect.void),
+        Match.orElse(() =>
+          Effect.fail(
+            new AgentDriverError({
+              message: `Unsupported diagnostic_resume value: ${mode}.`,
+            }),
+          ),
+        ),
+      ),
+  });
+});
+
+/** Validates optional Diagnostic fresh-start failure query parameter values. */
+const validateDiagnosticFreshStartOption = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  return yield* Option.match(Option.fromUndefinedOr(rawDriverOptions.diagnostic_fresh_start), {
+    onNone: () => Effect.void,
+    onSome: (mode) =>
+      Match.value(mode).pipe(
+        Match.when("failure", () => Effect.void),
+        Match.orElse(() =>
+          Effect.fail(
+            new AgentDriverError({
+              message: `Unsupported diagnostic_fresh_start value: ${mode}.`,
+            }),
+          ),
+        ),
+      ),
+  });
+});
+
+/** Validates all Diagnostic option values shared across scenarios. */
+const validateDiagnosticOptionValues = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  yield* validateDiagnosticCancellationOption(rawDriverOptions);
+  yield* validateDiagnosticResumeOption(rawDriverOptions);
+  return yield* validateDiagnosticFreshStartOption(rawDriverOptions);
+});
+
 /** Parses bounded diagnostic/basic driver options from raw provider query params. */
 const parseDiagnosticBasicOptions = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
@@ -114,7 +163,7 @@ const parseDiagnosticBasicOptions = Effect.fnUntraced(function* (
         }),
       ),
   });
-  yield* validateDiagnosticCancellationOption(rawDriverOptions);
+  yield* validateDiagnosticOptionValues(rawDriverOptions);
 
   const chunkCount = yield* parseBoundedIntegerOption({
     rawDriverOptions,
@@ -151,7 +200,7 @@ const validateDiagnosticOptions = Effect.fnUntraced(function* (
         }),
       ),
   });
-  return yield* validateDiagnosticCancellationOption(rawDriverOptions);
+  return yield* validateDiagnosticOptionValues(rawDriverOptions);
 });
 
 /** Selects the diagnostic/basic answer text for first and resumed turns. */
@@ -323,13 +372,6 @@ const recoverUnresumableDiagnosticSession = Effect.fnUntraced(function* (turn: A
   );
 });
 
-/** Selects the Diagnostic recovery scenario behavior from explicit recovery options. */
-const diagnosticRecoveryOrBasicTurnResult = (turn: AgentDriverTurn) =>
-  Match.value(turn.target.rawDriverOptions.diagnostic_resume).pipe(
-    Match.when("unresumable", () => recoverUnresumableDiagnosticSession(turn)),
-    Match.orElse(() => diagnosticBasicTurnResult(turn)),
-  );
-
 /** Starts one Diagnostic driver turn for a supported hardcoded scenario. */
 const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
   return yield* Match.value(turn.target.externalModelSpecifier).pipe(
@@ -364,7 +406,7 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
     Match.when("hangs-until-cancel", () =>
       diagnosticScenarioTurnResult({ turn, runtimeEvents: Stream.never }),
     ),
-    Match.when("recovery", () => diagnosticRecoveryOrBasicTurnResult(turn)),
+    Match.when("recovery", () => recoverUnresumableDiagnosticSession(turn)),
     Match.orElse((scenario) =>
       Effect.fail(
         new AgentDriverError({

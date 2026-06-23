@@ -18,11 +18,20 @@ Expected startup line:
 Listening on http://localhost:8787
 ```
 
-For Codex subagent path smokes, use a Codex agent role whose model points at the target Diagnostic
-specifier, such as `diagnostic/basic`, with the Caara provider base URL `http://127.0.0.1:8787/v1`.
-The checked-in `caara` role is Claude-specific (`claude/haiku`). If no Diagnostic role is available
-to the current Codex thread, record that as a Codex-path blocker and run the direct-provider fallback
-below for scenario evidence.
+For Codex subagent path smokes, use one of the checked-in Diagnostic roles:
+
+- `caara-diagnostic-basic`
+- `caara-diagnostic-reasoning`
+- `caara-diagnostic-activity`
+- `caara-diagnostic-fails-before-output`
+- `caara-diagnostic-fails-after-partial`
+- `caara-diagnostic-hangs-until-cancel`
+- `caara-diagnostic-recovery`
+- `caara-diagnostic-echo`
+
+The checked-in `caara` role is Claude-specific (`claude/haiku`). If a running Codex thread's
+multi-agent tool does not expose newly added Diagnostic roles, record that as a role-discovery
+blocker and run the direct-provider fallback below for scenario evidence.
 
 Direct-provider fallback requests must still be Codex-shaped: include Codex identity headers,
 `stream: true`, `client_metadata.thread_id`, `client_metadata.turn_id`, and `metadata.cwd` when the
@@ -66,7 +75,7 @@ events.
 | Fails before output | `diagnostic/fails-before-output` | none |
 | Fails after partial | `diagnostic/fails-after-partial` | none |
 | Hangs until cancel | `diagnostic/hangs-until-cancel` | `diagnostic_cancel=interrupted`, `abandoned_reusable`, `abandoned_nonreusable`, or `terminated` |
-| Recovery | `diagnostic/recovery` | `diagnostic_resume=unresumable`; `diagnostic_fresh_start=failure` optional |
+| Recovery | `diagnostic/recovery` | `diagnostic_fresh_start=failure` optional |
 | Echo | `diagnostic/echo` | none |
 
 Unsupported Diagnostic option names, invalid values, and unknown scenarios should fail explicitly.
@@ -309,18 +318,14 @@ Known failure signatures:
 
 Goal: prove lost-continuity recovery uses Caara's standard final-answer prompt and updates binding.
 
-Codex-path note: current Diagnostic recovery requires query params. If the Codex subagent role cannot
-pass provider query params, record this as a Codex-path blocker and run the direct-provider fallback.
-
 Direct-provider sequence:
 
 1. Seed the thread with `diagnostic/basic` and `metadata.cwd`.
-2. Reuse the same Codex thread id with model `diagnostic/recovery` and
-   `?diagnostic_resume=unresumable`.
+2. Reuse the same Codex thread id with model `diagnostic/recovery`.
 
 Failure variant:
 
-- `?diagnostic_resume=unresumable&diagnostic_fresh_start=failure`
+- `?diagnostic_fresh_start=failure`
 
 Expected Codex-visible output:
 

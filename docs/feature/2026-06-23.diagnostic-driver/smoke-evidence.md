@@ -8,22 +8,23 @@ Ran the Diagnostic driver smoke suite against a real local Caara provider proces
 Codex-shaped HTTP requests. This covered the provider boundary, Responses SSE encoding, relay logs,
 session directory writes, cancellation, recovery, and concurrency guard.
 
-Codex real subagent path blocker: the current multi-agent role list exposes only the checked-in
-Claude-backed `caara` role (`model = "claude/haiku"`), not Diagnostic roles. Diagnostic scenarios
-that need `diagnostic/<scenario>` model selection or provider query params could not be spawned from
-Codex in this thread. Follow-up issue: CAARA-feujtevl.
+Codex real subagent path blocker: this running thread's multi-agent role registry was initialized
+before the Diagnostic role files existed. After adding `caara-diagnostic-*` role files, the registry
+still rejected `agent_type = "caara-diagnostic-basic"` as `unknown agent_type`. Direct Codex-shaped
+HTTP evidence below covers the provider behavior; follow-up CAARA-feujtevl tracks verifying
+Diagnostic roles in a fresh Codex thread or refreshing role discovery in-session.
 
 ## Artifacts
 
-- Provider log: `temp.local/2026-06-23/diagnostic-smoke/provider-rerun.log`
+- Provider log: `temp.local/2026-06-23/diagnostic-smoke/provider-final-2.log`
 - JSON summary: `temp.local/2026-06-23/diagnostic-smoke/diagnostic-smoke-results.json`
-- State directory: `temp.local/2026-06-23/diagnostic-smoke/state-rerun`
+- State directory: `temp.local/2026-06-23/diagnostic-smoke/state-final-2`
 - Helper script: `temp.local/2026-06-23/diagnostic-smoke/run-diagnostic-smoke.ts`
 
 ## Commands
 
 ```bash
-CAARA_STATE_DIR="$PWD/temp.local/2026-06-23/diagnostic-smoke/state-rerun" bun run start > "$PWD/temp.local/2026-06-23/diagnostic-smoke/provider-rerun.log" 2>&1
+CAARA_STATE_DIR="$PWD/temp.local/2026-06-23/diagnostic-smoke/state-final-2" bun run start > "$PWD/temp.local/2026-06-23/diagnostic-smoke/provider-final-2.log" 2>&1
 bun run temp.local/2026-06-23/diagnostic-smoke/run-diagnostic-smoke.ts
 ```
 
@@ -46,8 +47,8 @@ Listening on http://localhost:8787
 | `diagnostic/fails-after-partial` | `200`, partial reasoning SSE then `response.failed`, no assistant text |
 | `diagnostic/hangs-until-cancel?diagnostic_cancel=interrupted` | stream opened with `response.created`, client abort logged `TurnCancelled` with reusable interrupted outcome |
 | Held-open overlap canary | same-thread overlap returned `409`; independent thread completed with `response.completed` |
-| `diagnostic/recovery?diagnostic_resume=unresumable` | recovery prompt final answer, `LostSessionRecovered`, recovered cursor persisted |
-| `diagnostic/recovery?...&diagnostic_fresh_start=failure` | seeded binding remained unchanged after `500` forced fresh-start failure |
+| `diagnostic/recovery` | recovery prompt final answer, `LostSessionRecovered`, recovered cursor persisted |
+| `diagnostic/recovery?diagnostic_fresh_start=failure` | seeded binding remained unchanged after `500` forced fresh-start failure |
 | `diagnostic/echo` first turn | echoed only `first echo request` |
 | `diagnostic/echo` follow-up | echoed only `current request`; prior assistant/tool output absent |
 
@@ -71,7 +72,7 @@ Selected relay lines:
 
 ## Binding Evidence
 
-Observed binding files under `state-rerun/sessions/diagnostic/diagnostic/`:
+Observed binding files under `state-final-2/sessions/diagnostic/diagnostic/`:
 
 - `diagnostic-smoke-basic.json`
 - `diagnostic-smoke-reasoning.json`
@@ -108,9 +109,7 @@ Successful recovery binding:
   "requestedTarget": {
     "requestedModel": "diagnostic/recovery",
     "externalModelSpecifier": "recovery",
-    "rawDriverOptions": {
-      "diagnostic_resume": "unresumable"
-    }
+    "rawDriverOptions": {}
   },
   "lastTurnId": "diagnostic-smoke-recovery-2",
   "externalSession": {
@@ -139,7 +138,8 @@ Forced recovery failure preserved the seeded binding:
 
 ## Gaps
 
-- Codex real subagent Diagnostic path was not executable in this thread because only the
-  Claude-backed `caara` role was exposed by the multi-agent tool.
-- Follow-up CAARA-feujtevl tracks adding/exposing Diagnostic Codex roles or another Codex-supported
-  mechanism for scenario model and query-param selection.
+- Diagnostic role files now exist under `.codex/agents/caara-diagnostic-*.toml`, but this running
+  thread's multi-agent role registry did not reload them; `agent_type = "caara-diagnostic-basic"`
+  was rejected as unknown.
+- Follow-up CAARA-feujtevl tracks verifying role exposure in a fresh Codex thread or refreshing role
+  discovery in-session.

@@ -350,7 +350,7 @@ describe("session recovery Diagnostic integration", () => {
         stateDir,
         turnId: "turn-recovery-fresh",
         model: "diagnostic/recovery",
-        url: "/v1/responses?diagnostic_resume=unresumable",
+        url: "/v1/responses",
         includeWorkspace: false,
         includeCwd: false,
         inputs,
@@ -389,7 +389,7 @@ describe("session recovery Diagnostic integration", () => {
         requestedTarget: {
           requestedModel: "diagnostic/recovery",
           externalModelSpecifier: "recovery",
-          rawDriverOptions: { diagnostic_resume: "unresumable" },
+          rawDriverOptions: {},
         },
         externalSession: {
           _tag: "Durable",
@@ -450,6 +450,47 @@ describe("session recovery Diagnostic integration", () => {
             threadId: makeThreadId(),
             turnId: "turn-unrecoverable-failed",
             message: diagnosticDriverFixture.unrecoverableSessionFailureMessage,
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("rejects unsupported Diagnostic recovery option values explicitly", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+
+      const failure = yield* runErrorTurn({
+        stateDir,
+        turnId: "turn-recovery-invalid-option",
+        model: "diagnostic/recovery",
+        url: "/v1/responses?diagnostic_resume=stale",
+        includeWorkspace: true,
+        includeCwd: true,
+        inputs,
+        diagnostics,
+        relayEvents,
+      });
+
+      assert.strictEqual(failure.status, 500);
+      assert.strictEqual(getField(getField(failure.body, "error"), "type"), "server_error");
+      assert.match(
+        String(getField(getField(failure.body, "error"), "message")),
+        /unsupported diagnostic_resume value/i,
+      );
+      assert.deepStrictEqual(
+        relayEvents.filter(
+          (event) => event._tag === "TurnFailed" && event.turnId === "turn-recovery-invalid-option",
+        ),
+        [
+          {
+            _tag: "TurnFailed",
+            threadId: makeThreadId(),
+            turnId: "turn-recovery-invalid-option",
+            message: "Unsupported diagnostic_resume value: stale.",
           },
         ],
       );
