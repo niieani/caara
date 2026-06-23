@@ -1,3 +1,4 @@
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { BunCrypto } from "@effect/platform-bun";
 import { Context, Crypto, Effect, Layer, Match, Option, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
@@ -81,6 +82,100 @@ const durableSession = (sessionId: string): DurableExternalSession =>
     driverResumeCursor: makeDriverResumeCursor(sessionId),
   });
 
+/** SDK result message observed while draining an interrupted query. */
+type ClaudeAgentSdkResultMessage = Extract<SDKMessage, { readonly type: "result" }>;
+
+/** Builds a reusable interrupted cancellation outcome. */
+const interruptedCancellationOutcome = (): AgentCancellationOutcome => ({
+  _tag: "Interrupted",
+  sessionReusable: true,
+});
+
+/** Builds a non-reusable terminated cancellation outcome. */
+const terminatedCancellationOutcome = (): AgentCancellationOutcome => ({
+  _tag: "Terminated",
+  sessionReusable: false,
+});
+
+/** Returns true when the SDK terminal reason proves a clean user interruption. */
+const isCleanSdkCancellationResult = (message: ClaudeAgentSdkResultMessage): boolean =>
+  message.terminal_reason === "aborted_streaming" || message.terminal_reason === "aborted_tools";
+
+/** Reads the next SDK cancellation-drain message through the typed driver error seam. */
+const readNextCancellationMessage = ({
+  iterator,
+}: {
+  readonly iterator: AsyncIterator<SDKMessage>;
+}): EffectContract<IteratorResult<SDKMessage>, AgentDriverError> =>
+  Effect.tryPromise({
+    try: () => iterator.next(),
+    catch: (cause) => new AgentDriverError({ message: String(cause) }),
+  });
+
+/** Returns true when one iterator result yielded a terminal SDK result message. */
+const isSdkResultIteratorYield = (
+  result: IteratorResult<SDKMessage>,
+): result is IteratorYieldResult<ClaudeAgentSdkResultMessage> =>
+  result.done !== true && result.value.type === "result";
+
+/** Drains SDK messages until a terminal result message or stream end is observed. */
+const drainCancellationResult: (input: {
+  readonly iterator: AsyncIterator<SDKMessage>;
+}) => EffectContract<Option.Option<ClaudeAgentSdkResultMessage>, AgentDriverError> =
+  Effect.fnUntraced(function* ({ iterator }: { readonly iterator: AsyncIterator<SDKMessage> }) {
+    const next = yield* readNextCancellationMessage({ iterator });
+    return yield* Match.value(next).pipe(
+      Match.when({ done: true }, () => Effect.succeed(Option.none<ClaudeAgentSdkResultMessage>())),
+      Match.when(isSdkResultIteratorYield, ({ value }) => Effect.succeed(Option.some(value))),
+      Match.orElse(() => drainCancellationResult({ iterator })),
+    );
+  });
+
+/** Converts an optional drained SDK result into the driver cancellation contract. */
+const outcomeFromCancellationResult = (
+  result: Option.Option<Option.Option<ClaudeAgentSdkResultMessage>>,
+): AgentCancellationOutcome =>
+  Option.match(result, {
+    onNone: terminatedCancellationOutcome,
+    onSome: (messageOption) =>
+      Option.match(messageOption, {
+        onNone: terminatedCancellationOutcome,
+        onSome: (message) =>
+          Match.value(isCleanSdkCancellationResult(message)).pipe(
+            Match.when(true, interruptedCancellationOutcome),
+            Match.orElse(terminatedCancellationOutcome),
+          ),
+      }),
+  });
+
+/** Closes an SDK runtime and reports a non-reusable terminated cancellation. */
+const closeRuntimeAsTerminated = (
+  runtime: ClaudeAgentSdkQueryRuntime,
+): EffectContract<AgentCancellationOutcome> =>
+  Effect.sync(() => runtime.close()).pipe(Effect.map(terminatedCancellationOutcome));
+
+/** Closes the runtime when cancellation did not prove reusable session state. */
+const finalizeCancellationOutcome = ({
+  runtime,
+  outcome,
+}: {
+  readonly runtime: ClaudeAgentSdkQueryRuntime;
+  readonly outcome: AgentCancellationOutcome;
+}): EffectContract<AgentCancellationOutcome> =>
+  Match.value(outcome.sessionReusable).pipe(
+    Match.when(true, () => Effect.succeed(outcome)),
+    Match.orElse(() => closeRuntimeAsTerminated(runtime)),
+  );
+
+/** Drains one interrupted SDK runtime through the bounded cancellation policy. */
+const drainRuntimeCancellation = (
+  runtime: ClaudeAgentSdkQueryRuntime,
+): EffectContract<AgentCancellationOutcome, AgentDriverError> =>
+  drainCancellationResult({ iterator: runtime[Symbol.asyncIterator]() }).pipe(
+    Effect.timeoutOption("1 second"),
+    Effect.map(outcomeFromCancellationResult),
+  );
+
 /** Builds a reusable cancellation effect around an SDK query runtime. */
 const cancelRuntime = (
   runtime: ClaudeAgentSdkQueryRuntime,
@@ -90,24 +185,10 @@ const cancelRuntime = (
       try: () => runtime.interrupt(),
       catch: (cause) => new AgentDriverError({ message: String(cause) }),
     }).pipe(
-      Effect.map(
-        () =>
-          ({
-            _tag: "Interrupted",
-            sessionReusable: true,
-          }) satisfies AgentCancellationOutcome,
-      ),
+      Effect.flatMap(() => drainRuntimeCancellation(runtime)),
+      Effect.flatMap((outcome) => finalizeCancellationOutcome({ runtime, outcome })),
     ),
-    () =>
-      Effect.sync(() => runtime.close()).pipe(
-        Effect.map(
-          () =>
-            ({
-              _tag: "Terminated",
-              sessionReusable: false,
-            }) satisfies AgentCancellationOutcome,
-        ),
-      ),
+    () => closeRuntimeAsTerminated(runtime),
   );
 
 /** Applies in-place SDK controls for target changes supported by the query runtime. */

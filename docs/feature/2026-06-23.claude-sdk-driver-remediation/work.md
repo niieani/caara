@@ -115,3 +115,20 @@ Test seam:
 - `runtimeLifecycle.test.ts` covers complete assistant text, complete reasoning, and partial output followed by terminal failure.
 - Provider and registry-routing tests assert relay logs now expose the runtime lifecycle tag sequence.
 - Runtime failure tests continue proving failed streams emit `response.failed` and do not save completed bindings.
+
+## Completed Slice: CAARA-hmdoazmi
+
+Problem:
+
+- SDK cancellation returned reusable after `interrupt()` alone.
+- No bounded drain verified whether the SDK reported a terminal aborted result.
+
+Target:
+
+- On cancellation, call `Query.interrupt()`, drain SDK messages until `result`, stream end, failure, or timeout.
+- Keep session reusable only for `aborted_streaming` or `aborted_tools` terminal reasons.
+- Close the SDK query and report non-reusable for interrupt failure, stream failure, timeout, or no terminal result.
+
+Test seam:
+
+- `claudeAgentSdkCancellation.test.ts` covers abort before first event, after partial output, follow-up abort, clean reusable `aborted_tools`, no-result ambiguity, interrupt failure, and stream failure.

@@ -27,6 +27,8 @@ Out of scope:
   Verifier: focused provider tests for failure before output and after partial output.
 - Failed runtime streams log `TurnFailed`, release in-flight ownership, and do not complete or overwrite session bindings.
   Verifier: relay-log and persisted-binding assertions.
+- SDK-backed cancellation interrupts, drains to terminal SDK result with a bound, and keeps bindings reusable only for clean aborted terminal reasons.
+  Verifier: focused SDK cancellation tests before first event, after partial output, follow-up abort, ambiguous end, interrupt failure, and stream failure.
 - Every child issue is completed only after `bun lint`, `bun run test --run`, and `bun run fmt`.
   Verifier: command output captured in issue comments.
 - Final PRD completion requires independent implementation review with no unresolved blocking findings.
@@ -34,4 +36,4 @@ Out of scope:
 
 ## Execution Shape
 
-Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-xedpqytc, failure semantics.
+Sliced fp execution. One shared workdesk for all queued PRDs. Current slice: CAARA-hmdoazmi, SDK cancellation semantics.
