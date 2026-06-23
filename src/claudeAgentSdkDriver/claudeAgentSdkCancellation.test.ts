@@ -12,7 +12,7 @@ import {
   interruptedOutcome,
   makeTurn,
   sdkResult,
-  sdkTextDelta,
+  sdkThinkingDelta,
   startDriverTurn,
   terminatedOutcome,
   type FakeSdkHarness,
@@ -71,9 +71,9 @@ describe("Claude Agent SDK cancellation", () => {
         runtimeConfigs: [
           {
             messages: [
-              sdkTextDelta({
+              sdkThinkingDelta({
                 sessionId: cancellationScenarioIds.afterPartialOutput,
-                text: "partial",
+                thinking: "partial",
               }),
             ],
             interruptMessages: [

@@ -23,6 +23,8 @@ import {
   sdkAssistantTextMessage,
   sdkBashToolUseMessage,
   sdkContentBlockStop,
+  sdkMessageDelta,
+  sdkSuccessResultMessage,
   sdkTextBlockStart,
   sdkTextDelta,
   sdkThinkingBlockStart,
@@ -119,7 +121,16 @@ describe("Claude Agent SDK driver", () => {
         const harness = fakeSdkHarness({
           sessionIds: ["00000000-0000-4000-8000-000000000101"],
           runtimeMessages: [
-            [sdkTextDelta({ sessionId: "00000000-0000-4000-8000-000000000101", text: "hello" })],
+            [
+              sdkTextDelta({
+                sessionId: "00000000-0000-4000-8000-000000000101",
+                text: "hello",
+              }),
+              sdkMessageDelta({
+                sessionId: "00000000-0000-4000-8000-000000000101",
+                stopReason: "end_turn",
+              }),
+            ],
           ],
         });
         const turn = makeTurn({
@@ -392,6 +403,154 @@ describe("Claude Agent SDK driver", () => {
         ...createAssistantTextRuntimeEvents({
           itemId: "claude-sdk-message-1",
           text: "There are no type-test files.",
+          messagePhase: "final_answer",
+        }),
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("maps raw streamed pre-tool assistant text to commentary from message delta", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkTextBlockStart({ sessionId }),
+            sdkTextDelta({ sessionId, text: "I will verify with Bash." }),
+            sdkContentBlockStop({ sessionId }),
+            sdkMessageDelta({ sessionId, stopReason: "tool_use" }),
+            sdkBashToolUseMessage({
+              sessionId,
+              command: "printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+            }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-0",
+          text: "I will verify with Bash.",
+          messagePhase: "commentary",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-0",
+          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("maps orphan pre-tool assistant text deltas to commentary from message delta", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkTextDelta({ sessionId, text: "I will " }),
+            sdkTextDelta({ sessionId, text: "verify with Bash." }),
+            sdkMessageDelta({ sessionId, stopReason: "tool_use" }),
+            sdkBashToolUseMessage({
+              sessionId,
+              command: "printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+            }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-0",
+          text: "I will verify with Bash.",
+          messagePhase: "commentary",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-0",
+          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("defers phase-unknown completed assistant text until following tool use", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkAssistantTextMessage({
+              sessionId,
+              text: "I will verify with Bash.",
+              stopReason: null,
+            }),
+            sdkBashToolUseMessage({
+              sessionId,
+              command: "printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+            }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-0",
+          text: "I will verify with Bash.",
+          messagePhase: "commentary",
+        }),
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-0",
+          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("flushes phase-unknown completed assistant text as final on success result", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkAssistantTextMessage({
+              sessionId,
+              text: "The answer is ready.",
+              stopReason: null,
+            }),
+            sdkSuccessResultMessage({ sessionId }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-message-0",
+          text: "The answer is ready.",
           messagePhase: "final_answer",
         }),
         createRuntimeTurnSucceededEvent(),

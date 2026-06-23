@@ -86,6 +86,12 @@ type SdkAssistantStopReason = Extract<
   { readonly type: "assistant" }
 >["message"]["stop_reason"];
 
+/** Stop reason values carried by raw SDK message-delta stream events. */
+type SdkMessageDeltaStopReason = Extract<
+  Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
+  { readonly type: "message_delta" }
+>["delta"]["stop_reason"];
+
 /** Builds one completed SDK assistant message containing text content. */
 export const sdkAssistantTextMessage = ({
   sessionId,
@@ -186,6 +192,59 @@ export const sdkToolResultMessage = ({
     },
     tool_use_result: content,
     uuid: "00000000-0000-4000-8000-000000000110",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one fake SDK raw message-delta event carrying the terminal stop reason. */
+export const sdkMessageDelta = ({
+  sessionId,
+  stopReason,
+}: {
+  readonly sessionId: string;
+  readonly stopReason: SdkMessageDeltaStopReason;
+}) =>
+  ({
+    type: "stream_event",
+    event: {
+      type: "message_delta",
+      context_management: null,
+      delta: {
+        container: null,
+        stop_details: null,
+        stop_reason: stopReason,
+        stop_sequence: null,
+      },
+      usage: {
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        input_tokens: null,
+        iterations: null,
+        output_tokens: 0,
+        output_tokens_details: null,
+        server_tool_use: null,
+      },
+    },
+    parent_tool_use_id: null,
+    uuid: "00000000-0000-4000-8000-000000000111",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one fake SDK successful terminal result message. */
+export const sdkSuccessResultMessage = ({ sessionId }: { readonly sessionId: string }) =>
+  ({
+    type: "result",
+    subtype: "success",
+    duration_ms: 0,
+    duration_api_ms: 0,
+    is_error: false,
+    num_turns: 1,
+    result: "",
+    stop_reason: "end_turn",
+    total_cost_usd: 0,
+    usage: sdkUsage(),
+    modelUsage: {},
+    permission_denials: [],
+    uuid: "00000000-0000-4000-8000-000000000112",
     session_id: sessionId,
   }) satisfies SDKMessage;
 

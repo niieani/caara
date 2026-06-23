@@ -10,6 +10,12 @@ import {
   createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { messagePhaseFromAssistantStopReason } from "./assistantPhase.ts";
+import {
+  bufferPendingAssistantText,
+  discardPendingStreamAssistantTexts,
+  flushPendingAssistantTexts,
+} from "./assistantTextBuffer.ts";
 import type { ClaudeAgentSdkQueryRuntime } from "./claudeAgentSdkClient.ts";
 import {
   initialClaudeAgentSdkRuntimeEventState,
@@ -270,13 +276,39 @@ const isAlreadyStreamedAssistantContent = ({
     Match.orElse(() => false),
   );
 
-/** Selects the Codex-visible assistant message phase from Claude's terminal stop reason. */
-const messagePhaseFromAssistantStopReason = (
-  stopReason: Extract<SDKMessage, { readonly type: "assistant" }>["message"]["stop_reason"],
-): AgentRuntimeMessagePhase =>
-  Match.value(stopReason).pipe(
-    Match.when("tool_use", () => "commentary" as const),
-    Match.orElse(() => "final_answer" as const),
+/** Returns true when a completed assistant message asks Claude Code to use a tool. */
+const hasToolUseContent = (message: Extract<SDKMessage, { readonly type: "assistant" }>): boolean =>
+  message.message.content.some((content) => content.type === "tool_use");
+
+/** Returns true when a completed assistant message has a terminal stop reason. */
+const hasAssistantStopReason = (
+  message: Extract<SDKMessage, { readonly type: "assistant" }>,
+): boolean => message.message.stop_reason !== null && message.message.stop_reason !== undefined;
+
+/** Converts completed assistant text when its owning message phase is known or pending. */
+const runtimeEventsFromAssistantTextContent = ({
+  state,
+  text,
+  phaseKnown,
+  messagePhase,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly text: string;
+  readonly phaseKnown: boolean;
+  readonly messagePhase: AgentRuntimeMessagePhase;
+}): ClaudeAgentSdkRuntimeEventResult =>
+  Match.value(phaseKnown).pipe(
+    Match.when(true, () => assistantTextEvents({ state, text, messagePhase })),
+    Match.orElse(
+      () =>
+        [
+          bufferPendingAssistantText({
+            state,
+            pendingText: { _tag: "CompletedText", text },
+          }),
+          [],
+        ] as const,
+    ),
   );
 
 /** Converts a completed SDK assistant message into fallback text runtime events. */
@@ -289,8 +321,16 @@ const runtimeEventsFromAssistantMessage = ({
   readonly message: Extract<SDKMessage, { readonly type: "assistant" }>;
   readonly transportVisibility: AgentRuntimeTransportVisibility;
 }): ClaudeAgentSdkRuntimeEventResult => {
-  let nextState = state;
-  const events: AgentRuntimeEvent[] = [];
+  const [initialState, initialEvents] = Match.value(hasToolUseContent(message)).pipe(
+    Match.when(true, () => flushPendingAssistantTexts({ state, messagePhase: "commentary" })),
+    Match.orElse(() => noRuntimeEvents(state)),
+  );
+  const phaseKnown = hasAssistantStopReason(message);
+  let nextState = Match.value(phaseKnown).pipe(
+    Match.when(true, () => discardPendingStreamAssistantTexts(initialState)),
+    Match.orElse(() => initialState),
+  );
+  const events: AgentRuntimeEvent[] = [...initialEvents];
   const messagePhase = messagePhaseFromAssistantStopReason(message.message.stop_reason);
 
   for (const [contentIndex, content] of message.message.content.entries()) {
@@ -300,7 +340,12 @@ const runtimeEventsFromAssistantMessage = ({
         () => noRuntimeEvents(nextState),
       ),
       Match.when({ type: "text" }, (textContent) =>
-        assistantTextEvents({ state: nextState, text: textContent.text, messagePhase }),
+        runtimeEventsFromAssistantTextContent({
+          state: nextState,
+          text: textContent.text,
+          phaseKnown,
+          messagePhase,
+        }),
       ),
       Match.when({ type: "thinking" }, (thinkingContent) =>
         reasoningTextEvents({ state: nextState, text: thinkingContent.thinking }),
@@ -434,7 +479,7 @@ const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
       ),
     ),
     Match.when({ type: "result", subtype: "success" }, () =>
-      Effect.succeed(noRuntimeEvents(state)),
+      Effect.succeed(flushPendingAssistantTexts({ state, messagePhase: "final_answer" })),
     ),
     Match.when({ type: "result" }, (sdkMessage) =>
       Effect.fail(

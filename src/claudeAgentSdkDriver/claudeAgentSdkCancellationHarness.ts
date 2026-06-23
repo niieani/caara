@@ -106,6 +106,30 @@ export const sdkTextDelta = ({
     session_id: sessionId,
   }) satisfies SDKMessage;
 
+/** Builds one fake SDK stream thinking delta message. */
+export const sdkThinkingDelta = ({
+  sessionId,
+  thinking,
+}: {
+  readonly sessionId: string;
+  readonly thinking: string;
+}) =>
+  ({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: {
+        type: "thinking_delta",
+        thinking,
+        estimated_tokens: null,
+      },
+    },
+    parent_tool_use_id: null,
+    uuid: "00000000-0000-4000-8000-00000000c013",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
 /** Builds one fake SDK terminal result message. */
 export const sdkResult = ({
   sessionId,

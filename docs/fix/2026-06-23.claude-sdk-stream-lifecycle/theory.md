@@ -23,11 +23,13 @@ completes it. Assistant text is different because phase is not known at `content
 Anthropic stream types carry message-level `stop_reason` in `message_delta`, after text blocks have
 already started.
 
-Completed SDK assistant messages should therefore be the authority for assistant text. They carry
-complete content and `stop_reason`, letting Caara map `tool_use` text to commentary and `end_turn`
-text to final answer. This sacrifices token-level assistant text streaming until a richer internal
-phase-update or buffering design exists, but it preserves the visible lifecycle contract and avoids
-misclassifying pre-tool narration.
+The phase-bearing boundary should therefore be the authority for assistant text. Sometimes that is a
+completed assistant message carrying `stop_reason`; sometimes it is the raw `message_delta` after a
+text content block; and in the live Opus smoke, completed text could arrive phase-unknown before a
+separate tool-use message. Caara now buffers assistant text until one of those boundaries classifies
+it. Text deltas that arrive without a block-start use the same buffer instead of falling back to
+final-answer emission. `tool_use` flushes buffered text as commentary, while terminal success flushes
+unresolved text as final answer.
 
 Tool activity remains separately mapped to terse commentary messages. The activity text should
 include safe detail when it resolves ambiguity: a Bash `tool_use` should include a bounded command
@@ -37,8 +39,10 @@ preview instead of just `Using Bash`.
 
 Start with direct driver and provider-boundary regression tests for the observed Claude shape:
 pre-tool text, Bash tool use, Bash result, terminal answer. The expected sequence is commentary,
-commentary, commentary, final answer. This catches the exact failure where `stop_reason: "tool_use"`
-was relayed as `phase: "final_answer"`.
+commentary, commentary, final answer. Follow-up smoke added two sharper driver tests: raw streamed
+text classified by `message_delta`, and completed text with absent stop reason classified by the
+following tool-use message. The orphan-delta path is covered too because it has the same
+phase-before-boundary hazard.
 
 Verification covers direct runtime events, provider-boundary SSE output, the full Claude SDK driver
 test directory, typecheck, changed-file formatting, full lint, and the current default Vitest run.

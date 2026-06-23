@@ -14,6 +14,11 @@ The latest relevant Codex rollout was
 turn `019ef69c-8f3c-7542-b03c-cd31d76e7747`. Its underlying Claude session was
 `~/.claude/projects/-Users-bbrzoska-Documents-Projects-caara/55bcc929-67f9-4412-a2cd-5238843c513e.jsonl`.
 
+The follow-up Opus smoke used fresh subagent `Euler`
+(`019ef6da-a5f5-7910-969a-3e4ccc395715`). It showed the first fix was incomplete: the Bash activity
+label included the command, but pre-tool text still landed as `phase: "final_answer"` when the SDK
+message/stream shape did not expose the stop reason until a later event.
+
 ## Findings
 
 The two `Using Bash` and `Bash completed` pairs were not bridge duplicates. Claude emitted two real
@@ -32,6 +37,14 @@ The terminal answer was correctly relayed as `phase: "final_answer"` because Cla
 `task_complete.last_agent_message`; UI consumers must treat that field as completion/copy/notification
 metadata when the final item has already been rendered.
 
+Fresh smoke evidence also showed two SDK shapes that must both classify pre-tool text as commentary:
+raw assistant text buffered until `message_delta.delta.stop_reason`, and completed assistant text
+with absent stop reason followed by a separate `tool_use` assistant message.
+
+The same rule applies to orphan `text_delta` stream events that arrive without a matching
+`content_block_start`: they must be buffered until a phase-bearing boundary instead of defaulting to
+`final_answer`.
+
 ## Code Smells
 
 `src/claudeAgentSdkDriver/events.ts` hardcoded completed assistant text to
@@ -43,6 +56,11 @@ metadata when the final item has already been rendered.
 Anthropic raw stream events expose `stop_reason` on `message_delta`, after content blocks have
 already started, so creating a visible text item at `content_block_start` is too early to classify
 phase correctly.
+
+The first remediation overcorrected by dropping raw assistant text until a completed assistant
+message arrived. Real SDK streams can expose the needed phase through raw `message_delta` instead,
+and some completed text messages can still have absent stop reason before a separate tool-use
+message. The mapper therefore needs an explicit assistant-text buffer rather than a single authority.
 
 `toolUseActivityText` collapsed all non-Read/Edit tools to `Using <tool>`. For `Bash`, this hides
 the command that explains why multiple Bash activity entries can be legitimate.
@@ -56,8 +74,9 @@ Claude assistant text:
 
 - `stop_reason: "tool_use"` -> Responses message `phase: "commentary"`
 - `stop_reason: "end_turn"` -> Responses message `phase: "final_answer"`
-- unknown or absent stop reason -> fail closed to legacy final-answer behavior only for completed
-  SDK assistant messages
+- raw text content blocks/deltas -> buffer until `message_delta.delta.stop_reason`
+- completed text with absent stop reason -> buffer until the next assistant tool-use or terminal
+  result boundary
 
 Claude tool use:
 
@@ -83,20 +102,19 @@ Codex `task_complete.last_agent_message`:
 
 ## Remediation
 
-Make completed SDK assistant messages the authority for assistant text phase. Partial raw
-content-block events are useful for displayable reasoning and for future richer streaming, but they
-cannot classify assistant text until the message-level stop reason is known. For now, caara should
-ignore partial assistant text blocks and relay assistant text from the completed SDK assistant
-message with the correct phase.
+Make the phase-bearing boundary the authority for assistant text phase. Raw assistant text blocks
+are buffered until `message_delta` supplies `stop_reason`. Completed assistant text with no stop
+reason is buffered until a following assistant `tool_use` proves it is commentary, or until terminal
+success proves it is final text.
 
 Keep tool activity derived from completed SDK assistant/user messages, where `tool_use.input` and
 `tool_result.tool_use_id` are complete enough to produce useful summaries.
 
-Add regression coverage for a turn containing pre-tool text, a Bash tool call, a Bash result, and a
-terminal answer. The expected visible message sequence is:
+Add regression coverage for raw-stream and completed-message variants of a turn containing pre-tool
+text, a Bash tool call, a Bash result, and a terminal answer. The expected visible message sequence
+is:
 
 1. commentary pre-tool text
 2. commentary Bash command
 3. commentary Bash completed
 4. final answer
-

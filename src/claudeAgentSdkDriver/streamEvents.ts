@@ -4,11 +4,17 @@ import { Match, Option } from "effect";
 import {
   type AgentRuntimeContentKind,
   type AgentRuntimeEvent,
-  createAssistantTextRuntimeEvents,
   createReasoningSummaryRuntimeEvents,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { messagePhaseFromAssistantStopReason } from "./assistantPhase.ts";
+import {
+  appendPendingStreamAssistantText,
+  bufferPendingAssistantText,
+  flushPendingAssistantTexts,
+} from "./assistantTextBuffer.ts";
 import type {
   ClaudeAgentSdkActiveStreamBlock,
+  ClaudeAgentSdkBufferedAssistantTextStreamBlock,
   ClaudeAgentSdkDisplayableStreamBlock,
   ClaudeAgentSdkRuntimeEventResult,
   ClaudeAgentSdkRuntimeEventState,
@@ -30,6 +36,12 @@ type ClaudeAgentSdkContentBlockStartEvent = Extract<
 type ClaudeAgentSdkContentBlockStopEvent = Extract<
   Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
   { readonly type: "content_block_stop" }
+>;
+
+/** SDK message-delta event emitted after raw content blocks with the terminal stop reason. */
+type ClaudeAgentSdkMessageDeltaEvent = Extract<
+  Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
+  { readonly type: "message_delta" }
 >;
 
 /** Returns no runtime events for SDK stream events outside the encoded subset. */
@@ -118,13 +130,15 @@ const initialContentDeltaEvent = ({
     Match.orElse((value) => [contentDeltaRuntimeEvent({ itemId, contentKind, text: value })]),
   );
 
-/** Tracks one SDK text content block until the completed assistant message supplies phase. */
+/** Tracks one SDK text content block until message_delta supplies phase. */
 const textContentBlockStartedEvents = ({
   state,
   index,
+  initialText,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
   readonly index: number;
+  readonly initialText: string;
 }): ClaudeAgentSdkRuntimeEventResult =>
   [
     {
@@ -132,7 +146,7 @@ const textContentBlockStartedEvents = ({
       ...withActiveStreamBlock({
         state,
         index,
-        block: { _tag: "IgnoredAssistantText" },
+        block: { _tag: "BufferedAssistantText", contentIndex: index, text: initialText },
         markStreamedContent: false,
       }),
     },
@@ -198,6 +212,41 @@ const contentDeltaEventResult = ({
   [contentDeltaRuntimeEvent({ itemId, contentKind, text })],
 ];
 
+/** Appends one SDK text delta to the active assistant text buffer. */
+const appendBufferedAssistantText = ({
+  state,
+  activeBlock,
+  text,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly activeBlock: ClaudeAgentSdkBufferedAssistantTextStreamBlock;
+  readonly text: string;
+}): ClaudeAgentSdkRuntimeEventResult => {
+  const activeStreamBlocks = new Map(state.activeStreamBlocks);
+  activeStreamBlocks.set(activeBlock.contentIndex, {
+    ...activeBlock,
+    text: `${activeBlock.text}${text}`,
+  });
+  return [{ ...state, activeStreamBlocks }, []] as const;
+};
+
+/** Converts one SDK content-block delta into a buffered assistant text state update. */
+const runtimeEventsFromBufferedAssistantTextDelta = ({
+  state,
+  bufferedBlock,
+  event,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly bufferedBlock: ClaudeAgentSdkBufferedAssistantTextStreamBlock;
+  readonly event: ClaudeAgentSdkContentBlockDeltaEvent;
+}): ClaudeAgentSdkRuntimeEventResult =>
+  Match.value(event.delta).pipe(
+    Match.when({ type: "text_delta" }, (delta) =>
+      appendBufferedAssistantText({ state, activeBlock: bufferedBlock, text: delta.text }),
+    ),
+    Match.orElse(() => noRuntimeEvents(state)),
+  );
+
 /** Converts one SDK content-block delta into runtime events for a displayable stream block. */
 const runtimeEventsFromDisplayableContentBlockDelta = ({
   state,
@@ -230,23 +279,22 @@ const runtimeEventsFromDisplayableContentBlockDelta = ({
     Match.orElse(() => noRuntimeEvents(state)),
   );
 
-/** Builds a complete assistant-message fallback for SDK streams that omit block starts. */
+/** Buffers assistant text from SDK streams that omit block starts until phase is known. */
 const orphanTextDeltaEvents = ({
   state,
+  contentIndex,
   text,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly contentIndex: number;
   readonly text: string;
 }): ClaudeAgentSdkRuntimeEventResult => [
-  {
-    ...state,
-    nextMessageIndex: state.nextMessageIndex + 1,
-  },
-  createAssistantTextRuntimeEvents({
-    itemId: `claude-sdk-message-${state.nextMessageIndex}`,
+  appendPendingStreamAssistantText({
+    state,
+    contentIndex,
     text,
-    messagePhase: "final_answer",
   }),
+  [],
 ];
 
 /** Builds a complete reasoning fallback for SDK streams that omit block starts. */
@@ -278,14 +326,16 @@ const runtimeEventsFromActiveContentBlockDelta = ({
   readonly event: ClaudeAgentSdkContentBlockDeltaEvent;
 }): ClaudeAgentSdkRuntimeEventResult =>
   Match.value(activeBlock).pipe(
-    Match.when({ _tag: "IgnoredAssistantText" }, () => noRuntimeEvents(state)),
+    Match.when({ _tag: "BufferedAssistantText" }, (bufferedBlock) =>
+      runtimeEventsFromBufferedAssistantTextDelta({ state, bufferedBlock, event }),
+    ),
     Match.when({ _tag: "Displayable" }, (displayableBlock) =>
       runtimeEventsFromDisplayableContentBlockDelta({ state, displayableBlock, event }),
     ),
     Match.exhaustive,
   );
 
-/** Converts a delta without a known content-block lifecycle using the legacy single-item fallback. */
+/** Converts a delta without a known content-block lifecycle. */
 const runtimeEventsFromOrphanContentBlockDelta = ({
   state,
   event,
@@ -295,7 +345,7 @@ const runtimeEventsFromOrphanContentBlockDelta = ({
 }): ClaudeAgentSdkRuntimeEventResult =>
   Match.value(event.delta).pipe(
     Match.when({ type: "text_delta" }, (delta) =>
-      orphanTextDeltaEvents({ state, text: delta.text }),
+      orphanTextDeltaEvents({ state, contentIndex: event.index, text: delta.text }),
     ),
     Match.when({ type: "thinking_delta" }, (delta) =>
       orphanThinkingDeltaEvents({ state, thinking: delta.thinking }),
@@ -326,10 +376,11 @@ const runtimeEventsFromContentBlockStart = ({
   readonly event: ClaudeAgentSdkContentBlockStartEvent;
 }): ClaudeAgentSdkRuntimeEventResult =>
   Match.value(event.content_block).pipe(
-    Match.when({ type: "text" }, () =>
+    Match.when({ type: "text" }, (contentBlock) =>
       textContentBlockStartedEvents({
         state,
         index: event.index,
+        initialText: contentBlock.text,
       }),
     ),
     Match.when({ type: "thinking" }, (contentBlock) =>
@@ -355,13 +406,20 @@ const runtimeEventsFromContentBlockStop = ({
     onSome: (activeBlock) =>
       Match.value(activeBlock).pipe(
         Match.when(
-          { _tag: "IgnoredAssistantText" },
-          () =>
+          { _tag: "BufferedAssistantText" },
+          (bufferedBlock) =>
             [
-              {
-                ...state,
-                activeStreamBlocks: withoutActiveStreamBlock({ state, index: event.index }),
-              },
+              bufferPendingAssistantText({
+                state: {
+                  ...state,
+                  activeStreamBlocks: withoutActiveStreamBlock({ state, index: event.index }),
+                },
+                pendingText: {
+                  _tag: "StreamText",
+                  contentIndex: bufferedBlock.contentIndex,
+                  text: bufferedBlock.text,
+                },
+              }),
               [],
             ] as const,
         ),
@@ -391,6 +449,23 @@ const runtimeEventsFromContentBlockStop = ({
       ),
   });
 
+/** Converts one SDK message-delta stop reason into buffered assistant text events. */
+const runtimeEventsFromMessageDelta = ({
+  state,
+  event,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly event: ClaudeAgentSdkMessageDeltaEvent;
+}): ClaudeAgentSdkRuntimeEventResult =>
+  Option.match(Option.fromUndefinedOr(event.delta.stop_reason ?? undefined), {
+    onNone: () => noRuntimeEvents(state),
+    onSome: (stopReason): ClaudeAgentSdkRuntimeEventResult =>
+      flushPendingAssistantTexts({
+        state,
+        messagePhase: messagePhaseFromAssistantStopReason(stopReason),
+      }),
+  });
+
 /** Converts one SDK stream event message into driver-neutral runtime events. */
 export const runtimeEventsFromStreamEvent = ({
   state,
@@ -411,6 +486,9 @@ export const runtimeEventsFromStreamEvent = ({
     ),
     Match.when({ type: "content_block_stop" }, (event) =>
       runtimeEventsFromContentBlockStop({ state, event }),
+    ),
+    Match.when({ type: "message_delta" }, (event) =>
+      runtimeEventsFromMessageDelta({ state, event }),
     ),
     Match.orElse(() => noRuntimeEvents(state)),
   );
