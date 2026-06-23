@@ -86,3 +86,25 @@ Implemented shape:
 Verification:
 
 - `bun run test src/mockResponsesProvider/runtimeFailure.test.ts --run`
+
+## Completed Slice: CAARA-dscficym
+
+Target:
+
+- Keep `diagnostic/hangs-until-cancel` in flight until client disconnect/cancellation.
+- Support bounded `diagnostic_cancel` values for interrupted reusable, abandoned reusable,
+  abandoned non-reusable, and terminated non-reusable outcomes.
+- Preserve the turn-concurrency canary: same session key conflicts, independent thread proceeds.
+
+Implemented shape:
+
+- `diagnostic/hangs-until-cancel` uses the normal infinite runtime stream and cancel callback.
+- Cancellation tests now assert every supported outcome mapping, explicit failure for unsupported
+  `diagnostic_cancel` values, reusable resume behavior, non-reusable fresh-start behavior, and relay
+  cancellation records.
+- Concurrency test asserts a held-open Diagnostic turn blocks same-thread overlap before driver
+  start while another Codex thread completes normally.
+
+Verification:
+
+- `bun run test src/mockResponsesProvider/turnCancellation.test.ts src/mockResponsesProvider/turnConcurrency.test.ts --run`

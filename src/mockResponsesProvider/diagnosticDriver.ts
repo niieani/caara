@@ -23,6 +23,7 @@ import {
   diagnosticExternalSession,
   previousDiagnosticCursor,
   recoveredDiagnosticExternalSession,
+  validateDiagnosticCancellationOption,
 } from "./diagnosticDriverSession.ts";
 
 export { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
@@ -113,6 +114,7 @@ const parseDiagnosticBasicOptions = Effect.fnUntraced(function* (
         }),
       ),
   });
+  yield* validateDiagnosticCancellationOption(rawDriverOptions);
 
   const chunkCount = yield* parseBoundedIntegerOption({
     rawDriverOptions,
@@ -140,18 +142,16 @@ const parseDiagnosticBasicOptions = Effect.fnUntraced(function* (
 const validateDiagnosticOptions = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
 ) {
-  return yield* Option.match(
-    Option.fromUndefinedOr(unsupportedDiagnosticOption(rawDriverOptions)),
-    {
-      onNone: () => Effect.void,
-      onSome: (optionName) =>
-        Effect.fail(
-          new AgentDriverError({
-            message: `Unsupported diagnostic driver option: ${optionName}.`,
-          }),
-        ),
-    },
-  );
+  yield* Option.match(Option.fromUndefinedOr(unsupportedDiagnosticOption(rawDriverOptions)), {
+    onNone: () => Effect.void,
+    onSome: (optionName) =>
+      Effect.fail(
+        new AgentDriverError({
+          message: `Unsupported diagnostic driver option: ${optionName}.`,
+        }),
+      ),
+  });
+  return yield* validateDiagnosticCancellationOption(rawDriverOptions);
 });
 
 /** Selects the diagnostic/basic answer text for first and resumed turns. */

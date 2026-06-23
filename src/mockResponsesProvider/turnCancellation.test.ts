@@ -44,7 +44,36 @@ const cancellationScenarioIds = {
   reusableAfterTurn: "turn-cancel-reusable-after-3",
   abandonedCancelTurn: "turn-cancel-abandoned-2",
   abandonedAfterTurn: "turn-cancel-abandoned-after-3",
+  invalidCancelTurn: "turn-cancel-invalid",
 } as const;
+
+/** Expected Diagnostic cancellation option to relay outcome mapping. */
+const cancellationOutcomeCases = [
+  {
+    cancelOption: "interrupted",
+    outcomeTag: "Interrupted",
+    sessionReusable: true,
+    turnId: "turn-cancel-outcome-interrupted",
+  },
+  {
+    cancelOption: "abandoned_reusable",
+    outcomeTag: "Abandoned",
+    sessionReusable: true,
+    turnId: "turn-cancel-outcome-abandoned-reusable",
+  },
+  {
+    cancelOption: "abandoned_nonreusable",
+    outcomeTag: "Abandoned",
+    sessionReusable: false,
+    turnId: "turn-cancel-outcome-abandoned-nonreusable",
+  },
+  {
+    cancelOption: "terminated",
+    outcomeTag: "Terminated",
+    sessionReusable: false,
+    turnId: "turn-cancel-outcome-terminated",
+  },
+] as const;
 
 /** Builds Codex turn metadata for one cancellation test request. */
 const makeTurnMetadata = ({
@@ -146,6 +175,12 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
+
+/** Reads an object field after asserting the parent is an object record. */
+const getField = (value: unknown, field: string): unknown => {
+  assert.ok(typeof value === "object" && value !== null && !Array.isArray(value));
+  return value[field as keyof typeof value];
+};
 
 /** Builds a capture logger layer for request inputs. */
 const inputLoggerLayer = (inputs: Array<Schema.Json>) =>
@@ -338,6 +373,36 @@ const runCancelledTurn = Effect.fnUntraced(function* ({
   return relayEvents;
 });
 
+/** Runs one turn with an unsupported Diagnostic cancellation option and returns the error body. */
+const runInvalidCancellationOptionTurn = Effect.fnUntraced(function* ({
+  stateDir,
+}: {
+  readonly stateDir: string;
+}) {
+  const relayEvents: Array<RelayLogEvent> = [];
+  const heldTurnStarted = yield* Deferred.make<void>();
+  const cancellationObserved = yield* Deferred.make<void>();
+  const layer = providerLayer({
+    stateDir,
+    inputs: [],
+    diagnostics: [],
+    relayEvents,
+    heldTurnStarted,
+    cancellationObserved,
+    heldTurnId: cancellationScenarioIds.invalidCancelTurn,
+  });
+  const request = yield* makeRequest({
+    turnId: cancellationScenarioIds.invalidCancelTurn,
+    url: "/v1/responses?diagnostic_cancel=bogus",
+    includeWorkspace: true,
+    includeCwd: true,
+  });
+  const response = yield* HttpClient.execute(request).pipe(Effect.provide(layer));
+  const body = yield* response.json;
+
+  return { body, relayEvents, status: response.status };
+});
+
 /** Creates a fresh cancellation state directory under project-local temp.local. */
 const makeStateDir = Effect.fnUntraced(function* () {
   const tempRoot = path.join(projectRoot, "temp.local");
@@ -352,6 +417,49 @@ const makeStateDir = Effect.fnUntraced(function* () {
 });
 
 describe("turn cancellation", () => {
+  it.effect("maps every Diagnostic cancellation option to a relay cancellation outcome", () =>
+    Effect.forEach(cancellationOutcomeCases, (testCase) =>
+      Effect.gen(function* () {
+        const stateDir = yield* makeStateDir();
+        const relayEvents = yield* runCancelledTurn({
+          stateDir,
+          turnId: testCase.turnId,
+          cancelOption: testCase.cancelOption,
+        });
+        assert.deepStrictEqual(
+          relayEvents.filter((event) => event._tag === "TurnCancelled"),
+          [
+            {
+              _tag: "TurnCancelled",
+              externalAgentKind: "diagnostic",
+              codexThreadId: cancellationScenarioIds.thread,
+              turnId: testCase.turnId,
+              outcomeTag: testCase.outcomeTag,
+              sessionReusable: testCase.sessionReusable,
+            },
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("rejects unsupported Diagnostic cancellation option values explicitly", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const result = yield* runInvalidCancellationOptionTurn({ stateDir });
+
+      assert.strictEqual(result.status, 500);
+      assert.match(
+        String(getField(getField(result.body, "error"), "message")),
+        /unsupported diagnostic_cancel value/i,
+      );
+      assert.deepStrictEqual(
+        result.relayEvents.map((event) => event._tag),
+        ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted", "TurnFailed"],
+      );
+    }),
+  );
+
   it.effect("cancels a disconnected reusable turn and resumes the session later", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();

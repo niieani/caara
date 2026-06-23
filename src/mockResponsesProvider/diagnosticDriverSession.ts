@@ -91,6 +91,29 @@ export const previousDiagnosticCursor = (turn: AgentDriverTurn): string =>
 const diagnosticCancellationMode = (turn: AgentDriverTurn): string =>
   turn.target.rawDriverOptions.diagnostic_cancel ?? "interrupted";
 
+/** Validates the optional Diagnostic cancellation mode query parameter. */
+export const validateDiagnosticCancellationOption = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  return yield* Option.match(Option.fromUndefinedOr(rawDriverOptions.diagnostic_cancel), {
+    onNone: () => Effect.void,
+    onSome: (mode) =>
+      Match.value(mode).pipe(
+        Match.when("interrupted", () => Effect.void),
+        Match.when("abandoned_reusable", () => Effect.void),
+        Match.when("abandoned_nonreusable", () => Effect.void),
+        Match.when("terminated", () => Effect.void),
+        Match.orElse(() =>
+          Effect.fail(
+            new AgentDriverError({
+              message: `Unsupported diagnostic_cancel value: ${mode}.`,
+            }),
+          ),
+        ),
+      ),
+  });
+});
+
 /** Builds the Diagnostic cancellation outcome for one in-flight turn. */
 export const diagnosticCancellationOutcome = (turn: AgentDriverTurn): AgentCancellationOutcome =>
   Match.value(diagnosticCancellationMode(turn)).pipe(
