@@ -371,6 +371,13 @@ if (mode !== "missing-log" && logFile) {
 
 if (mode !== "missing-transcript") {
   const transcriptPath = path.join(process.env.HOME ?? "", ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl");
+  const legacyTranscriptPath = path.join(process.env.HOME ?? "", ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript.jsonl");
+  if (mode === "transcript-jsonl-only") {
+    fs.mkdirSync(path.dirname(legacyTranscriptPath), { recursive: true });
+    fs.writeFileSync(legacyTranscriptPath, JSON.stringify({ step_index: 0, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", content: "legacy transcript answer" }) + "\\n");
+    process.stdout.write("stdout also must not become the answer\\n");
+    process.exit(0);
+  }
   fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
   const records = [
     { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
@@ -415,6 +422,7 @@ describe("Antigravity CLI driver", () => {
     ["process-failure", "Antigravity CLI exited with code 23"],
     ["missing-log", "Antigravity CLI log file was not created"],
     ["missing-transcript", "Antigravity transcript_full.jsonl was not created"],
+    ["transcript-jsonl-only", "Antigravity transcript_full.jsonl was not created"],
     ["missing-final", "Antigravity transcript did not contain a completed final model response"],
   ] as const) {
     it.effect(`fails explicitly when fake agy reports ${fakeMode}`, () =>
