@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionBindingFilePath, sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
@@ -185,31 +186,6 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
-/** Extracts the completed assistant text from decoded Responses SSE frames. */
-const assistantTextFromFrames = (
-  frames: readonly {
-    readonly event: string;
-    readonly data: OpenAiSchema.ResponseStreamEvent;
-  }[],
-): string => {
-  const messageDone = frames.find((frame) => frame.event === "response.output_item.done");
-  assert.ok(messageDone, "missing assistant message done event");
-  const decoded = Schema.decodeUnknownSync(
-    Schema.Struct({
-      item: Schema.Struct({
-        content: Schema.Array(
-          Schema.Struct({
-            text: Schema.String,
-          }),
-        ),
-      }),
-    }),
-  )(messageDone.data);
-  const firstContent = decoded.item.content.at(0);
-  assert.ok(firstContent, "missing assistant content");
-  return firstContent.text;
-};
-
 /** Runs one successful recovery test turn through the shared state directory. */
 const runTurn = ({
   stateDir,
@@ -243,7 +219,7 @@ const runTurn = ({
     const response = yield* HttpClient.execute(request);
     const frames = yield* decodeResponseSseFrames(response.stream);
     assert.strictEqual(response.status, 200);
-    return assistantTextFromFrames(frames);
+    return assistantTextFromResponseFrames(frames);
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
 
 /** Runs one recovery test turn expected to fail at the transport layer. */

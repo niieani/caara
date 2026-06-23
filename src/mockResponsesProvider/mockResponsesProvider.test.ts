@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import { isAssistantMessageDoneData } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
@@ -199,6 +200,16 @@ const findFrame = (frames: readonly ResponseSseFrame[], event: string): Response
   return frame;
 };
 
+/** Finds the completed assistant message SSE frame, skipping reasoning item completions. */
+const findMessageDoneFrame = (frames: readonly ResponseSseFrame[]): ResponseSseFrame => {
+  const frame = frames.find(
+    (candidate) =>
+      candidate.event === "response.output_item.done" && isAssistantMessageDoneData(candidate.data),
+  );
+  assert.ok(frame, "missing assistant message done event");
+  return frame;
+};
+
 /** Extracts normalized runtime lifecycle tags from captured relay events. */
 const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =>
   events
@@ -256,7 +267,7 @@ function streamsFakeReasoningAndFinalAnswer() {
     const reasoningData = decodeReasoningDeltaEvent(
       findFrame(frames, "response.reasoning_summary_text.delta").data,
     );
-    const messageData = decodeMessageDoneEvent(findFrame(frames, "response.output_item.done").data);
+    const messageData = decodeMessageDoneEvent(findMessageDoneFrame(frames).data);
     const lastFrame = frames.at(-1);
     assert.ok(lastFrame, "SSE stream must include at least one frame");
     const completedData = decodeCompletedEvent(lastFrame.data);

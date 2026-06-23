@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryLive } from "./sessionDirectory.ts";
 import { simulatorAgentDriverRegistryLive, simulatorDriverFixture } from "./simulatorDriver.ts";
@@ -143,31 +144,6 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
-
-/** Extracts the completed assistant text from decoded Responses SSE frames. */
-const assistantTextFromFrames = (
-  frames: readonly {
-    readonly event: string;
-    readonly data: OpenAiSchema.ResponseStreamEvent;
-  }[],
-): string => {
-  const messageDone = frames.find((frame) => frame.event === "response.output_item.done");
-  assert.ok(messageDone, "missing assistant message done event");
-  const decoded = Schema.decodeUnknownSync(
-    Schema.Struct({
-      item: Schema.Struct({
-        content: Schema.Array(
-          Schema.Struct({
-            text: Schema.String,
-          }),
-        ),
-      }),
-    }),
-  )(messageDone.data);
-  const firstContent = decoded.item.content.at(0);
-  assert.ok(firstContent, "missing assistant content");
-  return firstContent.text;
-};
 
 /** Builds a capture logger layer for request inputs. */
 const inputLoggerLayer = (inputs: Array<Schema.Json>) =>
@@ -310,7 +286,7 @@ const runCompletedTurn = Effect.fnUntraced(function* ({
   const response = yield* HttpClient.execute(request).pipe(Effect.provide(layer));
   const frames = yield* decodeResponseSseFrames(response.stream);
   assert.strictEqual(response.status, 200);
-  return assistantTextFromFrames(frames);
+  return assistantTextFromResponseFrames(frames);
 });
 
 /** Runs a held simulator turn and interrupts the client response stream. */

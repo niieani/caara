@@ -12,6 +12,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { InputLogger } from "../mockResponsesProvider/inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "../mockResponsesProvider/relayLogger.ts";
 import { RequestDiagnosticsLogger } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
+import { assistantTextFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import {
   CaaraSessionBinding,
@@ -145,27 +146,6 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
-
-/** Extracts the completed assistant text from decoded Responses SSE frames. */
-const assistantTextFromFrames = (
-  frames: readonly {
-    readonly event: string;
-    readonly data: OpenAiSchema.ResponseStreamEvent;
-  }[],
-): string => {
-  const messageDone = frames.find((frame) => frame.event === "response.output_item.done");
-  assert.ok(messageDone, "missing assistant message done event");
-  const decoded = Schema.decodeUnknownSync(
-    Schema.Struct({
-      item: Schema.Struct({
-        content: Schema.Array(Schema.Struct({ text: Schema.String })),
-      }),
-    }),
-  )(messageDone.data);
-  const content = decoded.item.content.at(0);
-  assert.ok(content, "missing assistant content");
-  return content.text;
-};
 
 /** Builds the fake Claude executable used by policy tests. */
 const writeFakeClaudeExecutable = Effect.fnUntraced(function* ({
@@ -425,7 +405,7 @@ export const runCompletedTurn = Effect.fnUntraced(function* ({
   const response = yield* HttpClient.execute(request).pipe(Effect.provide(harness.layer));
   const frames = yield* decodeResponseSseFrames(response.stream);
   assert.strictEqual(response.status, 200);
-  return assistantTextFromFrames(frames);
+  return assistantTextFromResponseFrames(frames);
 });
 
 /** Runs one fake Claude turn that is expected to fail before streaming starts. */

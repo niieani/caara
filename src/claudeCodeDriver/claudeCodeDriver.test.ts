@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
+import { assistantTextFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import {
   CaaraSessionBinding,
@@ -289,31 +290,6 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
-/** Extracts the completed assistant text from decoded Responses SSE frames. */
-const assistantTextFromFrames = (
-  frames: readonly {
-    readonly event: string;
-    readonly data: OpenAiSchema.ResponseStreamEvent;
-  }[],
-): string => {
-  const messageDone = frames.find((frame) => frame.event === "response.output_item.done");
-  assert.ok(messageDone, "missing assistant message done event");
-  const decoded = Schema.decodeUnknownSync(
-    Schema.Struct({
-      item: Schema.Struct({
-        content: Schema.Array(
-          Schema.Struct({
-            text: Schema.String,
-          }),
-        ),
-      }),
-    }),
-  )(messageDone.data);
-  const firstContent = decoded.item.content.at(0);
-  assert.ok(firstContent, "missing assistant content");
-  return firstContent.text;
-};
-
 /** Reads a UTF-8 fixture file written by the fake Claude executable. */
 const readTextFile = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
   return yield* Effect.tryPromise({
@@ -407,7 +383,7 @@ describe("Claude Code driver integration", () => {
       const sessionId = firstArgv.at(sessionIdIndex);
 
       assert.strictEqual(firstResponse.status, 200);
-      assert.strictEqual(assistantTextFromFrames(firstFrames), makeFakeAssistantText(1));
+      assert.strictEqual(assistantTextFromResponseFrames(firstFrames), makeFakeAssistantText(1));
       assert.ok(sessionId, "driver must generate --session-id for first turns");
       assert.deepStrictEqual(firstArgv, [
         "-p",
@@ -454,7 +430,7 @@ describe("Claude Code driver integration", () => {
       const promptLog = (yield* readTextFile({ filePath: promptFile })).trim().split("\n");
       assert.ok(secondArgv, "fake Claude must record second argv");
       assert.strictEqual(secondResponse.status, 200);
-      assert.strictEqual(assistantTextFromFrames(secondFrames), makeFakeAssistantText(2));
+      assert.strictEqual(assistantTextFromResponseFrames(secondFrames), makeFakeAssistantText(2));
       assert.deepStrictEqual(secondArgv, [
         "-p",
         "--verbose",

@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import {
   CaaraSessionBinding,
@@ -151,26 +152,6 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
 /** Extracts the ordered SSE event names from decoded response frames. */
 const frameEventNames = (frames: readonly ResponseSseFrame[]): readonly string[] =>
   frames.map((frame) => frame.event);
-
-/** Extracts the completed assistant text from decoded Responses SSE frames. */
-const assistantTextFromFrames = (frames: readonly ResponseSseFrame[]): string => {
-  const messageDone = frames.find((frame) => frame.event === "response.output_item.done");
-  assert.ok(messageDone, "missing assistant message done event");
-  const decoded = Schema.decodeUnknownSync(
-    Schema.Struct({
-      item: Schema.Struct({
-        content: Schema.Array(
-          Schema.Struct({
-            text: Schema.String,
-          }),
-        ),
-      }),
-    }),
-  )(messageDone.data);
-  const firstContent = decoded.item.content.at(0);
-  assert.ok(firstContent, "missing assistant content");
-  return firstContent.text;
-};
 
 /** Builds a capture logger layer for request inputs. */
 const inputLoggerLayer = (inputs: Array<Schema.Json>) =>
@@ -344,7 +325,7 @@ describe("runtime stream failure handling", () => {
         relayEvents,
       });
       assert.strictEqual(
-        assistantTextFromFrames(recoveryFrames),
+        assistantTextFromResponseFrames(recoveryFrames),
         simulatorDriverFixture.assistantText,
       );
     }),
@@ -367,7 +348,10 @@ describe("runtime stream failure handling", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(assistantTextFromFrames(seedFrames), simulatorDriverFixture.assistantText);
+      assert.strictEqual(
+        assistantTextFromResponseFrames(seedFrames),
+        simulatorDriverFixture.assistantText,
+      );
 
       const failedFrames = yield* runTurn({
         stateDir,
@@ -383,6 +367,7 @@ describe("runtime stream failure handling", () => {
       assert.deepStrictEqual(frameEventNames(failedFrames), [
         "response.created",
         "response.output_item.added",
+        "response.reasoning_summary_part.added",
         "response.reasoning_summary_text.delta",
         "response.failed",
       ]);
@@ -412,7 +397,7 @@ describe("runtime stream failure handling", () => {
         relayEvents,
       });
       assert.strictEqual(
-        assistantTextFromFrames(resumedFrames),
+        assistantTextFromResponseFrames(resumedFrames),
         simulatorDriverFixture.resumedAssistantText,
       );
     }),

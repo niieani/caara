@@ -21,6 +21,16 @@ const terminalEventCount = (events: readonly { readonly event: string }[]): numb
     (event) => event.event === "response.completed" || event.event === "response.failed",
   ).length;
 
+/** Finds one emitted SSE event by event name. */
+const findEvent = <T extends { readonly event: string }>(
+  events: readonly T[],
+  eventName: string,
+): T => {
+  const event = events.find((candidate) => candidate.event === eventName);
+  assert.ok(event, `missing event ${eventName}`);
+  return event;
+};
+
 /** Runtime lifecycle for one complete assistant text item. */
 const completeTextLifecycle: readonly AgentRuntimeEvent[] = [
   {
@@ -126,9 +136,19 @@ describe("runtime lifecycle events", () => {
 
     assert.deepStrictEqual(eventNames(events), [
       "response.created",
+      "response.output_item.added",
+      "response.output_text.delta",
       "response.output_item.done",
       "response.completed",
     ]);
+    assert.deepStrictEqual(findEvent(events, "response.output_text.delta").data, {
+      type: "response.output_text.delta",
+      item_id: "runtime-message-1",
+      output_index: 0,
+      content_index: 0,
+      delta: "hello",
+      sequence_number: 2,
+    });
     assert.strictEqual(terminalEventCount(events), 1);
   });
 
@@ -141,9 +161,23 @@ describe("runtime lifecycle events", () => {
     assert.deepStrictEqual(eventNames(events), [
       "response.created",
       "response.output_item.added",
+      "response.reasoning_summary_part.added",
       "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_part.done",
+      "response.output_item.done",
       "response.completed",
     ]);
+    assert.strictEqual(eventNames(events).includes("response.output_text.delta"), false);
+    assert.deepStrictEqual(findEvent(events, "response.output_item.done").data, {
+      type: "response.output_item.done",
+      output_index: 0,
+      sequence_number: 5,
+      item: {
+        id: "runtime-reasoning-1",
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "thinking" }],
+      },
+    });
     assert.strictEqual(terminalEventCount(events), 1);
   });
 
@@ -156,6 +190,7 @@ describe("runtime lifecycle events", () => {
     assert.deepStrictEqual(eventNames(events), [
       "response.created",
       "response.output_item.added",
+      "response.reasoning_summary_part.added",
       "response.reasoning_summary_text.delta",
       "response.failed",
     ]);
