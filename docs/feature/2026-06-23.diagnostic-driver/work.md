@@ -129,3 +129,24 @@ Implemented shape:
 Verification:
 
 - `bun run test src/mockResponsesProvider/sessionRecovery.test.ts --run`
+
+## Completed Slice: CAARA-yxinmtvr
+
+Target:
+
+- Write Codex-agent-facing runbooks for every v1 Diagnostic scenario.
+- Include setup, model specifier, query params, prompt shape, expected visible output, relay logs,
+  binding effects, and failure signatures.
+- Link the runbooks from the existing smoke-testing docs without removing Claude SDK smoke flow.
+
+Implemented shape:
+
+- Added `docs/agents/diagnostic-smoke-runbooks.md` with common setup, Diagnostic-vs-Claude
+  distinction, direct-provider fallback shape, and scenario sections for basic, reasoning,
+  activity, failure, cancellation/concurrency, recovery, and echo.
+- `docs/agents/smoke-testing.md` now points Caara-core smokes at the Diagnostic runbooks while
+  retaining the Claude SDK subagent flow.
+
+Verification:
+
+- `bun run fmt`
