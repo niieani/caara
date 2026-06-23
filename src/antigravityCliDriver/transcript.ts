@@ -258,18 +258,34 @@ export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function
   ] satisfies readonly AgentRuntimeEvent[];
 });
 
+/** Reads one transcript snapshot and observes it from the supplied append-only state. */
+export const readAntigravityTranscriptObservation = Effect.fnUntraced(function* ({
+  fileSystem,
+  transcriptPath,
+  state,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly transcriptPath: string;
+  readonly state: AntigravityTranscriptObservationState;
+}) {
+  const content = yield* readTranscriptContent({ fileSystem, transcriptPath });
+  return yield* observeAntigravityTranscriptContent({ state, content });
+});
+
 /** Reads and maps a completed Antigravity transcript into runtime events. */
 export const readAntigravityTranscriptRuntimeEvents = Effect.fnUntraced(function* ({
   fileSystem,
   transcriptPath,
+  state = emptyAntigravityTranscriptObservationState,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly transcriptPath: string;
+  readonly state?: AntigravityTranscriptObservationState;
 }) {
-  const content = yield* readTranscriptContent({ fileSystem, transcriptPath });
-  const observation = yield* observeAntigravityTranscriptContent({
-    state: emptyAntigravityTranscriptObservationState,
-    content,
+  const observation = yield* readAntigravityTranscriptObservation({
+    fileSystem,
+    transcriptPath,
+    state,
   });
   return yield* runtimeEventsFromAntigravityTranscript({ records: observation.records });
 });

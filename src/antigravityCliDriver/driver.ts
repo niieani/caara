@@ -1,25 +1,35 @@
 import { Effect, Layer, Match, Option, Stream } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  type AgentCancellationOutcome,
   AgentDriverError,
   AgentDriverRegistry,
   type AgentDriver,
   type AgentDriverResolve,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
+  type AgentRuntimeEvent,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
-import { makeAntigravityDriverResumeCursor } from "./cursor.ts";
-import { buildAntigravityCliArgv, parseAntigravityCliOptions } from "./options.ts";
+import { lostSessionRecoveryDriverPrompt } from "../mockResponsesProvider/sessionRecoveryPolicy.ts";
+import { antigravityLogFilePath, runAntigravityTurnProcess } from "./cliProcess.ts";
+import {
+  decodeAntigravityDriverResumeCursor,
+  makeAntigravityDriverResumeCursor,
+} from "./cursor.ts";
+import { parseAntigravityCliOptions, type AntigravityCliOptions } from "./options.ts";
 import { extractAntigravityCliPrompt } from "./prompt.ts";
 import { AntigravityCliSettings, type AntigravityCliSettingsValue } from "./settings.ts";
 import {
   antigravityTranscriptFullPath,
+  emptyAntigravityTranscriptObservationState,
+  readAntigravityTranscriptObservation,
   readAntigravityTranscriptRuntimeEvents,
+  type AntigravityTranscriptObservation,
 } from "./transcript.ts";
 
 /** Builds a durable Caara session from an Antigravity conversation id. */
@@ -32,155 +42,178 @@ const durableAntigravitySession = ({
     driverResumeCursor: makeAntigravityDriverResumeCursor({ conversationId }),
   });
 
-/** Builds the Antigravity CLI diagnostic log-file path for one Codex turn. */
-const antigravityLogFilePath = ({
-  pathService,
-  homeDir,
-  turn,
-}: {
-  readonly pathService: Path.Path;
-  readonly homeDir: string;
-  readonly turn: AgentDriverTurn;
-}): string =>
-  pathService.join(homeDir, ".caara", "antigravity-cli", "logs", `${turn.codex.turnId}.log`);
-
-/** Extracts the Antigravity conversation id from the CLI log content. */
-const conversationIdFromLog = Effect.fnUntraced(function* (content: string) {
-  const match =
-    /Created conversation ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/iu.exec(
-      content,
-    );
-  const conversationId = match?.[1];
-  return yield* Match.value(conversationId).pipe(
-    Match.when(undefined, () =>
-      Effect.fail(
-        new AgentDriverError({
-          message: "Antigravity CLI log did not contain a created conversation id.",
-        }),
-      ),
-    ),
-    Match.orElse((id) => Effect.succeed(id)),
+/** Extracts a durable Antigravity resume cursor from prior external session state. */
+const durableResumeCursorOption = (turn: AgentDriverTurn): Option.Option<string> =>
+  Option.fromUndefinedOr(
+    [turn.externalSession]
+      .filter((session): session is DurableExternalSession => session?._tag === "Durable")
+      .map((session) => session.driverResumeCursor)
+      .at(0),
   );
+
+/** Builds a non-reusable terminated cancellation outcome. */
+const terminatedCancellationOutcome = (): AgentCancellationOutcome => ({
+  _tag: "Terminated",
+  sessionReusable: false,
 });
 
-/** Reads the Antigravity CLI log file or fails with a driver-owned startup error. */
-const readAntigravityLogFile = Effect.fnUntraced(function* ({
-  fileSystem,
-  logFilePath,
-}: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly logFilePath: string;
-}) {
-  return yield* fileSystem.readFileString(logFilePath).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "Antigravity CLI log file was not created.",
-        }),
-    ),
-  );
+/** Builds a reusable interrupted cancellation outcome after a completed recovery start. */
+const recoveredCancellationOutcome = (): AgentCancellationOutcome => ({
+  _tag: "Interrupted",
+  sessionReusable: true,
 });
 
-/** Returns true when a configured command should be resolved as a filesystem path. */
-const isPathCommand = ({
-  command,
-  pathService,
-}: {
-  readonly command: string;
-  readonly pathService: Path.Path;
-}): boolean => command.includes(pathService.sep) || pathService.isAbsolute(command);
-
-/** Returns candidate executable paths for one bare command name from the active PATH. */
-const pathCommandCandidates = ({
-  command,
-  pathService,
-  settings,
-}: {
-  readonly command: string;
-  readonly pathService: Path.Path;
-  readonly settings: AntigravityCliSettingsValue;
-}): readonly string[] =>
-  (settings.environment.PATH ?? process.env.PATH ?? "")
-    .split(":")
-    .filter((entry) => entry.length > 0)
-    .map((entry) => pathService.join(entry, command));
-
-/** Fails explicitly before spawning when the configured Antigravity command is not executable. */
-const ensureAntigravityCommandAvailable = Effect.fnUntraced(function* ({
+/** Reads runtime events from the transcript owned by one Antigravity conversation id. */
+const readRuntimeEventsForConversation = Effect.fnUntraced(function* ({
   fileSystem,
   pathService,
   settings,
+  conversationId,
+  observation,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly pathService: Path.Path;
   readonly settings: AntigravityCliSettingsValue;
+  readonly conversationId: string;
+  readonly observation?: AntigravityTranscriptObservation;
 }) {
-  const candidates = Match.value(isPathCommand({ command: settings.command, pathService })).pipe(
-    Match.when(true, () => [settings.command]),
-    Match.orElse(() => pathCommandCandidates({ command: settings.command, pathService, settings })),
-  );
-  const availability = yield* Effect.forEach(
-    candidates,
-    (candidate) =>
-      fileSystem.access(candidate, { ok: true }).pipe(
-        Effect.map(() => candidate),
-        Effect.option,
-      ),
-    { concurrency: "unbounded" },
-  );
-  const executable = availability.find(Option.isSome);
-  return yield* Option.match(Option.fromUndefinedOr(executable), {
-    onNone: () =>
-      Effect.fail(
-        new AgentDriverError({
-          message: `Antigravity CLI failed to start: command ${settings.command} is not available.`,
-        }),
-      ),
-    onSome: () => Effect.void,
+  const transcriptPath = antigravityTranscriptFullPath({
+    pathService,
+    homeDir: settings.homeDir,
+    conversationId,
+  });
+  return yield* readAntigravityTranscriptRuntimeEvents({
+    fileSystem,
+    transcriptPath,
+    state: observation?.state,
   });
 });
 
-/** Runs one Antigravity CLI process and returns its exit code. */
-const runAntigravityProcess = Effect.fnUntraced(function* ({
+/** Builds the common successful Antigravity driver turn result. */
+const antigravityTurnResult = ({
+  conversationId,
+  runtimeEvents,
+}: {
+  readonly conversationId: string;
+  readonly runtimeEvents: readonly AgentRuntimeEvent[];
+}): AgentDriverTurnResult => ({
+  runtimeEvents: Stream.fromIterable(runtimeEvents),
+  externalSession: durableAntigravitySession({ conversationId }),
+  cancel: Effect.succeed(terminatedCancellationOutcome()),
+});
+
+/** Starts a fresh Antigravity conversation and maps its transcript into runtime events. */
+const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
   settings,
   spawner,
   turn,
-  argv,
+  prompt,
+  options,
+  logFilePath,
 }: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
   readonly settings: AntigravityCliSettingsValue;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly turn: AgentDriverTurn;
-  readonly argv: readonly string[];
+  readonly prompt: string;
+  readonly options: AntigravityCliOptions;
+  readonly logFilePath: string;
 }) {
-  const command = ChildProcess.make(settings.command, argv, {
-    cwd: turn.cwd,
-    env: {
-      ...settings.environment,
-      HOME: settings.homeDir,
-    },
-    extendEnv: true,
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
+  const conversationId = yield* runAntigravityTurnProcess({
+    fileSystem,
+    pathService,
+    settings,
+    spawner,
+    turn,
+    prompt,
+    options,
+    logFilePath,
   });
-  const exitCode = yield* spawner.exitCode(command).pipe(
+  const runtimeEvents = yield* readRuntimeEventsForConversation({
+    fileSystem,
+    pathService,
+    settings,
+    conversationId,
+  });
+  return { conversationId, runtimeEvents };
+});
+
+/** Starts a fresh Antigravity session after continuity loss and returns recovery metadata. */
+const recoverWithFreshAntigravitySession = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
+  settings,
+  spawner,
+  turn,
+  options,
+  logFilePath,
+  reason,
+  diagnostics,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly options: AntigravityCliOptions;
+  readonly logFilePath: string;
+  readonly reason: string;
+  readonly diagnostics: Readonly<Record<string, string>>;
+}) {
+  const fresh = yield* startFreshAntigravityTurn({
+    fileSystem,
+    pathService,
+    settings,
+    spawner,
+    turn,
+    prompt: lostSessionRecoveryDriverPrompt,
+    options,
+    logFilePath,
+  }).pipe(
     Effect.mapError(
       (error) =>
         new AgentDriverError({
-          message: `Antigravity CLI failed to start: ${error.message}`,
+          message: `Antigravity CLI could not preserve Antigravity CLI session continuity or start a fresh external session: ${error.message}`,
         }),
     ),
   );
-  return yield* Match.value(Number(exitCode)).pipe(
-    Match.when(0, () => Effect.void),
-    Match.orElse((code) =>
-      Effect.fail(
-        new AgentDriverError({
-          message: `Antigravity CLI exited with code ${code}.`,
-        }),
-      ),
-    ),
-  );
+  return {
+    runtimeEvents: Stream.empty,
+    externalSession: durableAntigravitySession({ conversationId: fresh.conversationId }),
+    bindingCwd: turn.cwd,
+    lostSessionRecovery: {
+      reason,
+      diagnostics,
+    },
+    cancel: Effect.succeed(recoveredCancellationOutcome()),
+  } satisfies AgentDriverTurnResult;
+});
+
+/** Reads the transcript state that existed before a resumed Antigravity process is spawned. */
+const observePriorResumeTranscript = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
+  settings,
+  conversationId,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly conversationId: string;
+}) {
+  const transcriptPath = antigravityTranscriptFullPath({
+    pathService,
+    homeDir: settings.homeDir,
+    conversationId,
+  });
+  return yield* readAntigravityTranscriptObservation({
+    fileSystem,
+    transcriptPath,
+    state: emptyAntigravityTranscriptObservationState,
+  });
 });
 
 /** Creates a driver implementation from injected Antigravity process/filesystem services. */
@@ -209,42 +242,114 @@ export const makeAntigravityCliAgentDriver = ({
       turn,
     });
     const logFilePath = options.logFile ?? defaultLogFilePath;
-    yield* fileSystem.makeDirectory(pathService.dirname(logFilePath), { recursive: true }).pipe(
-      Effect.mapError(
-        (error) =>
-          new AgentDriverError({
-            message: `Could not create Antigravity diagnostic log directory: ${error.message}`,
-          }),
-      ),
+    const freshTurn = Effect.map(
+      startFreshAntigravityTurn({
+        fileSystem,
+        pathService,
+        settings,
+        spawner,
+        turn,
+        prompt,
+        options,
+        logFilePath,
+      }),
+      ({ conversationId, runtimeEvents }) =>
+        antigravityTurnResult({ conversationId, runtimeEvents }),
     );
 
-    yield* ensureAntigravityCommandAvailable({ fileSystem, pathService, settings });
-    yield* runAntigravityProcess({
-      settings,
-      spawner,
-      turn,
-      argv: buildAntigravityCliArgv({ prompt, options, logFilePath }),
+    return yield* Option.match(durableResumeCursorOption(turn), {
+      onNone: () => freshTurn,
+      onSome: (rawCursor) =>
+        Effect.matchEffect(decodeAntigravityDriverResumeCursor(rawCursor), {
+          onFailure: (error) =>
+            recoverWithFreshAntigravitySession({
+              fileSystem,
+              pathService,
+              settings,
+              spawner,
+              turn,
+              options,
+              logFilePath,
+              reason: "antigravity-invalid-resume-cursor",
+              diagnostics: {
+                previousCursor: rawCursor,
+                message: error.message,
+              },
+            }),
+          onSuccess: (cursor) =>
+            Effect.matchEffect(
+              observePriorResumeTranscript({
+                fileSystem,
+                pathService,
+                settings,
+                conversationId: cursor.conversationId,
+              }),
+              {
+                onFailure: (error) =>
+                  recoverWithFreshAntigravitySession({
+                    fileSystem,
+                    pathService,
+                    settings,
+                    spawner,
+                    turn,
+                    options,
+                    logFilePath,
+                    reason: "antigravity-invalid-resume-cursor",
+                    diagnostics: {
+                      previousCursor: cursor.conversationId,
+                      message: error.message,
+                    },
+                  }),
+                onSuccess: (observation) =>
+                  Effect.matchEffect(
+                    runAntigravityTurnProcess({
+                      fileSystem,
+                      pathService,
+                      settings,
+                      spawner,
+                      turn,
+                      prompt,
+                      options,
+                      logFilePath,
+                      conversationId: cursor.conversationId,
+                    }),
+                    {
+                      onFailure: (error) =>
+                        recoverWithFreshAntigravitySession({
+                          fileSystem,
+                          pathService,
+                          settings,
+                          spawner,
+                          turn,
+                          options,
+                          logFilePath,
+                          reason: "antigravity-resume-failed",
+                          diagnostics: {
+                            previousCursor: cursor.conversationId,
+                            message: error.message,
+                          },
+                        }),
+                      onSuccess: () =>
+                        Effect.map(
+                          readRuntimeEventsForConversation({
+                            fileSystem,
+                            pathService,
+                            settings,
+                            conversationId: cursor.conversationId,
+                            observation,
+                          }),
+                          (runtimeEvents) =>
+                            antigravityTurnResult({
+                              conversationId: cursor.conversationId,
+                              runtimeEvents,
+                            }),
+                        ),
+                    },
+                  ),
+              },
+            ),
+        }),
     });
-    const logContent = yield* readAntigravityLogFile({ fileSystem, logFilePath });
-    const conversationId = yield* conversationIdFromLog(logContent);
-    const transcriptPath = antigravityTranscriptFullPath({
-      pathService,
-      homeDir: settings.homeDir,
-      conversationId,
-    });
-    const runtimeEvents = yield* readAntigravityTranscriptRuntimeEvents({
-      fileSystem,
-      transcriptPath,
-    });
-
-    return {
-      runtimeEvents: Stream.fromIterable(runtimeEvents),
-      externalSession: durableAntigravitySession({ conversationId }),
-      cancel: Effect.succeed({
-        _tag: "Terminated",
-        sessionReusable: false,
-      }),
-    } satisfies AgentDriverTurnResult;
   }),
 });
 

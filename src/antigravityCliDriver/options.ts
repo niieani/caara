@@ -319,14 +319,20 @@ export const buildAntigravityCliArgv = ({
   prompt,
   options,
   logFilePath,
+  conversationId,
 }: {
   readonly prompt: string;
   readonly options: AntigravityCliOptions;
   readonly logFilePath: string;
+  readonly conversationId?: string;
 }): readonly string[] => [
   "--prompt",
   prompt,
   "--print",
+  ...Option.match(Option.fromUndefinedOr(conversationId), {
+    onNone: () => [],
+    onSome: (id) => ["--conversation", id],
+  }),
   "--model",
   options.model,
   ...Option.match(Option.fromUndefinedOr(options.printTimeoutSeconds), {
