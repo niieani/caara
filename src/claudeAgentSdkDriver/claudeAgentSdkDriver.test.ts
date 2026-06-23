@@ -20,7 +20,11 @@ import {
   durableCursor,
   fakeSdkHarness,
   runDriverTurn,
+  sdkAssistantTextMessage,
+  sdkContentBlockStop,
+  sdkTextBlockStart,
   sdkTextDelta,
+  sdkThinkingBlockStart,
   sdkThinkingDelta,
 } from "./claudeAgentSdkDriverTestHarness.ts";
 import {
@@ -30,6 +34,15 @@ import {
 
 /** Stable cwd used by SDK driver tests. */
 const projectRoot = process.cwd();
+
+/** Stable SDK session id used by streamed text lifecycle coverage. */
+const streamedTextSessionId = (): string => "00000000-0000-4000-8000-000000000102";
+
+/** Stable SDK session id used by streamed thinking lifecycle coverage. */
+const streamedThinkingSessionId = (): string => "00000000-0000-4000-8000-000000000202";
+
+/** Stable SDK session id used by streamed/final assistant deduplication coverage. */
+const streamedFinalDedupSessionId = (): string => "00000000-0000-4000-8000-000000000103";
 
 /** Builds Codex identity context for one direct driver test turn. */
 const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTurnContext =>
@@ -156,6 +169,178 @@ describe("Claude Agent SDK driver", () => {
           createRuntimeTurnSucceededEvent(),
         ] satisfies readonly AgentRuntimeEvent[]);
       }),
+  );
+
+  it.effect("keeps streamed text deltas in one assistant item lifecycle", () =>
+    Effect.gen(function* () {
+      const sessionId = streamedTextSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkTextBlockStart({ sessionId }),
+            sdkTextDelta({ sessionId, text: "hel" }),
+            sdkTextDelta({ sessionId, text: "lo" }),
+            sdkContentBlockStop({ sessionId }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        {
+          _tag: "ItemCreated",
+          itemId: "claude-sdk-message-0",
+          itemKind: "assistant_message",
+          messagePhase: "final_answer",
+        },
+        {
+          _tag: "ContentStarted",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+        },
+        {
+          _tag: "ContentDelta",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+          text: "hel",
+        },
+        {
+          _tag: "ContentDelta",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+          text: "lo",
+        },
+        {
+          _tag: "ContentCompleted",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+        },
+        {
+          _tag: "ItemCompleted",
+          itemId: "claude-sdk-message-0",
+        },
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("keeps streamed thinking deltas in one reasoning item lifecycle", () =>
+    Effect.gen(function* () {
+      const sessionId = streamedThinkingSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkThinkingBlockStart({ sessionId }),
+            sdkThinkingDelta({ sessionId, thinking: "pl" }),
+            sdkThinkingDelta({ sessionId, thinking: "an" }),
+            sdkContentBlockStop({ sessionId }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        {
+          _tag: "ItemCreated",
+          itemId: "claude-sdk-reasoning-0",
+          itemKind: "reasoning",
+        },
+        {
+          _tag: "ContentStarted",
+          itemId: "claude-sdk-reasoning-0",
+          contentIndex: 0,
+          contentKind: "reasoning_summary_text",
+        },
+        {
+          _tag: "ContentDelta",
+          itemId: "claude-sdk-reasoning-0",
+          contentIndex: 0,
+          contentKind: "reasoning_summary_text",
+          text: "pl",
+        },
+        {
+          _tag: "ContentDelta",
+          itemId: "claude-sdk-reasoning-0",
+          contentIndex: 0,
+          contentKind: "reasoning_summary_text",
+          text: "an",
+        },
+        {
+          _tag: "ContentCompleted",
+          itemId: "claude-sdk-reasoning-0",
+          contentIndex: 0,
+          contentKind: "reasoning_summary_text",
+        },
+        {
+          _tag: "ItemCompleted",
+          itemId: "claude-sdk-reasoning-0",
+        },
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("does not duplicate final assistant text already emitted from stream blocks", () =>
+    Effect.gen(function* () {
+      const sessionId = streamedFinalDedupSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkTextBlockStart({ sessionId }),
+            sdkTextDelta({ sessionId, text: "hello" }),
+            sdkContentBlockStop({ sessionId }),
+            sdkAssistantTextMessage({ sessionId, text: "hello" }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        {
+          _tag: "ItemCreated",
+          itemId: "claude-sdk-message-0",
+          itemKind: "assistant_message",
+          messagePhase: "final_answer",
+        },
+        {
+          _tag: "ContentStarted",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+        },
+        {
+          _tag: "ContentDelta",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+          text: "hello",
+        },
+        {
+          _tag: "ContentCompleted",
+          itemId: "claude-sdk-message-0",
+          contentIndex: 0,
+          contentKind: "assistant_text",
+        },
+        {
+          _tag: "ItemCompleted",
+          itemId: "claude-sdk-message-0",
+        },
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
   );
 
   it.effect("resumes follow-up turns through the stored cursor and applies model changes", () =>

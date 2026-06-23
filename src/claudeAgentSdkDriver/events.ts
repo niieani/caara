@@ -10,40 +10,18 @@ import {
   createRuntimeTurnSucceededEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
 import type { ClaudeAgentSdkQueryRuntime } from "./claudeAgentSdkClient.ts";
-
-/** Stateful SDK-message conversion position for stable Caara runtime item ids. */
-interface ClaudeAgentSdkRuntimeEventState {
-  readonly nextMessageIndex: number;
-  readonly nextReasoningIndex: number;
-  readonly nextActivityIndex: number;
-  readonly toolUseNames: Readonly<Record<string, string>>;
-}
-
-/** Result tuple returned while incrementally converting SDK messages. */
-type ClaudeAgentSdkRuntimeEventResult = readonly [
-  ClaudeAgentSdkRuntimeEventState,
-  readonly AgentRuntimeEvent[],
-];
-
-/** SDK content-block delta event emitted inside the partial assistant stream. */
-type ClaudeAgentSdkContentBlockDeltaEvent = Extract<
-  Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
-  { readonly type: "content_block_delta" }
->;
+import {
+  initialClaudeAgentSdkRuntimeEventState,
+  type ClaudeAgentSdkRuntimeEventResult,
+  type ClaudeAgentSdkRuntimeEventState,
+} from "./claudeAgentSdkRuntimeEventState.ts";
+import { resetClaudeAgentSdkStreamTracking, runtimeEventsFromStreamEvent } from "./streamEvents.ts";
 
 /** SDK permission-denied message emitted after noninteractive permission rejection. */
 type ClaudeAgentSdkPermissionDeniedMessage = Extract<
   SDKMessage,
   { readonly type: "system"; readonly subtype: "permission_denied" }
 >;
-
-/** Initial SDK-message conversion state for one query stream. */
-const initialState = (): ClaudeAgentSdkRuntimeEventState => ({
-  nextMessageIndex: 0,
-  nextReasoningIndex: 0,
-  nextActivityIndex: 0,
-  toolUseNames: {},
-});
 
 /** Safe subset of SDK tool input fields used for terse activity summaries. */
 const sdkToolInputSummarySchema = Schema.Struct({
@@ -232,35 +210,24 @@ const runtimeEventsFromPermissionDenied = ({
   ],
 ];
 
-/** Converts one SDK content-block delta into runtime events. */
-const runtimeEventsFromContentBlockDelta = ({
+/** Returns true when final assistant content was already emitted through stream events. */
+const isAlreadyStreamedAssistantContent = ({
   state,
-  event,
+  contentIndex,
+  content,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly event: ClaudeAgentSdkContentBlockDeltaEvent;
-}): ClaudeAgentSdkRuntimeEventResult =>
-  Match.value(event.delta).pipe(
-    Match.when({ type: "text_delta" }, (delta) => assistantTextEvents({ state, text: delta.text })),
-    Match.when({ type: "thinking_delta" }, (delta) =>
-      reasoningTextEvents({ state, text: delta.thinking }),
-    ),
-    Match.orElse(() => noRuntimeEvents(state)),
-  );
-
-/** Converts one SDK stream event message into driver-neutral runtime events. */
-const runtimeEventsFromStreamEvent = ({
-  state,
-  message,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly message: Extract<SDKMessage, { readonly type: "stream_event" }>;
-}): ClaudeAgentSdkRuntimeEventResult =>
-  Match.value(message.event).pipe(
-    Match.when({ type: "content_block_delta" }, (event) =>
-      runtimeEventsFromContentBlockDelta({ state, event }),
-    ),
-    Match.orElse(() => noRuntimeEvents(state)),
+  readonly contentIndex: number;
+  readonly content: Extract<
+    SDKMessage,
+    { readonly type: "assistant" }
+  >["message"]["content"][number];
+}): boolean =>
+  state.streamedContentBlockIndexes.has(contentIndex) &&
+  Match.value(content).pipe(
+    Match.when({ type: "text" }, () => true),
+    Match.when({ type: "thinking" }, () => true),
+    Match.orElse(() => false),
   );
 
 /** Converts a completed SDK assistant message into fallback text runtime events. */
@@ -276,8 +243,12 @@ const runtimeEventsFromAssistantMessage = ({
   let nextState = state;
   const events: AgentRuntimeEvent[] = [];
 
-  for (const content of message.message.content) {
+  for (const [contentIndex, content] of message.message.content.entries()) {
     const [updatedState, nextEvents] = Match.value(content).pipe(
+      Match.when(
+        () => isAlreadyStreamedAssistantContent({ state: nextState, contentIndex, content }),
+        () => noRuntimeEvents(nextState),
+      ),
       Match.when({ type: "text" }, (textContent) =>
         assistantTextEvents({ state: nextState, text: textContent.text }),
       ),
@@ -297,7 +268,7 @@ const runtimeEventsFromAssistantMessage = ({
     events.push(...nextEvents);
   }
 
-  return [nextState, events] as const;
+  return [resetClaudeAgentSdkStreamTracking(nextState), events] as const;
 };
 
 /** Converts a user tool_result message into activity commentary when present. */
@@ -443,7 +414,7 @@ export const runtimeEventsFromClaudeAgentSdkQuery = ({
     runtime,
     (cause) => new AgentDriverError({ message: String(cause) }),
   ).pipe(
-    Stream.mapAccumEffect(initialState, (state, message) =>
+    Stream.mapAccumEffect(initialClaudeAgentSdkRuntimeEventState, (state, message) =>
       runtimeEventsFromSdkMessage({
         state,
         message,

@@ -1,4 +1,5 @@
 import type {
+  NonNullableUsage,
   Options as ClaudeQueryOptions,
   SDKMessage,
   SDKUserMessage,
@@ -56,8 +57,31 @@ export interface FakeSdkRuntimeControls {
   readonly closes: string[];
 }
 
-/** Builds one fake SDK stream text delta message. */
-export const sdkTextDelta = ({
+/** Builds the minimal non-null SDK usage payload required by assistant messages. */
+const sdkUsage = (): NonNullableUsage => ({
+  cache_creation: {
+    ephemeral_1h_input_tokens: 0,
+    ephemeral_5m_input_tokens: 0,
+  },
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+  inference_geo: "",
+  input_tokens: 0,
+  iterations: [],
+  output_tokens: 0,
+  output_tokens_details: {
+    thinking_tokens: 0,
+  },
+  server_tool_use: {
+    web_fetch_requests: 0,
+    web_search_requests: 0,
+  },
+  service_tier: "standard",
+  speed: "standard",
+});
+
+/** Builds one completed SDK assistant message containing final text content. */
+export const sdkAssistantTextMessage = ({
   sessionId,
   text,
 }: {
@@ -65,10 +89,71 @@ export const sdkTextDelta = ({
   readonly text: string;
 }) =>
   ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "msg_sdk_final_text",
+      type: "message",
+      container: null,
+      context_management: null,
+      diagnostics: null,
+      role: "assistant",
+      model: "claude-sonnet-4-5",
+      content: [
+        {
+          type: "text",
+          text,
+          citations: null,
+        },
+      ],
+      stop_details: null,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: sdkUsage(),
+    },
+    uuid: "00000000-0000-4000-8000-000000000009",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one fake SDK content-block start event for streamed assistant text. */
+export const sdkTextBlockStart = ({
+  sessionId,
+  index = 0,
+}: {
+  readonly sessionId: string;
+  readonly index?: number;
+}) =>
+  ({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index,
+      content_block: {
+        type: "text",
+        text: "",
+        citations: null,
+      },
+    },
+    parent_tool_use_id: null,
+    uuid: "00000000-0000-4000-8000-000000000010",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one fake SDK stream text delta message. */
+export const sdkTextDelta = ({
+  sessionId,
+  text,
+  index = 0,
+}: {
+  readonly sessionId: string;
+  readonly text: string;
+  readonly index?: number;
+}) =>
+  ({
     type: "stream_event",
     event: {
       type: "content_block_delta",
-      index: 0,
+      index,
       delta: {
         type: "text_delta",
         text,
@@ -79,19 +164,45 @@ export const sdkTextDelta = ({
     session_id: sessionId,
   }) satisfies SDKMessage;
 
+/** Builds one fake SDK content-block start event for streamed displayable thinking. */
+export const sdkThinkingBlockStart = ({
+  sessionId,
+  index = 0,
+}: {
+  readonly sessionId: string;
+  readonly index?: number;
+}) =>
+  ({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index,
+      content_block: {
+        type: "thinking",
+        thinking: "",
+        signature: "",
+      },
+    },
+    parent_tool_use_id: null,
+    uuid: "00000000-0000-4000-8000-000000000012",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
 /** Builds one fake SDK stream thinking delta message. */
 export const sdkThinkingDelta = ({
   sessionId,
   thinking,
+  index = 0,
 }: {
   readonly sessionId: string;
   readonly thinking: string;
+  readonly index?: number;
 }) =>
   ({
     type: "stream_event",
     event: {
       type: "content_block_delta",
-      index: 0,
+      index,
       delta: {
         type: "thinking_delta",
         thinking,
@@ -100,6 +211,25 @@ export const sdkThinkingDelta = ({
     },
     parent_tool_use_id: null,
     uuid: "00000000-0000-4000-8000-000000000012",
+    session_id: sessionId,
+  }) satisfies SDKMessage;
+
+/** Builds one fake SDK content-block stop event for a streamed content block. */
+export const sdkContentBlockStop = ({
+  sessionId,
+  index = 0,
+}: {
+  readonly sessionId: string;
+  readonly index?: number;
+}) =>
+  ({
+    type: "stream_event",
+    event: {
+      type: "content_block_stop",
+      index,
+    },
+    parent_tool_use_id: null,
+    uuid: "00000000-0000-4000-8000-000000000013",
     session_id: sessionId,
   }) satisfies SDKMessage;
 

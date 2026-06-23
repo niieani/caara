@@ -21,6 +21,9 @@ import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts
 import {
   collectPromptMessages,
   fakeSdkHarness,
+  sdkAssistantTextMessage,
+  sdkContentBlockStop,
+  sdkTextBlockStart,
   sdkTextDelta,
 } from "./claudeAgentSdkDriverTestHarness.ts";
 
@@ -284,7 +287,11 @@ const sdkActivityMessages = (): readonly SDKMessage[] => [
   sdkTaskStarted(),
   sdkTaskProgress(),
   sdkReadToolResult(),
-  sdkTextDelta({ sessionId: sdkSessionId(), text: "SDK final answer" }),
+  sdkTextBlockStart({ sessionId: sdkSessionId() }),
+  sdkTextDelta({ sessionId: sdkSessionId(), text: "SDK final " }),
+  sdkTextDelta({ sessionId: sdkSessionId(), text: "answer" }),
+  sdkContentBlockStop({ sessionId: sdkSessionId() }),
+  sdkAssistantTextMessage({ sessionId: sdkSessionId(), text: "SDK final answer" }),
 ];
 
 /** Builds a fresh provider harness backed by one fake Claude SDK runtime. */
@@ -502,7 +509,7 @@ describe("Claude Agent SDK activity commentary", () => {
           },
         },
       ]);
-      const promptText = Schema.encodeSync(Schema.UnknownFromJsonString)(promptMessages);
+      const promptText = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(promptMessages);
       assert.strictEqual(promptText.includes("Use Codex developer instructions"), false);
       assert.strictEqual(promptText.includes("AGENTS.md instructions"), false);
       assert.strictEqual(promptText.includes("<environment_context>"), false);
