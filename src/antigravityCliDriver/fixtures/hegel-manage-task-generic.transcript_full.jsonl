@@ -1,0 +1,5 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-06-24T07:11:53Z","content":"<USER_REQUEST>\ndoes anyone own that bun run start process?\n</USER_REQUEST>"}
+{"step_index":1,"source":"SYSTEM","type":"CONVERSATION_HISTORY","status":"DONE","created_at":"2026-06-24T07:11:53Z","content":"REDACTED_CONVERSATION_HISTORY_SHOULD_NOT_LEAK"}
+{"step_index":3,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-06-24T07:11:53Z","content":"Created At: 2026-06-24T07:11:53Z\nCompleted At: 2026-06-24T07:11:53Z\nRAW_MANAGE_TASK_RESULT_SHOULD_NOT_LEAK"}
+{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-06-24T07:11:53Z","content":"Listing tasks","tool_calls":[{"name":"manage_task","args":{"Action":"list","toolAction":"Listing background tasks","toolSummary":"List tasks"}}]}
+{"step_index":4,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-06-24T07:11:54Z","thinking":"Check background task list before answering.","content":"No background tasks are running."}
