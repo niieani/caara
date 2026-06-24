@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Schema } from "effect";
+import { Console, Effect, Match, Option, Schema } from "effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
@@ -60,6 +60,21 @@ const AntigravityTranscriptRecord = Schema.Struct({
 
 /** Antigravity transcript record shape accepted by the driver-owned mapper. */
 export type AntigravityTranscriptRecord = typeof AntigravityTranscriptRecord.Type;
+
+/** Antigravity model result row types with first-class runtime activity mapping. */
+const supportedModelResultRecordTypes = [
+  "LIST_DIRECTORY",
+  "VIEW_FILE",
+  "RUN_COMMAND",
+  "GREP_SEARCH",
+] as const;
+
+/** Antigravity system rows that are intentionally ignored by runtime mapping. */
+const supportedSystemRecordTypes = [
+  "CONVERSATION_HISTORY",
+  "CHECKPOINT",
+  "SYSTEM_MESSAGE",
+] as const;
 
 /** In-memory observation state for append-only Antigravity transcript snapshots. */
 export interface AntigravityTranscriptObservationState {
@@ -142,17 +157,40 @@ const isSupportedTranscriptRecord = (record: AntigravityTranscriptRecord): boole
   [
     record.source === "MODEL" && record.type === "PLANNER_RESPONSE" && record.status === "DONE",
     record.source === "MODEL" &&
-      ["LIST_DIRECTORY", "VIEW_FILE", "RUN_COMMAND", "GREP_SEARCH"].some(
-        (type) => type === record.type,
-      ) &&
+      supportedModelResultRecordTypes.some((type) => type === record.type) &&
       record.status === "DONE",
     record.source === "USER_EXPLICIT" && record.type === "USER_INPUT" && record.status === "DONE",
     record.source === "SYSTEM" &&
-      ["CONVERSATION_HISTORY", "CHECKPOINT", "SYSTEM_MESSAGE"].some(
-        (type) => type === record.type,
-      ) &&
+      supportedSystemRecordTypes.some((type) => type === record.type) &&
       record.status === "DONE",
   ].some(Boolean);
+
+/** Returns whether one unknown model row is safe to ignore as an opaque tool result. */
+const isIgnorableUnknownModelResultRecord = (record: AntigravityTranscriptRecord): boolean =>
+  record.source === "MODEL" &&
+  record.status === "DONE" &&
+  record.content !== undefined &&
+  record.type !== "PLANNER_RESPONSE" &&
+  !supportedModelResultRecordTypes.some((type) => type === record.type);
+
+/** Encodes one ignored Antigravity transcript row warning as a structured log line. */
+const encodeIgnoredTranscriptRecordWarning = (record: AntigravityTranscriptRecord): string =>
+  Schema.encodeSync(Schema.UnknownFromJsonString)({
+    event: "caara.antigravity.transcript.ignored_record",
+    level: "warn",
+    source: record.source,
+    type: record.type,
+    status: record.status,
+    step_index: record.step_index,
+  });
+
+/** Logs and accepts an unknown Antigravity model result row that should not fail the turn. */
+const acceptIgnoredTranscriptRecord = Effect.fnUntraced(function* (
+  record: AntigravityTranscriptRecord,
+) {
+  yield* Console.log(encodeIgnoredTranscriptRecordWarning(record));
+  return record;
+});
 
 /** Validates that one schema-decoded transcript record belongs to a supported event shape. */
 const validateSupportedTranscriptRecord = Effect.fnUntraced(function* (
@@ -160,6 +198,10 @@ const validateSupportedTranscriptRecord = Effect.fnUntraced(function* (
 ) {
   return yield* Match.value(isSupportedTranscriptRecord(record)).pipe(
     Match.when(true, () => Effect.succeed(record)),
+    Match.when(
+      () => isIgnorableUnknownModelResultRecord(record),
+      () => acceptIgnoredTranscriptRecord(record),
+    ),
     Match.orElse(() =>
       Effect.fail(
         new AgentDriverError({

@@ -55,6 +55,8 @@ Completed tool rows:
 - pair with pending planner metadata by normalized tool type
 - emit terse completion only when it adds signal
 - avoid raw stdout, file content, directory payloads, or JSON payload leakage
+- accept unknown `MODEL/*/DONE` rows with content as opaque tool results: log a warning and ignore
+  their payload instead of failing the turn
 
 Activity text:
 
@@ -83,3 +85,45 @@ good enough for the current Antigravity JSONL contract.
 
 Keep `transcript_full.jsonl` as the source of truth. Treat the SQLite DBs as forensic-only until
 Antigravity exposes a stable documented schema.
+
+## Completed Work
+
+Implemented on 2026-06-24:
+
+- shared Markdown formatting for shell command and path activity
+- Antigravity nested `tool_calls[].args` decoding for command, cwd, paths, query, action, and summary
+- Antigravity planner-call activity emitted from the richer planner metadata
+- pending planner-call correlation for completed result rows
+- quoted path activity such as `Listing \`.\`` and `Viewing \`CONTEXT.md\``
+- command activity such as `Running command: \`ps aux ...\``
+- multiline command activity using fenced `bash` code blocks
+- duplicate low-signal completion suppression for list/view/search activity
+- unknown `MODEL/*/DONE` result rows with content treated as opaque tool results: structured warning
+  log, ignored raw payload, continued turn processing
+
+Regression coverage now asserts that `MODEL/GENERIC/DONE` result rows do not fail the stream, do not
+leak raw tool-result payloads to visible assistant text, and emit a structured warning log.
+
+## Future Resilience Upgrades
+
+Track these as one umbrella issue with independently grabbable child issues.
+
+1. Replay real Antigravity transcript fixtures.
+   Add minimized, redacted `transcript_full.jsonl` fixtures for observed Agy shapes, including unknown
+   model result rows and out-of-order `step_index` rows. The replay tests should assert runtime
+   events, visible text, reasoning output, warning logs, and absence of raw transcript leakage.
+
+2. Add structured ignored-row telemetry.
+   Count ignored transcript rows by `source/type/status` and include safe context in provider logs:
+   turn id, thread id, step index, content length, and optional content hash. Never log raw unknown
+   row content.
+
+3. Handle final-less tool-only turns deliberately.
+   If Antigravity exits after tool results without a final planner response, return a structured
+   diagnostic failure or safe provider-owned final diagnostic instead of an opaque Responses
+   `response.failed` disconnect.
+
+4. Make transcript ordering robust.
+   Antigravity can append rows out of `step_index` order. Buffer or sort transcript snapshots by
+   `step_index`, or correlate known result rows to pending planner calls by stronger identifiers when
+   available, while preserving append-only rewrite detection.

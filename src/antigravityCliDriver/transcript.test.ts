@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
+import { TestConsole } from "effect/testing";
 
 import type {
   AgentRuntimeContentKind,
@@ -253,6 +254,63 @@ describe("Antigravity transcript observation", () => {
       assert.deepStrictEqual(
         runtimeEvents.filter((event) => event._tag === "ContentDelta").map((event) => event.text),
         ["first"],
+      );
+    }),
+  );
+
+  it.effect("accepts unknown model result rows without making the turn fail", () =>
+    Effect.gen(function* () {
+      const observed = yield* observeAntigravityTranscriptContent({
+        state: emptyAntigravityTranscriptObservationState,
+        content: [
+          recordLine(
+            plannerRecord({
+              stepIndex: 0,
+              content: "Listing tasks",
+              toolCalls: [
+                {
+                  name: "manage_task",
+                  args: {
+                    Action: "list",
+                    toolAction: "Listing background tasks",
+                    toolSummary: "List tasks",
+                  },
+                },
+              ],
+            }),
+          ),
+          recordLine({
+            step_index: 1,
+            source: "MODEL",
+            type: "GENERIC",
+            status: "DONE",
+            created_at: "2026-06-24T07:11:53Z",
+            content:
+              "Created At: 2026-06-24T07:11:53Z\nCompleted At: 2026-06-24T07:11:53Z\nNo background tasks are currently running.",
+          }),
+          recordLine(plannerRecord({ stepIndex: 2, content: "No background tasks are running." })),
+        ].join(""),
+      });
+
+      const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({
+        records: observed.records,
+      });
+      const visibleText = visibleContentDeltaTexts({ events: runtimeEvents }).join("\n");
+      const logLines = yield* TestConsole.logLines;
+
+      assert.ok(!visibleText.includes("Created At:"));
+      assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
+        "Listing background tasks",
+        "No background tasks are running.",
+      ]);
+      assert.ok(
+        logLines.some(
+          (line) =>
+            typeof line === "string" &&
+            line.includes('"event":"caara.antigravity.transcript.ignored_record"') &&
+            line.includes('"level":"warn"') &&
+            line.includes('"type":"GENERIC"'),
+        ),
       );
     }),
   );
