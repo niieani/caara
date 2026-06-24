@@ -59,6 +59,12 @@ const completedToolResultRecordTypes = [
   "GREP_SEARCH",
 ] as const;
 
+/** Orders transcript rows by Antigravity semantic step index without mutating append-order state. */
+export const orderAntigravityTranscriptRecordsByStepIndex = (
+  records: readonly AntigravityTranscriptRecord[],
+): readonly AntigravityTranscriptRecord[] =>
+  records.toSorted((left, right) => left.step_index - right.step_index);
+
 /** Initial Antigravity runtime event conversion state for one transcript snapshot. */
 export const initialAntigravityRuntimeEventState = (): AntigravityRuntimeEventState => ({
   nextReasoningIndex: 0,
@@ -88,7 +94,7 @@ const finalPlannerContentOption = (
   records: readonly AntigravityTranscriptRecord[],
 ): Option.Option<string> =>
   Option.fromUndefinedOr(
-    records
+    orderAntigravityTranscriptRecordsByStepIndex(records)
       .filter(isFinalPlannerResponse)
       .map((record) => record.content)
       .at(-1),
@@ -131,7 +137,10 @@ const hasToolActivityWithoutFinalAnswer = (
 /** Returns the last observed transcript step index for missing-final warning logs. */
 const lastObservedStepIndex = (
   records: readonly AntigravityTranscriptRecord[],
-): number | undefined => records.map((record) => record.step_index).at(-1);
+): number | undefined =>
+  orderAntigravityTranscriptRecordsByStepIndex(records)
+    .map((record) => record.step_index)
+    .at(-1);
 
 /** Counts records that prove the missing-final transcript reached tool activity. */
 const toolActivityRecordCount = (records: readonly AntigravityTranscriptRecord[]): number =>
@@ -370,7 +379,7 @@ export const runtimeEventsFromAntigravityTranscriptRecords = ({
   let currentState = state;
   const transportVisibility = activityTransportVisibility(activity);
   const events: AgentRuntimeEvent[] = [];
-  for (const record of records) {
+  for (const record of orderAntigravityTranscriptRecordsByStepIndex(records)) {
     const [nextState, nextEvents] = runtimeEventsFromTranscriptRecord({
       state: currentState,
       record,

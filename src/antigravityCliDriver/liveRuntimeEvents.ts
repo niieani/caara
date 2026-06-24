@@ -20,6 +20,7 @@ import {
 } from "./transcript.ts";
 import {
   initialAntigravityRuntimeEventState,
+  orderAntigravityTranscriptRecordsByStepIndex,
   runtimeEventsFromAntigravityTranscriptRecords,
   terminalRuntimeEventsFromAntigravityTranscript,
   type AntigravityRuntimeEventState,
@@ -30,6 +31,7 @@ interface AntigravityRuntimeStreamState {
   readonly observationState: AntigravityTranscriptObservationState;
   readonly runtimeState: AntigravityRuntimeEventState;
   readonly records: readonly AntigravityTranscriptRecord[];
+  readonly mappedStepIndexes: readonly number[];
   readonly done: boolean;
 }
 
@@ -103,8 +105,71 @@ const initialRuntimeStreamState = ({
   observationState,
   runtimeState: initialAntigravityRuntimeEventState(),
   records: [],
+  mappedStepIndexes: observationState.observedStepIndexes,
   done: false,
 });
+
+/** Returns the next contiguous Antigravity step index expected by the live mapper. */
+const nextMappedStepIndex = (mappedStepIndexes: readonly number[]): number =>
+  (mappedStepIndexes.toSorted((left, right) => right - left).at(0) ?? -1) + 1;
+
+/** Accumulator for selecting the contiguous unmapped transcript prefix ready for live mapping. */
+interface ReadyRuntimeRecordsAccumulator {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly expectedStepIndex: number;
+  readonly closed: boolean;
+}
+
+/** Appends one record to the ready prefix while step indexes remain contiguous. */
+const appendReadyRuntimeRecord = (
+  accumulator: ReadyRuntimeRecordsAccumulator,
+  record: AntigravityTranscriptRecord,
+): ReadyRuntimeRecordsAccumulator =>
+  Match.value(accumulator.closed || record.step_index !== accumulator.expectedStepIndex).pipe(
+    Match.when(true, () => ({
+      ...accumulator,
+      closed: true,
+    })),
+    Match.orElse(() => ({
+      records: [...accumulator.records, record],
+      expectedStepIndex: accumulator.expectedStepIndex + 1,
+      closed: false,
+    })),
+  );
+
+/** Returns the unmapped contiguous transcript prefix that is ready before process exit. */
+const contiguousReadyRuntimeRecords = ({
+  unmapped,
+  mappedStepIndexes,
+}: {
+  readonly unmapped: readonly AntigravityTranscriptRecord[];
+  readonly mappedStepIndexes: readonly number[];
+}): readonly AntigravityTranscriptRecord[] =>
+  unmapped.reduce(appendReadyRuntimeRecord, {
+    records: [],
+    expectedStepIndex: nextMappedStepIndex(mappedStepIndexes),
+    closed: false,
+  }).records;
+
+/** Returns records that can be safely mapped without violating semantic step order. */
+const readyRuntimeRecords = ({
+  records,
+  mappedStepIndexes,
+  allowGaps,
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly mappedStepIndexes: readonly number[];
+  readonly allowGaps: boolean;
+}): readonly AntigravityTranscriptRecord[] => {
+  const mappedStepIndexSet = new Set(mappedStepIndexes);
+  const unmapped = orderAntigravityTranscriptRecordsByStepIndex(records).filter(
+    (record) => !mappedStepIndexSet.has(record.step_index),
+  );
+  return Match.value(allowGaps).pipe(
+    Match.when(true, () => unmapped),
+    Match.orElse(() => contiguousReadyRuntimeRecords({ unmapped, mappedStepIndexes })),
+  );
+};
 
 /** Returns an empty transcript observation while a still-running process has not created a file. */
 const emptyTranscriptObservation = (
@@ -204,17 +269,26 @@ const nextOpenRuntimeEventsChunk = Effect.fnUntraced(function* ({
     requireTranscript: processExited,
     telemetryContext,
   });
+  const records = [...state.records, ...observation.records];
+  const recordsReadyForMapping = readyRuntimeRecords({
+    records,
+    mappedStepIndexes: state.mappedStepIndexes,
+    allowGaps: processExited,
+  });
   const [runtimeState, mappedEvents] = runtimeEventsFromAntigravityTranscriptRecords({
-    records: observation.records,
+    records: recordsReadyForMapping,
     reasoning: options.reasoning,
     activity: options.activity,
     state: state.runtimeState,
   });
-  const records = [...state.records, ...observation.records];
   const nextState = {
     observationState: observation.state,
     runtimeState,
     records,
+    mappedStepIndexes: [
+      ...state.mappedStepIndexes,
+      ...recordsReadyForMapping.map((record) => record.step_index),
+    ],
     done: processExited,
   } satisfies AntigravityRuntimeStreamState;
   const terminalCondition = Effect.succeed(processExited);

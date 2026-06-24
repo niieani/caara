@@ -145,9 +145,11 @@ describe("Antigravity transcript replay fixtures", () => {
           [0, 2, 1, 3],
         );
         assert.ok(!visibleText.includes("RAW_DIRECTORY_ENTRIES_SHOULD_NOT_LEAK"));
-        assert.ok(visibleText.includes("Listing `src`"));
-        assert.ok(visibleText.includes("Inspect top-level source directories before summarizing."));
-        assert.ok(visibleText.includes("Project structure summarized."));
+        assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
+          "Listing `src`",
+          "Inspect top-level source directories before summarizing.",
+          "Project structure summarized.",
+        ]);
       }),
   );
 });
