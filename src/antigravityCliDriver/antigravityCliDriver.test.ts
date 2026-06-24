@@ -23,6 +23,7 @@ import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts
 import { antigravityCliDriverLayer } from "./driver.ts";
 import { fakeAgyFixture, fakeAgyScript } from "./fakeAgyScript.ts";
 import { AntigravityCliSettings } from "./settings.ts";
+import { antigravityMissingFinalDiagnosticText } from "./transcriptRuntimeEvents.ts";
 
 /** Project root used as the Codex workspace path in Antigravity driver tests. */
 const projectRoot = process.cwd();
@@ -549,6 +550,25 @@ describe("Antigravity CLI driver", () => {
       }),
     );
   }
+
+  it.effect("returns a safe diagnostic final answer when fake agy exits after tool activity", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
+      const result = yield* runTurn({
+        ...fixture,
+        fakeMode: "tool-only-missing-final",
+        queryString: "?activity=off",
+        relayEvents,
+      });
+
+      assert.deepStrictEqual(result, {
+        _tag: "Success",
+        text: antigravityMissingFinalDiagnosticText(),
+      });
+      assert.deepStrictEqual(turnFailedMessages(relayEvents), []);
+    }),
+  );
 
   it.effect("fails explicitly when the agy executable is unavailable", () =>
     Effect.gen(function* () {

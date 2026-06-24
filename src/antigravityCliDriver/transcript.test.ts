@@ -8,6 +8,7 @@ import type {
   AgentRuntimeItemCreated,
 } from "../mockResponsesProvider/agentDriver.ts";
 import {
+  antigravityMissingFinalDiagnosticText,
   emptyAntigravityTranscriptObservationState,
   observeAntigravityTranscriptContent,
   runtimeEventsFromAntigravityTranscript,
@@ -477,20 +478,41 @@ describe("Antigravity transcript runtime mapping", () => {
     }),
   );
 
-  it.effect("does not treat planner tool-call progress text as a final answer", () =>
-    Effect.gen(function* () {
-      const records = yield* decodeFixtureRecords([
-        plannerRecord({
-          stepIndex: 0,
-          content: "Inspecting source",
-          toolCalls: [{ id: "call-list", name: "LIST_DIRECTORY", path: "src" }],
-        }),
-      ]);
+  it.effect(
+    "returns a safe diagnostic final answer for tool activity without a final planner response",
+    () =>
+      Effect.gen(function* () {
+        const records = yield* decodeFixtureRecords([
+          plannerRecord({
+            stepIndex: 0,
+            content: "Inspecting source",
+            toolCalls: [{ id: "call-list", name: "LIST_DIRECTORY", path: "src" }],
+          }),
+        ]);
 
-      const failure = yield* Effect.flip(runtimeEventsFromAntigravityTranscript({ records }));
+        const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({
+          records,
+          telemetryContext: {
+            threadId: "thread-missing-final",
+            turnId: "turn-missing-final",
+          },
+        });
+        const logText = (yield* TestConsole.logLines).join("\n");
 
-      assert.match(failure.message, /completed final model response/u);
-    }),
+        assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
+          "Listing `src`",
+          antigravityMissingFinalDiagnosticText(),
+        ]);
+        assert.ok(
+          runtimeEvents.some((event) => event._tag === "TurnSucceeded"),
+          "expected diagnostic final to complete the turn",
+        );
+        assert.ok(
+          logText.includes('"event":"caara.antigravity.transcript.missing_final_response"'),
+        );
+        assert.ok(logText.includes('"threadId":"thread-missing-final"'));
+        assert.ok(logText.includes('"turnId":"turn-missing-final"'));
+      }),
   );
 
   it.effect("falls back for blank commands and preserves code fences safely", () =>

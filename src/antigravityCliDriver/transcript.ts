@@ -8,7 +8,10 @@ import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRelayMode } from "./options.ts";
 import { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
 
-export { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
+export {
+  antigravityMissingFinalDiagnosticText,
+  runtimeEventsFromAntigravityTranscript,
+} from "./transcriptRuntimeEvents.ts";
 
 /** Safe nested Antigravity tool-call args allowed to influence activity text. */
 const AntigravityToolArgs = Schema.Struct({
@@ -391,5 +394,6 @@ export const readAntigravityTranscriptRuntimeEvents = Effect.fnUntraced(function
     records: observation.records,
     reasoning,
     activity,
+    telemetryContext,
   });
 });

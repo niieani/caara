@@ -218,10 +218,10 @@ const nextOpenRuntimeEventsChunk = Effect.fnUntraced(function* ({
     done: processExited,
   } satisfies AntigravityRuntimeStreamState;
   const terminalCondition = Effect.succeed(processExited);
-  const terminalEvents = yield* terminalRuntimeEventsFromAntigravityTranscript({ records }).pipe(
-    Effect.when(terminalCondition),
-    Effect.map(Option.getOrElse(() => [] as const)),
-  );
+  const terminalEvents = yield* terminalRuntimeEventsFromAntigravityTranscript({
+    records,
+    telemetryContext,
+  }).pipe(Effect.when(terminalCondition), Effect.map(Option.getOrElse(() => [] as const)));
   const events = [...mappedEvents, ...terminalEvents];
   const shouldPoll = Effect.succeed(events.length === 0);
   yield* Effect.when(waitForNextTranscriptPoll, shouldPoll);

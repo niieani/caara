@@ -1,4 +1,4 @@
-import { Effect, Match, Option } from "effect";
+import { Console, Effect, Match, Option, Schema } from "effect";
 
 import {
   AgentDriverError,
@@ -9,7 +9,10 @@ import {
   createRuntimeTurnSucceededEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRelayMode } from "./options.ts";
-import type { AntigravityTranscriptRecord } from "./transcript.ts";
+import type {
+  AntigravityTranscriptRecord,
+  AntigravityTranscriptTelemetryContext,
+} from "./transcript.ts";
 import {
   appendPendingToolCall,
   completedToolActivityText,
@@ -23,6 +26,7 @@ import {
 export interface AntigravityTranscriptRuntimeOptions {
   readonly reasoning?: AntigravityRelayMode;
   readonly activity?: AntigravityRelayMode;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }
 
 /** Stateful Antigravity transcript conversion position for stable runtime item ids. */
@@ -37,6 +41,23 @@ type AntigravityRuntimeEventResult = readonly [
   AntigravityRuntimeEventState,
   readonly AgentRuntimeEvent[],
 ];
+
+/** Returns the provider-owned final answer used when Antigravity exits after tool activity. */
+export function antigravityMissingFinalDiagnosticText(): string {
+  return [
+    "Antigravity completed without a final response after tool activity.",
+    "Caara withheld raw tool output;",
+    "check provider logs for caara.antigravity.transcript.missing_final_response.",
+  ].join(" ");
+}
+
+/** Antigravity model result row types that represent completed known tool activity. */
+const completedToolResultRecordTypes = [
+  "LIST_DIRECTORY",
+  "VIEW_FILE",
+  "RUN_COMMAND",
+  "GREP_SEARCH",
+] as const;
 
 /** Initial Antigravity runtime event conversion state for one transcript snapshot. */
 export const initialAntigravityRuntimeEventState = (): AntigravityRuntimeEventState => ({
@@ -72,6 +93,101 @@ const finalPlannerContentOption = (
       .map((record) => record.content)
       .at(-1),
   );
+
+/** Returns whether one record is a completed known Antigravity tool-result row. */
+const isCompletedToolResultRecord = (record: AntigravityTranscriptRecord): boolean =>
+  record.source === "MODEL" &&
+  completedToolResultRecordTypes.some((type) => type === record.type) &&
+  record.status === "DONE";
+
+/** Returns whether one record is an opaque unknown model result row accepted by validation. */
+const isOpaqueUnknownModelResultRecord = (record: AntigravityTranscriptRecord): boolean =>
+  record.source === "MODEL" &&
+  record.status === "DONE" &&
+  record.content !== undefined &&
+  record.type !== "PLANNER_RESPONSE" &&
+  !completedToolResultRecordTypes.some((type) => type === record.type);
+
+/** Returns whether one planner response contains tool calls but no final user answer. */
+const isPlannerToolCallRecord = (record: AntigravityTranscriptRecord): boolean =>
+  record.source === "MODEL" &&
+  record.type === "PLANNER_RESPONSE" &&
+  record.status === "DONE" &&
+  record.tool_calls !== undefined &&
+  record.tool_calls.length > 0;
+
+/** Returns whether a transcript contains any tool activity without a final planner answer. */
+const hasToolActivityWithoutFinalAnswer = (
+  records: readonly AntigravityTranscriptRecord[],
+): boolean =>
+  Option.isNone(finalPlannerContentOption(records)) &&
+  records.some(
+    (record) =>
+      isPlannerToolCallRecord(record) ||
+      isCompletedToolResultRecord(record) ||
+      isOpaqueUnknownModelResultRecord(record),
+  );
+
+/** Returns the last observed transcript step index for missing-final warning logs. */
+const lastObservedStepIndex = (
+  records: readonly AntigravityTranscriptRecord[],
+): number | undefined => records.map((record) => record.step_index).at(-1);
+
+/** Counts records that prove the missing-final transcript reached tool activity. */
+const toolActivityRecordCount = (records: readonly AntigravityTranscriptRecord[]): number =>
+  records.filter(
+    (record) =>
+      isPlannerToolCallRecord(record) ||
+      isCompletedToolResultRecord(record) ||
+      isOpaqueUnknownModelResultRecord(record),
+  ).length;
+
+/** Encodes one safe warning for a tool-only transcript that has no final response. */
+const encodeMissingFinalTranscriptWarning = ({
+  records,
+  telemetryContext,
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
+}): string =>
+  Schema.encodeSync(Schema.UnknownFromJsonString)({
+    event: "caara.antigravity.transcript.missing_final_response",
+    level: "warn",
+    ...telemetryContext,
+    recordCount: records.length,
+    toolActivityRecordCount: toolActivityRecordCount(records),
+    lastStepIndex: lastObservedStepIndex(records),
+  });
+
+/** Builds the terminal final-answer lifecycle for one Antigravity final text. */
+const finalAnswerRuntimeEvents = (content: string): readonly AgentRuntimeEvent[] =>
+  [
+    ...createAssistantTextRuntimeEvents({
+      itemId: "msg_antigravity_cli_final",
+      text: content,
+      messagePhase: "final_answer",
+    }),
+    createRuntimeTurnSucceededEvent(),
+  ] satisfies readonly AgentRuntimeEvent[];
+
+/** Fails with the legacy missing-final error for transcripts without tool activity. */
+const missingFinalTranscriptFailure = Effect.fnUntraced(function* () {
+  return yield* new AgentDriverError({
+    message: "Antigravity transcript did not contain a completed final model response.",
+  });
+});
+
+/** Logs and returns the safe diagnostic final answer for tool-only Antigravity exits. */
+const missingFinalDiagnosticRuntimeEvents = Effect.fnUntraced(function* ({
+  records,
+  telemetryContext,
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
+}) {
+  yield* Console.log(encodeMissingFinalTranscriptWarning({ records, telemetryContext }));
+  return finalAnswerRuntimeEvents(antigravityMissingFinalDiagnosticText());
+});
 
 /** Builds one Antigravity reasoning item lifecycle and advances runtime state. */
 const reasoningTextEvents = ({
@@ -211,13 +327,7 @@ const runtimeEventsFromTranscriptRecord = ({
     record,
     transportVisibility,
   });
-  const [toolResultState, toolResultEvents] = Match.value(
-    record.source === "MODEL" &&
-      ["LIST_DIRECTORY", "VIEW_FILE", "RUN_COMMAND", "GREP_SEARCH"].some(
-        (type) => type === record.type,
-      ) &&
-      record.status === "DONE",
-  ).pipe(
+  const [toolResultState, toolResultEvents] = Match.value(isCompletedToolResultRecord(record)).pipe(
     Match.when(true, () =>
       runtimeEventsFromCompletedToolRecord({
         state: toolCallState,
@@ -276,26 +386,19 @@ export const runtimeEventsFromAntigravityTranscriptRecords = ({
 /** Builds the terminal Antigravity final-answer lifecycle once the process exits. */
 export const terminalRuntimeEventsFromAntigravityTranscript = Effect.fnUntraced(function* ({
   records,
+  telemetryContext,
 }: {
   readonly records: readonly AntigravityTranscriptRecord[];
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
-  const content = yield* Option.match(finalPlannerContentOption(records), {
+  return yield* Option.match(finalPlannerContentOption(records), {
     onNone: () =>
-      Effect.fail(
-        new AgentDriverError({
-          message: "Antigravity transcript did not contain a completed final model response.",
-        }),
+      Match.value(hasToolActivityWithoutFinalAnswer(records)).pipe(
+        Match.when(true, () => missingFinalDiagnosticRuntimeEvents({ records, telemetryContext })),
+        Match.orElse(missingFinalTranscriptFailure),
       ),
-    onSome: Effect.succeed,
+    onSome: (content) => Effect.succeed(finalAnswerRuntimeEvents(content)),
   });
-  return [
-    ...createAssistantTextRuntimeEvents({
-      itemId: "msg_antigravity_cli_final",
-      text: content,
-      messagePhase: "final_answer",
-    }),
-    createRuntimeTurnSucceededEvent(),
-  ] satisfies readonly AgentRuntimeEvent[];
 });
 
 /** Converts validated Antigravity transcript records into runtime lifecycle events. */
@@ -303,6 +406,7 @@ export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function
   records,
   reasoning = "on",
   activity = "on",
+  telemetryContext,
 }: {
   readonly records: readonly AntigravityTranscriptRecord[];
 } & AntigravityTranscriptRuntimeOptions) {
@@ -311,6 +415,9 @@ export const runtimeEventsFromAntigravityTranscript = Effect.fnUntraced(function
     reasoning,
     activity,
   });
-  const terminalEvents = yield* terminalRuntimeEventsFromAntigravityTranscript({ records });
+  const terminalEvents = yield* terminalRuntimeEventsFromAntigravityTranscript({
+    records,
+    telemetryContext,
+  });
   return [...mappedEvents, ...terminalEvents] satisfies readonly AgentRuntimeEvent[];
 });
