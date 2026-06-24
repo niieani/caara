@@ -390,7 +390,7 @@ describe("Claude Agent SDK driver", () => {
         }),
         ...createAssistantTextRuntimeEvents({
           itemId: "claude-sdk-activity-0",
-          text: "Using Bash: find src -type f -name '*.tst.ts'",
+          text: "Using Bash: `find src -type f -name '*.tst.ts'`",
           messagePhase: "commentary",
           transportVisibility: "visible",
         }),
@@ -440,7 +440,7 @@ describe("Claude Agent SDK driver", () => {
         }),
         ...createAssistantTextRuntimeEvents({
           itemId: "claude-sdk-activity-0",
-          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          text: "Using Bash: `printf 'caara-smoke-cwd=%s\\n' \"$PWD\"`",
           messagePhase: "commentary",
           transportVisibility: "visible",
         }),
@@ -478,7 +478,7 @@ describe("Claude Agent SDK driver", () => {
         }),
         ...createAssistantTextRuntimeEvents({
           itemId: "claude-sdk-activity-0",
-          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          text: "Using Bash: `printf 'caara-smoke-cwd=%s\\n' \"$PWD\"`",
           messagePhase: "commentary",
           transportVisibility: "visible",
         }),
@@ -518,7 +518,37 @@ describe("Claude Agent SDK driver", () => {
         }),
         ...createAssistantTextRuntimeEvents({
           itemId: "claude-sdk-activity-0",
-          text: "Using Bash: printf 'caara-smoke-cwd=%s\\n' \"$PWD\"",
+          text: "Using Bash: `printf 'caara-smoke-cwd=%s\\n' \"$PWD\"`",
+          messagePhase: "commentary",
+          transportVisibility: "visible",
+        }),
+        createRuntimeTurnSucceededEvent(),
+      ] satisfies readonly AgentRuntimeEvent[]);
+    }),
+  );
+
+  it.effect("formats multiline Bash activity commands as shell code blocks", () =>
+    Effect.gen(function* () {
+      const sessionId = assistantPhaseSessionId();
+      const harness = fakeSdkHarness({
+        sessionIds: [sessionId],
+        runtimeMessages: [
+          [
+            sdkBashToolUseMessage({
+              sessionId,
+              command: "printf 'first line\\n'\npwd",
+            }),
+          ],
+        ],
+      });
+      const turn = makeTurn();
+
+      const { events } = yield* runDriverTurn({ harness, turn });
+
+      assert.deepStrictEqual(events, [
+        ...createAssistantTextRuntimeEvents({
+          itemId: "claude-sdk-activity-0",
+          text: "Using Bash:\n```bash\nprintf 'first line\\n'\npwd\n```",
           messagePhase: "commentary",
           transportVisibility: "visible",
         }),

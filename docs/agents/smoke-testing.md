@@ -29,6 +29,14 @@ Expected startup line:
 Listening on http://localhost:8787
 ```
 
+When investigating lifecycle or duplication bugs, retain the provider log under `temp.local`:
+
+```bash
+RUN_DIR="$PWD/temp.local/$(date +%F)/claude-smoke/$(date +%H%M%S)"
+mkdir -p "$RUN_DIR"
+bun run start > "$RUN_DIR/provider.log" 2>&1
+```
+
 2. Spawn a Codex subagent with `agent_type = "caara-claude"`.
 
 Do not pass a `model` override. The role sets `model = "claude/haiku"` and points at
@@ -71,7 +79,18 @@ Relay evidence to check:
 - The follow-up `DriverStarted` includes an external Claude session id and `previousTarget`.
 - `RuntimeEventRelayed` includes normal runtime item lifecycle records.
 - Tool activity appears as assistant `phase = "commentary"` messages such as `Using Bash`,
-  `Bash completed`, `Reading ...`, and `Read completed`.
+  `Bash completed`, `Reading ...`, and `Read completed`. Single-line Bash commands appear as
+  `Using Bash:` followed by an inline-code command, for example ``Using Bash: `pwd` ``. Multiline
+  Bash commands appear under `Using Bash:` in a shell code block:
+
+````markdown
+Using Bash:
+```bash
+printf 'first line\n'
+pwd
+```
+````
+
 - Final assistant text appears as `phase = "final_answer"`.
 
 5. Start a long-running turn on the same handle, then close the spawned agent while it is running.
@@ -81,6 +100,61 @@ reports whether the session remains reusable. A clean SDK cancellation should no
 `outcomeTag = "Interrupted"` and `sessionReusable = true`.
 
 6. Stop the local provider.
+
+## Matching Codex Rollouts To Claude Logs
+
+Use this when a smoke shows duplicate thinking/tool text, a wrong `phase`, or a final answer that
+appears twice.
+
+Codex rollout logs show what Codex/Halley received after Caara translated the driver runtime events.
+They live under `~/.codex/sessions/<year>/<month>/<day>/`. If you know the subagent id returned by
+the spawn tool, find the matching rollout with:
+
+```bash
+SUBAGENT_ID="019ef6e3-3cc6-7cf0-afe0-8f8d94647a72"
+find "$HOME/.codex/sessions" -name "rollout-*-${SUBAGENT_ID}.jsonl" -print | sort | tail -1
+```
+
+Claude Code session logs show what the underlying Claude agent actually emitted before Caara mapped
+it to Responses lifecycle events. For this repo they live under:
+
+```text
+~/.claude/projects/-Users-bbrzoska-Documents-Projects-caara/
+```
+
+The most reliable join key is the Claude session id from Caara's `DriverStarted` relay log. In a
+retained provider log, find it with:
+
+```bash
+rg '"_tag":"DriverStarted"|externalSessionId|threadId|turnId' "$RUN_DIR/provider.log"
+```
+
+The `externalSessionId` field contains a JSON payload with `sessionId`. The Claude log filename is
+that session id plus `.jsonl`:
+
+```bash
+CLAUDE_SESSION_ID="388cd466-9767-4652-9604-d1ea7b86cc4e"
+CLAUDE_LOG="$HOME/.claude/projects/-Users-bbrzoska-Documents-Projects-caara/${CLAUDE_SESSION_ID}.jsonl"
+```
+
+If the provider log was not retained, inspect the most recent Claude logs around the Codex rollout
+timestamp and match by prompt text, tool command, and turn order:
+
+```bash
+ls -t "$HOME/.claude/projects/-Users-bbrzoska-Documents-Projects-caara"/*.jsonl | head -5
+```
+
+Comparison rules:
+
+- If Claude's JSONL contains duplicate `tool_use` or `tool_result` records, duplicate `Using ...` or
+  `... completed` commentary in Codex is probably real upstream agent activity.
+- If Claude emits one tool call but the Codex rollout contains duplicate assistant lifecycle items,
+  the bug is likely in Caara's SDK-to-runtime mapping or Responses encoding.
+- If Claude emits pre-tool assistant text followed by `tool_use`, Codex should receive that text as
+  `phase = "commentary"`. Seeing `phase = "final_answer"` points at assistant phase mapping.
+- If the Codex rollout has one final assistant message plus the same text in
+  `task_complete.last_agent_message`, treat `last_agent_message` as completion metadata. Rendering
+  both as visible messages is a UI/client duplication bug, not a second driver response.
 
 ## Supplemental Direct Provider Checks
 

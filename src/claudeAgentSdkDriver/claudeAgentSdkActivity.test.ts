@@ -525,7 +525,7 @@ describe("Claude Agent SDK activity commentary", () => {
         messages.map((message) => [message.item.phase, messageText(message)]),
         [
           ["commentary", "Let me verify before answering."],
-          ["commentary", "Using Bash: find src -type f -name '*.tst.ts'"],
+          ["commentary", "Using Bash: `find src -type f -name '*.tst.ts'`"],
           ["commentary", "Bash completed"],
           ["final_answer", "There are no type-test files."],
         ],

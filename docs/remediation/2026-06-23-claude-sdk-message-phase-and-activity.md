@@ -82,8 +82,9 @@ Claude tool use:
 
 - emit terse commentary
 - include safe tool-specific detail when available
-- for `Bash`, include a normalized, bounded command preview, for example
-  `Using Bash: find src -type f -name '*.tst.ts'`
+- for `Bash`, include a normalized, bounded command preview as inline code for single-line
+  commands
+- for multiline `Bash` commands, put the command under `Using Bash:` in a fenced `bash` code block
 
 Claude tool result:
 
