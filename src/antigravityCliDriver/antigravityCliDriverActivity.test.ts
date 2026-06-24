@@ -304,6 +304,29 @@ const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =
     .map((event) => event.runtimeEventTag);
 
 describe("Antigravity CLI driver activity visibility", () => {
+  it.effect("streams visible activity from nested Antigravity tool args", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
+      const frames = yield* runActivityTurnFrames({
+        ...fixture,
+        queryString: "",
+        relayEvents,
+      });
+      const messages = assistantMessageDoneData(frames);
+
+      assert.deepStrictEqual(
+        messages.map((message) => [message.item.phase, messageText(message)]),
+        [
+          ["commentary", "Listing `src`"],
+          ["commentary", "Viewing `src/server.ts`"],
+          ["final_answer", fakeAgyFixture.finalAnswer],
+        ],
+      );
+      assert.deepStrictEqual(reasoningSummaryDeltaTexts(frames), [fakeAgyFixture.reasoningText]);
+    }),
+  );
+
   it.effect("applies reasoning and activity opt-outs while preserving final text", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();

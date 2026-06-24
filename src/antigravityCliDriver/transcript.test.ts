@@ -362,9 +362,9 @@ describe("Antigravity transcript runtime mapping", () => {
       const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({ records });
 
       assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
-        "Listing src",
-        "Reading src/server.ts",
-        "Running command",
+        "Listing `src`",
+        "Viewing `src/server.ts`",
+        "Running command: `bun lint`",
         "Need to inspect source before answering.",
         "Task complete",
       ]);
@@ -384,6 +384,28 @@ describe("Antigravity transcript runtime mapping", () => {
       const failure = yield* Effect.flip(runtimeEventsFromAntigravityTranscript({ records }));
 
       assert.match(failure.message, /completed final model response/u);
+    }),
+  );
+
+  it.effect("falls back for blank commands and preserves code fences safely", () =>
+    Effect.gen(function* () {
+      const records = yield* decodeFixtureRecords([
+        toolResultRecord({ stepIndex: 0, type: "RUN_COMMAND", command: "   " }),
+        toolResultRecord({
+          stepIndex: 1,
+          type: "RUN_COMMAND",
+          command: "printf '```'\ntrue",
+        }),
+        plannerRecord({ stepIndex: 2, content: "Final answer" }),
+      ]);
+
+      const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({ records });
+
+      assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
+        "Running command",
+        "Running command:\n````bash\nprintf '```'\ntrue\n````",
+        "Final answer",
+      ]);
     }),
   );
 
@@ -472,8 +494,8 @@ describe("Antigravity transcript runtime mapping", () => {
         assert.ok(!visibleText.includes(unsafeString), unsafeString);
       }
       assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
-        "Running command",
-        "Reading src/private.ts",
+        "Running command: `bun run test`",
+        "Viewing `src/private.ts`",
         "Public reasoning summary",
         "Public final answer",
       ]);

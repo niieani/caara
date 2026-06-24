@@ -10,6 +10,14 @@ import {
 } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRelayMode } from "./options.ts";
 import type { AntigravityTranscriptRecord } from "./transcript.ts";
+import {
+  appendPendingToolCall,
+  completedToolActivityText,
+  mergeToolMetadata,
+  takePendingToolCall,
+  toolActivityText,
+  type AntigravityToolMetadata,
+} from "./transcriptToolActivity.ts";
 
 /** Runtime mapping knobs derived from parsed Antigravity driver options. */
 export interface AntigravityTranscriptRuntimeOptions {
@@ -17,24 +25,11 @@ export interface AntigravityTranscriptRuntimeOptions {
   readonly activity?: AntigravityRelayMode;
 }
 
-/** Safe Antigravity tool metadata fields allowed to influence activity text. */
-interface AntigravityToolMetadata {
-  readonly name?: string;
-  readonly toolName?: string;
-  readonly tool_name?: string;
-  readonly type?: string;
-  readonly path?: string;
-  readonly filePath?: string;
-  readonly file_path?: string;
-  readonly toolSummary?: string;
-  readonly toolAction?: string;
-  readonly command?: string;
-}
-
 /** Stateful Antigravity transcript conversion position for stable runtime item ids. */
 export interface AntigravityRuntimeEventState {
   readonly nextReasoningIndex: number;
   readonly nextActivityIndex: number;
+  readonly pendingToolCalls: readonly AntigravityToolMetadata[];
 }
 
 /** Result tuple returned while converting Antigravity transcript records. */
@@ -47,99 +42,8 @@ type AntigravityRuntimeEventResult = readonly [
 export const initialAntigravityRuntimeEventState = (): AntigravityRuntimeEventState => ({
   nextReasoningIndex: 0,
   nextActivityIndex: 0,
+  pendingToolCalls: [],
 });
-
-/** Maximum safe metadata length surfaced in terse activity text. */
-const maxActivityMetadataLength = 160;
-
-/** Returns true when an optional string has displayable content. */
-const isNonEmptyString = (value: string | undefined): value is string =>
-  value !== undefined && value.length > 0;
-
-/** Returns the first non-empty optional string in a preferred metadata list. */
-const firstNonEmptyString = (values: readonly (string | undefined)[]): string | undefined =>
-  values.find(isNonEmptyString);
-
-/** Normalizes one metadata value into a single line. */
-const singleLineMetadata = (value: string): string => value.replace(/\s+/gu, " ").trim();
-
-/** Returns bounded path metadata, rejecting strings that look like raw JSON payloads. */
-const safePathMetadata = (value: string | undefined): string | undefined =>
-  Option.getOrUndefined(
-    Option.fromUndefinedOr(value).pipe(
-      Option.map(singleLineMetadata),
-      Option.filter(
-        (metadata) =>
-          metadata.length > 0 &&
-          metadata.length <= maxActivityMetadataLength &&
-          !/[{}]/u.test(metadata),
-      ),
-    ),
-  );
-
-/** Returns a bounded, single-line activity fallback summary when it is visibly terse. */
-const safeActivitySummary = (value: string | undefined): string | undefined =>
-  Option.getOrUndefined(
-    Option.fromUndefinedOr(value).pipe(
-      Option.map(singleLineMetadata),
-      Option.filter(
-        (metadata) =>
-          metadata.length > 0 &&
-          metadata.length <= maxActivityMetadataLength &&
-          !/[{}[\]"]/u.test(metadata),
-      ),
-    ),
-  );
-
-/** Extracts safe path-like metadata from an Antigravity transcript tool record. */
-const safeToolPath = (metadata: AntigravityToolMetadata): string | undefined =>
-  safePathMetadata(firstNonEmptyString([metadata.file_path, metadata.filePath, metadata.path]));
-
-/** Extracts the preferred Antigravity tool name from safe metadata fields. */
-const toolName = (metadata: AntigravityToolMetadata): string | undefined =>
-  firstNonEmptyString([metadata.name, metadata.toolName, metadata.tool_name, metadata.type]);
-
-/** Returns a bounded safe tool name for generic activity fallbacks. */
-const safeToolName = (metadata: AntigravityToolMetadata): string =>
-  safeActivitySummary(toolName(metadata)) ?? "tool";
-
-/** Canonicalizes one Antigravity tool name for stable activity matching. */
-const normalizedToolName = (metadata: AntigravityToolMetadata): string =>
-  safeToolName(metadata)
-    .replace(/[\s-]+/gu, "_")
-    .toUpperCase();
-
-/** Builds the user-facing activity phrase for one safe Antigravity tool metadata subset. */
-const toolActivityText = (metadata: AntigravityToolMetadata): string => {
-  const path = safeToolPath(metadata);
-  return Match.value(normalizedToolName(metadata)).pipe(
-    Match.when("LIST_DIRECTORY", () =>
-      Option.match(Option.fromUndefinedOr(path), {
-        onNone: () => "Listing directory",
-        onSome: (directory) => `Listing ${directory}`,
-      }),
-    ),
-    Match.when("VIEW_FILE", () =>
-      Option.match(Option.fromUndefinedOr(path), {
-        onNone: () => "Reading file",
-        onSome: (filePath) => `Reading ${filePath}`,
-      }),
-    ),
-    Match.when("RUN_COMMAND", () => "Running command"),
-    Match.when("GREP_SEARCH", () =>
-      Option.match(Option.fromUndefinedOr(path), {
-        onNone: () => "Searching files",
-        onSome: (filePath) => `Searching ${filePath}`,
-      }),
-    ),
-    Match.orElse(
-      () =>
-        safeActivitySummary(metadata.toolAction) ??
-        safeActivitySummary(metadata.toolSummary) ??
-        `Using ${safeToolName(metadata)}`,
-    ),
-  );
-};
 
 /** Converts the Antigravity activity toggle into Responses transport visibility. */
 const activityTransportVisibility = (
@@ -231,7 +135,13 @@ const runtimeEventsFromToolCalls = ({
       text: toolActivityText(toolCall),
       transportVisibility,
     });
-    nextState = updatedState;
+    nextState = {
+      ...updatedState,
+      pendingToolCalls: appendPendingToolCall({
+        pendingToolCalls: updatedState.pendingToolCalls,
+        toolCall,
+      }),
+    };
     events.push(...nextEvents);
   }
   return [nextState, events] as const;
@@ -246,12 +156,34 @@ const runtimeEventsFromCompletedToolRecord = ({
   readonly state: AntigravityRuntimeEventState;
   readonly record: AntigravityTranscriptRecord;
   readonly transportVisibility: AgentRuntimeTransportVisibility;
-}): AntigravityRuntimeEventResult =>
-  activityTextEvents({
-    state,
-    text: toolActivityText(record),
-    transportVisibility,
+}): AntigravityRuntimeEventResult => {
+  const pending = takePendingToolCall({
+    pendingToolCalls: state.pendingToolCalls,
+    record,
   });
+  const pendingState = {
+    ...state,
+    pendingToolCalls: pending.pendingToolCalls,
+  };
+  const metadata = mergeToolMetadata({
+    record,
+    pendingToolCall: pending.toolCall,
+  });
+  const text = completedToolActivityText({
+    record,
+    metadata,
+    hasPendingToolCall: pending.toolCall !== undefined,
+  });
+  return Option.match(Option.fromUndefinedOr(text), {
+    onNone: () => noRuntimeEvents(pendingState),
+    onSome: (activityText) =>
+      activityTextEvents({
+        state: pendingState,
+        text: activityText,
+        transportVisibility,
+      }),
+  });
+};
 
 /** Converts one Antigravity planner thinking field into reasoning events when enabled. */
 const runtimeEventsFromPlannerThinking = ({

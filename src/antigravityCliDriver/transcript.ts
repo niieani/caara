@@ -8,6 +8,20 @@ import { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvent
 
 export { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
 
+/** Safe nested Antigravity tool-call args allowed to influence activity text. */
+const AntigravityToolArgs = Schema.Struct({
+  CommandLine: Schema.optional(Schema.String),
+  Cwd: Schema.optional(Schema.String),
+  AbsolutePath: Schema.optional(Schema.String),
+  DirectoryPath: Schema.optional(Schema.String),
+  FilePath: Schema.optional(Schema.String),
+  FilePaths: Schema.optional(Schema.Array(Schema.String)),
+  Pattern: Schema.optional(Schema.String),
+  Query: Schema.optional(Schema.String),
+  toolSummary: Schema.optional(Schema.String),
+  toolAction: Schema.optional(Schema.String),
+});
+
 /** Safe Antigravity tool-call metadata fields allowed to influence activity text. */
 const AntigravityToolMetadata = Schema.Struct({
   name: Schema.optional(Schema.String),
@@ -20,6 +34,7 @@ const AntigravityToolMetadata = Schema.Struct({
   toolSummary: Schema.optional(Schema.String),
   toolAction: Schema.optional(Schema.String),
   command: Schema.optional(Schema.String),
+  args: Schema.optional(AntigravityToolArgs),
 });
 
 /** Antigravity transcript record shape accepted by the driver-owned mapper. */
@@ -40,6 +55,7 @@ const AntigravityTranscriptRecord = Schema.Struct({
   toolSummary: Schema.optional(Schema.String),
   toolAction: Schema.optional(Schema.String),
   command: Schema.optional(Schema.String),
+  args: Schema.optional(AntigravityToolArgs),
 });
 
 /** Antigravity transcript record shape accepted by the driver-owned mapper. */

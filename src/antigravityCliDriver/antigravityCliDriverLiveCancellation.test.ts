@@ -397,7 +397,7 @@ describe("Antigravity CLI driver live cancellation", () => {
               events
                 .filter((event): event is ContentDeltaEvent => event._tag === "ContentDelta")
                 .map((event) => event.text),
-              ["Listing src"],
+              ["Listing `src`"],
             );
           }),
         ),

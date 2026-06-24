@@ -1,6 +1,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option, Schema, Stream } from "effect";
 
+import { formatShellCommandActivityText } from "../agentActivityMarkdown.ts";
 import {
   AgentDriverError,
   type AgentRuntimeEvent,
@@ -36,9 +37,6 @@ const sdkToolInputSummarySchema = Schema.Struct({
   path: Schema.optional(Schema.String),
   command: Schema.optional(Schema.String),
 });
-
-/** Maximum visible characters for a command embedded in activity commentary. */
-const maxToolCommandPreviewLength = 180;
 
 /** Safe subset of SDK tool_result content used for completion summaries. */
 const sdkToolResultContentSchema = Schema.Struct({
@@ -119,66 +117,6 @@ const activityTextEvents = ({
 const safeToolInputSummary = (input: unknown): typeof sdkToolInputSummarySchema.Type | undefined =>
   Option.getOrUndefined(Schema.decodeUnknownOption(sdkToolInputSummarySchema)(input));
 
-/** Clips a command preview to the maximum visible activity length. */
-const clippedToolCommandPreview = (command: string): string =>
-  Match.value(command).pipe(
-    Match.when(
-      (candidate) => candidate.length <= maxToolCommandPreviewLength,
-      (candidate) => candidate,
-    ),
-    Match.orElse((candidate) => `${candidate.slice(0, maxToolCommandPreviewLength - 3)}...`),
-  );
-
-/** Returns a Markdown backtick delimiter that cannot be closed by the command text. */
-const markdownBacktickDelimiter = (text: string): string => {
-  const longestBacktickRun = text
-    .match(/`+/g)
-    ?.reduce((longestRun, run) => Math.max(longestRun, run.length), 0);
-  return "`".repeat((longestBacktickRun ?? 0) + 1);
-};
-
-/** Formats one command as Markdown inline code. */
-const markdownInlineCode = (text: string): string => {
-  const delimiter = markdownBacktickDelimiter(text);
-  return Match.value(text).pipe(
-    Match.when(
-      (candidate) => candidate.startsWith("`") || candidate.endsWith("`"),
-      (candidate) => `${delimiter} ${candidate} ${delimiter}`,
-    ),
-    Match.orElse((candidate) => `${delimiter}${candidate}${delimiter}`),
-  );
-};
-
-/** Formats one command as a Markdown shell code block. */
-const markdownShellCodeBlock = (text: string): string => {
-  const delimiter = Match.value(markdownBacktickDelimiter(text)).pipe(
-    Match.when(
-      (candidate) => candidate.length >= 3,
-      (candidate) => candidate,
-    ),
-    Match.orElse(() => "```"),
-  );
-  return `${delimiter}bash\n${text}\n${delimiter}`;
-};
-
-/** Normalizes and formats a command string for Bash activity commentary. */
-const formattedToolCommandPreview = (command: string): string | undefined => {
-  const normalized = command.trim().replace(/\r\n?/g, "\n");
-  return Match.value(normalized).pipe(
-    Match.when(
-      (candidate) => candidate.length === 0,
-      () => undefined,
-    ),
-    Match.when(
-      (candidate) => candidate.includes("\n"),
-      (candidate) => markdownShellCodeBlock(clippedToolCommandPreview(candidate)),
-    ),
-    Match.orElse((candidate) =>
-      markdownInlineCode(clippedToolCommandPreview(candidate.replace(/\s+/g, " "))),
-    ),
-  );
-};
-
 /** Extracts a safe path-like hint from decoded SDK tool input summary fields. */
 const safeToolInputPath = (
   summary: typeof sdkToolInputSummarySchema.Type | undefined,
@@ -187,11 +125,7 @@ const safeToolInputPath = (
 /** Extracts a safe command preview from decoded SDK tool input summary fields. */
 const safeToolInputCommand = (
   summary: typeof sdkToolInputSummarySchema.Type | undefined,
-): string | undefined =>
-  Option.match(Option.fromUndefinedOr(summary?.command), {
-    onNone: () => undefined,
-    onSome: formattedToolCommandPreview,
-  });
+): string | undefined => summary?.command;
 
 /** Extracts typed tool_result content blocks from an SDK user message content payload. */
 const sdkToolResultContents = (content: unknown): readonly SdkToolResultContent[] =>
@@ -201,10 +135,11 @@ const sdkToolResultContents = (content: unknown): readonly SdkToolResultContent[
 
 /** Builds the visible Bash activity text from an already formatted command preview. */
 const bashToolUseActivityText = (commandPreview: string): string =>
-  Match.value(commandPreview.includes("\n")).pipe(
-    Match.when(true, () => `Using Bash:\n${commandPreview}`),
-    Match.orElse(() => `Using Bash: ${commandPreview}`),
-  );
+  formatShellCommandActivityText({
+    label: "Using Bash",
+    command: commandPreview,
+    fallback: "Using Bash",
+  });
 
 /** Builds a terse activity phrase for one SDK tool_use block. */
 const toolUseActivityText = ({

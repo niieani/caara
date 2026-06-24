@@ -100,7 +100,7 @@ if (mode !== "missing-transcript") {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
     const records = [
       { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
-      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "LIST_DIRECTORY", path: "src" }] },
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" } }] },
       { step_index: 2, source: "MODEL", type: "VIEW_FILE", status: "DONE", created_at: "2026-06-23T03:09:01Z", file_path: "src/server.ts", content: "FULL_FILE_CONTENT_SHOULD_NOT_LEAK" },
     ];
     fs.writeFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n" + "{\\"step_index\\":3");
@@ -110,7 +110,7 @@ if (mode !== "missing-transcript") {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
     const records = [
       { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
-      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "LIST_DIRECTORY", path: "src" }] },
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" } }] },
     ];
     fs.writeFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
     await waitForCancellation();
@@ -152,7 +152,7 @@ if (mode !== "missing-transcript") {
   ];
   if (mode === "reasoning-activity") {
     records.push(
-      { step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "LIST_DIRECTORY", path: "src", payload: "FULL_TOOL_PAYLOAD_SHOULD_NOT_LEAK" }] },
+      { step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" }, payload: "FULL_TOOL_PAYLOAD_SHOULD_NOT_LEAK" }] },
       { step_index: 3, source: "MODEL", type: "VIEW_FILE", status: "DONE", created_at: "2026-06-23T03:09:01Z", file_path: "src/server.ts", content: "FULL_FILE_CONTENT_SHOULD_NOT_LEAK" },
       { step_index: 4, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", thinking: "${fakeAgyFixture.reasoningText}", content: "${fakeAgyFixture.finalAnswer}" },
     );
