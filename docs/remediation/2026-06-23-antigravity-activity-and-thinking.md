@@ -104,9 +104,23 @@ Implemented on 2026-06-24:
 Regression coverage now asserts that `MODEL/GENERIC/DONE` result rows do not fail the stream, do not
 leak raw tool-result payloads to visible assistant text, and emit a structured warning log.
 
-## Future Resilience Upgrades
+Additional resilience hardening was completed under fp umbrella issue `CAARA-lrpejere` on
+2026-06-24:
 
-Track these as one umbrella issue with independently grabbable child issues.
+- `CAARA-ccsjvkju`: redacted real-shape transcript replay fixtures for unknown result rows and
+  out-of-order `step_index` rows
+- `CAARA-wcyxivta`: structured ignored-row telemetry with thread id, turn id, row shape, step index,
+  content length, and content SHA-256 without raw payload logging
+- `CAARA-nnjrwwzu`: safe provider-owned diagnostic final answer for tool-only turns that exit
+  without a final planner response, plus structured missing-final warning logs
+- `CAARA-ektkkwzo`: semantic `step_index` ordering for completed transcript mapping and live-stream
+  buffering for out-of-order rows while preserving append-only rewrite detection
+
+## Tracked Resilience Upgrades
+
+These were filed as one umbrella fp issue, `CAARA-lrpejere`, with independently grabbable child
+issues. The umbrella context points back to this remediation doc and the 2026-06-24 unknown-result
+fix charter.
 
 1. Replay real Antigravity transcript fixtures.
    Add minimized, redacted `transcript_full.jsonl` fixtures for observed Agy shapes, including unknown
