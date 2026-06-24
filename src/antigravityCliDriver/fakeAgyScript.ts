@@ -55,6 +55,12 @@ const waitForCancellation = () => {
 
 const delay = (millis) => new Promise((resolve) => setTimeout(resolve, millis));
 
+const waitForFile = async (filePath) => {
+  while (!fs.existsSync(filePath)) {
+    await delay(10);
+  }
+};
+
 if (mode === "process-failure") {
   process.stderr.write("fake agy failed");
   process.exit(23);
@@ -114,6 +120,24 @@ if (mode !== "missing-transcript") {
     ];
     fs.writeFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
     await waitForCancellation();
+  }
+  if (mode === "streaming-out-of-order-before-exit") {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    const partialRecords = [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
+      { step_index: 2, source: "MODEL", type: "LIST_DIRECTORY", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "RAW_OUT_OF_ORDER_DIRECTORY_SHOULD_NOT_LEAK" },
+    ];
+    fs.writeFileSync(transcriptPath, partialRecords.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
+    fs.appendFileSync(invocationLog, JSON.stringify({ event: "out_of_order_partial", mode }) + "\\n");
+    const continuePath = path.join(process.env.HOME ?? "", ".caara", "antigravity-cli", "continue-out-of-order");
+    await waitForFile(continuePath);
+    const remainingRecords = [
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Listing source", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" } }] },
+      { step_index: 3, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:02Z", thinking: "out-of-order live reasoning", content: "out-of-order live final" },
+    ];
+    fs.appendFileSync(transcriptPath, remainingRecords.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
+    fs.appendFileSync(invocationLog, JSON.stringify({ event: "out_of_order_complete", mode }) + "\\n");
+    process.exit(0);
   }
   if (conversationArg && mode === "resume-success") {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });

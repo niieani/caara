@@ -184,6 +184,30 @@ const transcriptPath = ({ fixture }: { readonly fixture: LiveCancellationFixture
     "transcript_full.jsonl",
   );
 
+/** Fixture-local path used to release the fake out-of-order streaming process. */
+const outOfOrderContinuePath = ({
+  fixture,
+}: {
+  readonly fixture: LiveCancellationFixture;
+}): string => path.join(fixture.fakeHomeDir, ".caara", "antigravity-cli", "continue-out-of-order");
+
+/** Releases a fake Antigravity process waiting after an out-of-order transcript write. */
+const releaseOutOfOrderStreamingProcess = Effect.fnUntraced(function* ({
+  fixture,
+}: {
+  readonly fixture: LiveCancellationFixture;
+}) {
+  const continuePath = outOfOrderContinuePath({ fixture });
+  yield* Effect.tryPromise({
+    try: () => fs.mkdir(path.dirname(continuePath), { recursive: true }),
+    catch: liveCancellationTestError,
+  });
+  yield* Effect.tryPromise({
+    try: () => fs.writeFile(continuePath, "continue"),
+    catch: liveCancellationTestError,
+  });
+});
+
 /** Options shared by text-file readiness waits. */
 interface TextFileWaitOptions {
   readonly filePath: string;
@@ -362,6 +386,12 @@ const readFakeSignalEvents = Effect.fnUntraced(function* ({
   return records.filter(Schema.is(FakeAgySignalEvent));
 });
 
+/** Returns visible assistant content-delta text from one runtime event list. */
+const contentDeltaTexts = (events: readonly AgentRuntimeEvent[]): readonly string[] =>
+  events
+    .filter((event): event is ContentDeltaEvent => event._tag === "ContentDelta")
+    .map((event) => event.text);
+
 describe("Antigravity CLI driver live cancellation", () => {
   it.effect("relays transcript activity before the fake process exits", () =>
     Effect.gen(function* () {
@@ -403,6 +433,50 @@ describe("Antigravity CLI driver live cancellation", () => {
         ),
         Effect.ensuring(ignoreCancel),
       );
+    }).pipe(Effect.provide(BunServices.layer), TestClock.withLive),
+  );
+
+  it.effect("buffers out-of-order live transcript rows until planner context arrives", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      yield* writeDiagnosticLog({ fixture, turnId: "turn-agy-live-out-of-order" });
+      const result = yield* startDriverTurn({
+        fixture,
+        fakeMode: "streaming-out-of-order-before-exit",
+        turn: makeTurn({ turnId: "turn-agy-live-out-of-order" }),
+      });
+      const observedEvents: AgentRuntimeEvent[] = [];
+      const eventsFiber = yield* result.runtimeEvents.pipe(
+        Stream.tap((event) => Effect.sync(() => observedEvents.push(event))),
+        Stream.runCollect,
+        Effect.forkDetach({ startImmediately: true }),
+      );
+
+      yield* waitForTranscriptText({
+        fixture,
+        text: "RAW_OUT_OF_ORDER_DIRECTORY_SHOULD_NOT_LEAK",
+      });
+      yield* Effect.sleep("100 millis");
+      assert.deepStrictEqual(
+        contentDeltaTexts(observedEvents),
+        [],
+        "expected out-of-order result row to stay buffered until planner row arrives",
+      );
+
+      yield* releaseOutOfOrderStreamingProcess({ fixture });
+      const events = yield* Fiber.join(eventsFiber).pipe(
+        Effect.timeout("2 seconds"),
+        Effect.map((chunk) => [...chunk]),
+      );
+      const visibleText = contentDeltaTexts(events).join("\n");
+
+      assert.ok(!visibleText.includes("RAW_OUT_OF_ORDER_DIRECTORY_SHOULD_NOT_LEAK"));
+      assert.deepStrictEqual(contentDeltaTexts(events), [
+        "Listing `src`",
+        "out-of-order live reasoning",
+        "out-of-order live final",
+      ]);
+      assert.ok(!visibleText.includes("Listing directory"));
     }).pipe(Effect.provide(BunServices.layer), TestClock.withLive),
   );
 
