@@ -16,6 +16,7 @@ import {
   type AntigravityTranscriptObservation,
   type AntigravityTranscriptObservationState,
   type AntigravityTranscriptRecord,
+  type AntigravityTranscriptTelemetryContext,
 } from "./transcript.ts";
 import {
   initialAntigravityRuntimeEventState,
@@ -41,6 +42,7 @@ interface ReadTranscriptSnapshotOptions {
   readonly transcriptPath: string;
   readonly state: AntigravityTranscriptObservationState;
   readonly requireTranscript: boolean;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }
 
 /** Options for one live Antigravity runtime stream pull. */
@@ -50,6 +52,7 @@ interface RuntimeEventsChunkOptions {
   readonly transcriptPath: string;
   readonly state: AntigravityRuntimeStreamState;
   readonly options: AntigravityCliOptions;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }
 
 /** Options for building a live runtime stream from a running Antigravity process. */
@@ -61,6 +64,7 @@ interface RunningProcessRuntimeEventsOptions {
   readonly observation?: AntigravityTranscriptObservation;
   readonly options: AntigravityCliOptions;
   readonly runningProcess: AntigravityRunningProcess;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }
 
 /** Options for building a live runtime stream from an already-forked exit observer. */
@@ -123,6 +127,7 @@ const readTranscriptSnapshot = Effect.fnUntraced(function* ({
   transcriptPath,
   state,
   requireTranscript,
+  telemetryContext,
 }: ReadTranscriptSnapshotOptions) {
   const content = yield* fileSystem.readFileString(transcriptPath).pipe(Effect.option);
   return yield* Option.match(content, {
@@ -137,7 +142,8 @@ const readTranscriptSnapshot = Effect.fnUntraced(function* ({
         ),
         Match.orElse(() => Effect.succeed(emptyTranscriptObservation(state))),
       ),
-    onSome: (text) => observeAntigravityTranscriptContent({ state, content: text }),
+    onSome: (text) =>
+      observeAntigravityTranscriptContent({ state, content: text, telemetryContext }),
   });
 });
 
@@ -182,6 +188,7 @@ const nextOpenRuntimeEventsChunk = Effect.fnUntraced(function* ({
   transcriptPath,
   state,
   options,
+  telemetryContext,
 }: RuntimeEventsChunkOptions) {
   const exitOption = processExitOption(exitFiber);
   const processExited = Option.isSome(exitOption);
@@ -195,6 +202,7 @@ const nextOpenRuntimeEventsChunk = Effect.fnUntraced(function* ({
     transcriptPath,
     state: state.observationState,
     requireTranscript: processExited,
+    telemetryContext,
   });
   const [runtimeState, mappedEvents] = runtimeEventsFromAntigravityTranscriptRecords({
     records: observation.records,
@@ -242,6 +250,7 @@ export const runtimeEventsFromProcessExitFiber = ({
   observation,
   options,
   exitFiber,
+  telemetryContext,
 }: ProcessExitFiberRuntimeEventsOptions): AgentRuntimeEventStream => {
   const transcriptPath = transcriptPathForConversation({ pathService, settings, conversationId });
   const initialState = initialRuntimeStreamState({ observationState: observation?.state });
@@ -253,6 +262,7 @@ export const runtimeEventsFromProcessExitFiber = ({
       transcriptPath,
       state,
       options,
+      telemetryContext,
     }),
   ).pipe(Stream.flattenIterable, Stream.ensuring(ignoreExitFiberInterrupt));
 };
@@ -266,6 +276,7 @@ export const runtimeEventsFromRunningProcess = ({
   observation,
   options,
   runningProcess,
+  telemetryContext,
 }: RunningProcessRuntimeEventsOptions): AgentRuntimeEventStream =>
   Stream.unwrap(
     Effect.map(forkAntigravityProcessExit(runningProcess), (exitFiber) =>
@@ -277,6 +288,7 @@ export const runtimeEventsFromRunningProcess = ({
         observation,
         options,
         exitFiber,
+        telemetryContext,
       }),
     ),
   );

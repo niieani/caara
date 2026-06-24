@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Console, Effect, Match, Option, Schema } from "effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
@@ -60,6 +62,12 @@ const AntigravityTranscriptRecord = Schema.Struct({
 
 /** Antigravity transcript record shape accepted by the driver-owned mapper. */
 export type AntigravityTranscriptRecord = typeof AntigravityTranscriptRecord.Type;
+
+/** Safe turn correlation metadata attached to transcript warning logs when available. */
+export interface AntigravityTranscriptTelemetryContext {
+  readonly threadId?: string;
+  readonly turnId?: string;
+}
 
 /** Antigravity model result row types with first-class runtime activity mapping. */
 const supportedModelResultRecordTypes = [
@@ -174,22 +182,62 @@ const isIgnorableUnknownModelResultRecord = (record: AntigravityTranscriptRecord
   !supportedModelResultRecordTypes.some((type) => type === record.type);
 
 /** Encodes one ignored Antigravity transcript row warning as a structured log line. */
-const encodeIgnoredTranscriptRecordWarning = (record: AntigravityTranscriptRecord): string =>
+const encodeIgnoredTranscriptRecordWarning = ({
+  record,
+  records,
+  telemetryContext,
+}: {
+  readonly record: AntigravityTranscriptRecord;
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
+}): string =>
   Schema.encodeSync(Schema.UnknownFromJsonString)({
     event: "caara.antigravity.transcript.ignored_record",
     level: "warn",
+    ...telemetryContext,
     source: record.source,
     type: record.type,
     status: record.status,
+    shape: transcriptRecordShape(record),
+    shapeCount: ignoredTranscriptRecordShapeCount({ records, record }),
     step_index: record.step_index,
+    contentLength: record.content?.length ?? 0,
+    contentSha256: contentSha256(record.content ?? ""),
   });
 
-/** Logs and accepts an unknown Antigravity model result row that should not fail the turn. */
-const acceptIgnoredTranscriptRecord = Effect.fnUntraced(function* (
-  record: AntigravityTranscriptRecord,
-) {
-  yield* Console.log(encodeIgnoredTranscriptRecordWarning(record));
-  return record;
+/** Returns the stable source/type/status shape key for one Antigravity transcript row. */
+const transcriptRecordShape = (record: AntigravityTranscriptRecord): string =>
+  `${record.source}/${record.type}/${record.status}`;
+
+/** Returns the SHA-256 digest of one ignored row content payload without logging the payload. */
+const contentSha256 = (content: string): string =>
+  createHash("sha256").update(content).digest("hex");
+
+/** Counts ignored rows with the same source/type/status shape in one observed transcript chunk. */
+const ignoredTranscriptRecordShapeCount = ({
+  records,
+  record,
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly record: AntigravityTranscriptRecord;
+}): number =>
+  records.filter(
+    (candidate) =>
+      isIgnorableUnknownModelResultRecord(candidate) &&
+      transcriptRecordShape(candidate) === transcriptRecordShape(record),
+  ).length;
+
+/** Logs safe structured telemetry for ignored Antigravity transcript result rows. */
+const logIgnoredTranscriptRecords = Effect.fnUntraced(function* ({
+  records,
+  telemetryContext,
+}: {
+  readonly records: readonly AntigravityTranscriptRecord[];
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
+}) {
+  for (const record of records.filter(isIgnorableUnknownModelResultRecord)) {
+    yield* Console.log(encodeIgnoredTranscriptRecordWarning({ record, records, telemetryContext }));
+  }
 });
 
 /** Validates that one schema-decoded transcript record belongs to a supported event shape. */
@@ -200,7 +248,7 @@ const validateSupportedTranscriptRecord = Effect.fnUntraced(function* (
     Match.when(true, () => Effect.succeed(record)),
     Match.when(
       () => isIgnorableUnknownModelResultRecord(record),
-      () => acceptIgnoredTranscriptRecord(record),
+      () => Effect.succeed(record),
     ),
     Match.orElse(() =>
       Effect.fail(
@@ -274,9 +322,11 @@ const addUniqueRecord = (
 export const observeAntigravityTranscriptContent = Effect.fnUntraced(function* ({
   state,
   content,
+  telemetryContext,
 }: {
   readonly state: AntigravityTranscriptObservationState;
   readonly content: string;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
   yield* validateAppendOnlySnapshot({ state, content });
   const appended = content.slice(state.observedBytes);
@@ -287,6 +337,7 @@ export const observeAntigravityTranscriptContent = Effect.fnUntraced(function* (
     records: [],
     observedStepIndexes: state.observedStepIndexes,
   });
+  yield* logIgnoredTranscriptRecords({ records: deduped.records, telemetryContext });
   return {
     records: deduped.records,
     state: {
@@ -303,13 +354,15 @@ export const readAntigravityTranscriptObservation = Effect.fnUntraced(function* 
   fileSystem,
   transcriptPath,
   state,
+  telemetryContext,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly transcriptPath: string;
   readonly state: AntigravityTranscriptObservationState;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
   const content = yield* readTranscriptContent({ fileSystem, transcriptPath });
-  return yield* observeAntigravityTranscriptContent({ state, content });
+  return yield* observeAntigravityTranscriptContent({ state, content, telemetryContext });
 });
 
 /** Reads and maps a completed Antigravity transcript into runtime events. */
@@ -319,17 +372,20 @@ export const readAntigravityTranscriptRuntimeEvents = Effect.fnUntraced(function
   state = emptyAntigravityTranscriptObservationState,
   reasoning,
   activity,
+  telemetryContext,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly transcriptPath: string;
   readonly state?: AntigravityTranscriptObservationState;
   readonly reasoning?: AntigravityRelayMode;
   readonly activity?: AntigravityRelayMode;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
   const observation = yield* readAntigravityTranscriptObservation({
     fileSystem,
     transcriptPath,
     state,
+    telemetryContext,
   });
   return yield* runtimeEventsFromAntigravityTranscript({
     records: observation.records,

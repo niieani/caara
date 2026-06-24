@@ -315,6 +315,54 @@ describe("Antigravity transcript observation", () => {
     }),
   );
 
+  it.effect("logs safe telemetry for ignored unknown model result rows", () =>
+    Effect.gen(function* () {
+      const rawIgnoredContent = ["RAW_UNKNOWN_TOOL_RESULT", "SHOULD_NOT_LEAK"].join("_");
+      yield* observeAntigravityTranscriptContent({
+        state: emptyAntigravityTranscriptObservationState,
+        telemetryContext: {
+          threadId: "thread-ignored-row",
+          turnId: "turn-ignored-row",
+        },
+        content: [
+          recordLine({
+            step_index: 0,
+            source: "MODEL",
+            type: "GENERIC",
+            status: "DONE",
+            created_at: "2026-06-24T07:11:53Z",
+            content: rawIgnoredContent,
+          }),
+          recordLine({
+            step_index: 1,
+            source: "MODEL",
+            type: "GENERIC",
+            status: "DONE",
+            created_at: "2026-06-24T07:11:54Z",
+            content: rawIgnoredContent,
+          }),
+        ].join(""),
+      });
+
+      const logLines = yield* TestConsole.logLines;
+      const ignoredLogs = logLines.filter(
+        (line): line is string =>
+          typeof line === "string" &&
+          line.includes('"event":"caara.antigravity.transcript.ignored_record"'),
+      );
+      const logText = ignoredLogs.join("\n");
+
+      assert.strictEqual(ignoredLogs.length, 2);
+      assert.ok(logText.includes('"threadId":"thread-ignored-row"'));
+      assert.ok(logText.includes('"turnId":"turn-ignored-row"'));
+      assert.ok(logText.includes('"shape":"MODEL/GENERIC/DONE"'));
+      assert.ok(logText.includes('"shapeCount":2'));
+      assert.ok(logText.includes('"contentLength":39'));
+      assert.match(logText, /"contentSha256":"[a-f0-9]{64}"/u);
+      assert.ok(!logText.includes(rawIgnoredContent));
+    }),
+  );
+
   it.effect("fails when a transcript snapshot is truncated or rewritten", () =>
     Effect.gen(function* () {
       const first = yield* observeAntigravityTranscriptContent({

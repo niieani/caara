@@ -42,6 +42,7 @@ import {
   emptyAntigravityTranscriptObservationState,
   readAntigravityTranscriptObservation,
   type AntigravityTranscriptObservation,
+  type AntigravityTranscriptTelemetryContext,
 } from "./transcript.ts";
 
 /** Builds a durable Caara session from an Antigravity conversation id. */
@@ -53,6 +54,14 @@ const durableAntigravitySession = ({
   new DurableExternalSession({
     driverResumeCursor: makeAntigravityDriverResumeCursor({ conversationId }),
   });
+
+/** Builds safe transcript warning correlation metadata from one Codex driver turn. */
+const transcriptTelemetryContextFromTurn = (
+  turn: AgentDriverTurn,
+): AntigravityTranscriptTelemetryContext => ({
+  threadId: turn.codex.threadId,
+  turnId: turn.codex.turnId,
+});
 
 /** Extracts a durable Antigravity resume cursor from prior external session state. */
 const durableResumeCursorOption = (turn: AgentDriverTurn): Option.Option<string> =>
@@ -170,6 +179,7 @@ const startFreshAntigravityTurn = Effect.fnUntraced(function* ({
     conversationId: runningProcess.conversationId,
     options,
     runningProcess,
+    telemetryContext: transcriptTelemetryContextFromTurn(turn),
   });
   return {
     conversationId: runningProcess.conversationId,
@@ -234,6 +244,7 @@ const startResumedAntigravityTurn = Effect.fnUntraced(function* ({
       observation,
       options,
       exitFiber,
+      telemetryContext: transcriptTelemetryContextFromTurn(turn),
     }),
     cancel: cancelRunningAntigravityTurn({
       fileSystem,
@@ -312,11 +323,13 @@ const observePriorResumeTranscript = Effect.fnUntraced(function* ({
   pathService,
   settings,
   conversationId,
+  telemetryContext,
 }: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly pathService: Path.Path;
   readonly settings: AntigravityCliSettingsValue;
   readonly conversationId: string;
+  readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
   const transcriptPath = antigravityTranscriptFullPath({
     pathService,
@@ -327,6 +340,7 @@ const observePriorResumeTranscript = Effect.fnUntraced(function* ({
     fileSystem,
     transcriptPath,
     state: emptyAntigravityTranscriptObservationState,
+    telemetryContext,
   }).pipe(Effect.catchTag("AgentDriverError", recoverMissingResumeTranscript));
 });
 
@@ -397,6 +411,7 @@ export const makeAntigravityCliAgentDriver = ({
                 pathService,
                 settings,
                 conversationId: cursor.conversationId,
+                telemetryContext: transcriptTelemetryContextFromTurn(turn),
               }),
               {
                 onFailure: (error) =>
