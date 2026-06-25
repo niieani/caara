@@ -9,7 +9,11 @@ import {
   createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
-import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
+import {
+  type CodexAdvisoryEffort,
+  AgentTarget,
+  CodexTurnContext,
+} from "../mockResponsesProvider/codexTurnContext.ts";
 import {
   DurableExternalSession,
   makeDriverResumeCursor,
@@ -52,7 +56,13 @@ const streamedFinalDedupSessionId = (): string => "00000000-0000-4000-8000-00000
 const assistantPhaseSessionId = (): string => "00000000-0000-4000-8000-000000000104";
 
 /** Builds Codex identity context for one direct driver test turn. */
-const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTurnContext =>
+const makeCodex = ({
+  advisoryEffort,
+  requestedCwd,
+}: {
+  readonly advisoryEffort?: CodexAdvisoryEffort;
+  readonly requestedCwd: string;
+}): CodexTurnContext =>
   new CodexTurnContext({
     parentSessionId: "parent-session-sdk",
     threadId: "codex-thread-sdk",
@@ -63,6 +73,7 @@ const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTu
     subagentKind: "caara",
     originator: "codex_cli_rs",
     requestedModel: "claude/sonnet",
+    advisoryEffort,
     sandboxPosture: "enforced",
     workspacePaths: [requestedCwd],
     cwdCandidates: [requestedCwd],
@@ -90,14 +101,16 @@ const makeTurn = ({
   externalSession,
   cwd = projectRoot,
   requestedCwd = cwd,
+  advisoryEffort,
 }: {
   readonly target?: AgentTarget;
   readonly previousTarget?: AgentTarget;
   readonly externalSession?: DurableExternalSession;
   readonly cwd?: string;
   readonly requestedCwd?: string;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
 } = {}): AgentDriverTurn => ({
-  codex: makeCodex({ requestedCwd }),
+  codex: makeCodex({ advisoryEffort, requestedCwd }),
   target,
   prompt: {
     input: [
@@ -186,6 +199,74 @@ describe("Claude Agent SDK driver", () => {
           createRuntimeTurnSucceededEvent(),
         ] satisfies readonly AgentRuntimeEvent[]);
       }),
+  );
+
+  it.effect("uses Codex advisory effort when the Claude effort query option is absent", () =>
+    Effect.gen(function* () {
+      for (const effort of ["low", "medium", "high", "xhigh"] as const) {
+        const harness = fakeSdkHarness({
+          sessionIds: ["00000000-0000-4000-8000-000000000501"],
+          runtimeMessages: [[]],
+        });
+        const turn = makeTurn({ advisoryEffort: effort });
+
+        yield* runDriverTurn({ harness, turn });
+        const request = harness.recordedRequests.at(0);
+        assert.ok(request, "missing SDK query request");
+
+        assert.strictEqual(queryOptionsWithoutPermissionPolicy(request.options).effort, effort);
+      }
+    }),
+  );
+
+  it.effect("keeps Claude effort query options above Codex advisory effort", () =>
+    Effect.gen(function* () {
+      for (const testCase of [
+        { advisoryEffort: "xhigh", queryEffort: "max", expectedEffort: "max" },
+        { advisoryEffort: "high", queryEffort: "low", expectedEffort: "low" },
+      ] as const) {
+        const harness = fakeSdkHarness({
+          sessionIds: ["00000000-0000-4000-8000-000000000502"],
+          runtimeMessages: [[]],
+        });
+        const turn = makeTurn({
+          advisoryEffort: testCase.advisoryEffort,
+          target: makeTarget({ rawDriverOptions: { effort: testCase.queryEffort } }),
+        });
+
+        yield* runDriverTurn({ harness, turn });
+        const request = harness.recordedRequests.at(0);
+        assert.ok(request, "missing SDK query request");
+
+        assert.strictEqual(
+          queryOptionsWithoutPermissionPolicy(request.options).effort,
+          testCase.expectedEffort,
+        );
+      }
+    }),
+  );
+
+  it.effect("rejects invalid Claude effort query options even with advisory effort present", () =>
+    Effect.gen(function* () {
+      const harness = fakeSdkHarness({
+        sessionIds: ["00000000-0000-4000-8000-000000000503"],
+        runtimeMessages: [[]],
+      });
+      const turn = makeTurn({
+        advisoryEffort: "high",
+        target: makeTarget({ rawDriverOptions: { effort: "turbo" } }),
+      });
+
+      const result = yield* Effect.result(runDriverTurn({ harness, turn }));
+
+      Result.match(result, {
+        onFailure: (error) => {
+          assert.strictEqual(error._tag, "AgentDriverError");
+          assert.match(error.message, /unsupported Claude Agent SDK effort/i);
+        },
+        onSuccess: () => assert.fail("expected effort query validation failure"),
+      });
+    }),
   );
 
   it.effect("uses completed assistant messages as the phase authority for streamed text", () =>

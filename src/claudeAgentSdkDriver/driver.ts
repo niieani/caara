@@ -246,6 +246,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
   readonly cwd: string;
 }) {
   const options = yield* buildClaudeAgentSdkQueryOptions({
+    advisoryEffort: turn.codex.advisoryEffort,
     cwd,
     model: turn.target.externalModelSpecifier,
     rawDriverOptions: turn.target.rawDriverOptions,
@@ -314,6 +315,7 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
 }) {
   const sessionId = yield* generator.nextSessionId;
   const options = yield* buildClaudeAgentSdkQueryOptions({
+    advisoryEffort: turn.codex.advisoryEffort,
     cwd: freshCwd,
     model: turn.target.externalModelSpecifier,
     rawDriverOptions: turn.target.rawDriverOptions,

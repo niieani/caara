@@ -15,6 +15,7 @@ import {
   withReservedInteractiveToolDisallowed,
 } from "../claudeInteractionPolicy.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import type { CodexAdvisoryEffort } from "../mockResponsesProvider/codexTurnContext.ts";
 
 /** Effort values accepted by the installed Claude Agent SDK. */
 const claudeAgentSdkEfforts = [
@@ -207,6 +208,22 @@ const effortQueryOptions = (
     onSome: (nextEffort) => ({ effort: nextEffort }),
   });
 
+/** Maps Codex advisory effort into the Claude SDK effort scale without adding Claude-only values. */
+const claudeEffortFromCodexAdvisory = (
+  advisoryEffort: CodexAdvisoryEffort | undefined,
+): EffortLevel | undefined =>
+  Option.match(Option.fromUndefinedOr(advisoryEffort), {
+    onNone: () => undefined,
+    onSome: (effort) =>
+      Match.value(effort).pipe(
+        Match.when("low", () => "low" as const),
+        Match.when("medium", () => "medium" as const),
+        Match.when("high", () => "high" as const),
+        Match.when("xhigh", () => "xhigh" as const),
+        Match.exhaustive,
+      ),
+  });
+
 /** Builds the optional SDK budget options object. */
 const maxBudgetUsdQueryOptions = (
   maxBudgetUsd: number | undefined,
@@ -284,17 +301,20 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
 
 /** Builds official Claude Agent SDK query options for one turn. */
 export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
+  advisoryEffort,
   cwd,
   model,
   rawDriverOptions,
   startup,
 }: {
+  readonly advisoryEffort?: CodexAdvisoryEffort;
   readonly cwd: string;
   readonly model: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly startup: ClaudeAgentSdkSessionStartup;
 }) {
   const driverOptions = yield* parseClaudeAgentSdkDriverOptions(rawDriverOptions);
+  const effort = driverOptions.effort ?? claudeEffortFromCodexAdvisory(advisoryEffort);
   const sessionOptions = Match.valueTags(startup, {
     Start: ({ sessionId }) => ({ sessionId }),
     Resume: ({ resume }) => ({ resume }),
@@ -305,7 +325,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     model,
     ...sessionOptions,
     includePartialMessages: driverOptions.includePartialMessages ?? true,
-    ...effortQueryOptions(driverOptions.effort),
+    ...effortQueryOptions(effort),
     ...maxBudgetUsdQueryOptions(driverOptions.maxBudgetUsd),
     ...toolsQueryOptions(driverOptions.tools),
     ...allowedToolsQueryOptions(driverOptions.allowedTools),
