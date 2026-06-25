@@ -168,6 +168,7 @@ const makeTurn = (): AgentDriverTurn => ({
     subagentKind: "caara",
     originator: "codex_cli_rs",
     requestedModel: "claude/sonnet",
+    sandboxPosture: "enforced",
     workspacePaths: [projectRoot],
     cwdCandidates: [projectRoot],
   }),

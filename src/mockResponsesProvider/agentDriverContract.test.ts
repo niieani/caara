@@ -38,6 +38,8 @@ const contractCodex = new CodexTurnContext({
   subagentKind: "caara",
   originator: "codex_cli_rs",
   requestedModel: "claude/contract",
+  advisoryEffort: "high",
+  sandboxPosture: "enforced",
   workspacePaths: [process.cwd()],
   cwdCandidates: [process.cwd()],
 });
@@ -84,7 +86,9 @@ const contractCancel: AgentDriverCancel = Effect.succeed({
 });
 
 /** Contract-test start hook typed through the explicit start alias. */
-const contractStart: AgentDriverStart = (_turn: AgentDriverTurn) => {
+const contractStart: AgentDriverStart = (turn: AgentDriverTurn) => {
+  assert.strictEqual(turn.codex.advisoryEffort, "high");
+  assert.strictEqual(turn.codex.sandboxPosture, "enforced");
   const externalSession = new EphemeralExternalSession();
   return Effect.succeed({
     runtimeEvents: contractRuntimeStream,

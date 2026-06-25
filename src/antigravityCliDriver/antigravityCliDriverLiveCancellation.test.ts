@@ -64,6 +64,7 @@ const makeCodex = ({ turnId }: { readonly turnId: string }): CodexTurnContext =>
     subagentKind: "caara",
     originator: "codex_cli_rs",
     requestedModel: "agy/gemini-3.5-flash",
+    sandboxPosture: "enforced",
     workspacePaths: [projectRoot],
     cwdCandidates: [projectRoot],
   });

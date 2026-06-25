@@ -143,6 +143,8 @@ describe("Codex turn context decoder", () => {
       assert.strictEqual(decoded.codex.windowId, "window-1");
       assert.strictEqual(decoded.codex.parentThreadId, "parent-thread-1");
       assert.strictEqual(decoded.codex.subagentKind, "caara");
+      assert.strictEqual(decoded.codex.advisoryEffort, undefined);
+      assert.strictEqual(decoded.codex.sandboxPosture, "enforced");
       assert.strictEqual(decoded.target.requestedModel, "claude/test");
       assert.strictEqual(decoded.target.externalAgentKind, "claude");
       assert.strictEqual(decoded.target.externalModelSpecifier, "test");
@@ -153,6 +155,61 @@ describe("Codex turn context decoder", () => {
       assert.deepStrictEqual(decoded.codex.workspacePaths, [projectRoot]);
       assert.deepStrictEqual(decoded.codex.cwdCandidates, [projectRoot]);
       assert.deepStrictEqual(decoded.responses.input, input);
+    }),
+  );
+
+  it.effect("decodes Codex advisory effort values from the Responses request body", () =>
+    Effect.gen(function* () {
+      for (const effort of ["low", "medium", "high", "xhigh"] as const) {
+        const decoded = yield* decodeWithDefaultPath({
+          headers: makeHeaders(),
+          url: "/v1/responses",
+          body: makeBody({ reasoning: { effort } }),
+          requireCwd: true,
+        });
+
+        assert.strictEqual(decoded.codex.advisoryEffort, effort);
+      }
+    }),
+  );
+
+  it.effect("rejects unsupported present Codex advisory effort values", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        decodeWithDefaultPath({
+          headers: makeHeaders(),
+          url: "/v1/responses",
+          body: makeBody({ reasoning: { effort: "max" } }),
+          requireCwd: true,
+        }),
+      );
+      const message = invalidRequestMessageFromResult(result);
+
+      assert.match(message, /reasoning\.effort/i);
+    }),
+  );
+
+  it.effect("normalizes Codex sandbox metadata to a coarse advisory posture", () =>
+    Effect.gen(function* () {
+      const unsandboxed = yield* decodeWithDefaultPath({
+        headers: makeHeaders({
+          metadata: makeTurnMetadata({ sandbox: "none" }),
+        }),
+        url: "/v1/responses",
+        body: makeBody(),
+        requireCwd: true,
+      });
+      const enforced = yield* decodeWithDefaultPath({
+        headers: makeHeaders({
+          metadata: makeTurnMetadata({ sandbox: "workspace-write" }),
+        }),
+        url: "/v1/responses",
+        body: makeBody(),
+        requireCwd: true,
+      });
+
+      assert.strictEqual(unsandboxed.codex.sandboxPosture, "none");
+      assert.strictEqual(enforced.codex.sandboxPosture, "enforced");
     }),
   );
 

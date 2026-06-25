@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect";
+import { Effect, Match, Option, Schema } from "effect";
 import * as Path from "effect/Path";
 
 import { InvalidResponsesRequest } from "./errors.ts";
@@ -29,6 +29,31 @@ const codexTurnMetadataSchema = Schema.Struct({
   turn_started_at_unix_ms: Schema.Finite,
 });
 
+/** Codex-provided reasoning effort values accepted as advisory driver input. */
+const codexAdvisoryEffortSchema = Schema.Union([
+  Schema.Literal("low"),
+  Schema.Literal("medium"),
+  Schema.Literal("high"),
+  Schema.Literal("xhigh"),
+]);
+
+/** Coarse Codex sandbox posture exposed to drivers as advisory input. */
+const codexSandboxPostureSchema = Schema.Union([
+  Schema.Literal("none"),
+  Schema.Literal("enforced"),
+]);
+
+/** Optional body-level Codex reasoning advisory shape. */
+const codexBodyReasoningSchema = Schema.Struct({
+  effort: Schema.optional(codexAdvisoryEffortSchema),
+});
+
+/** Codex advisory reasoning effort available to driver-specific fallback mapping. */
+export type CodexAdvisoryEffort = typeof codexAdvisoryEffortSchema.Type;
+
+/** Coarse Codex sandbox posture available to driver-specific fallback mapping. */
+export type CodexSandboxPosture = typeof codexSandboxPostureSchema.Type;
+
 /** Raw Codex identity headers required before Caara can bind a turn to a session. */
 const codexRequestHeadersSchema = Schema.Struct({
   "session-id": Schema.String,
@@ -58,6 +83,8 @@ export class CodexTurnContext extends Schema.Class<CodexTurnContext>("CodexTurnC
   subagentKind: Schema.String,
   originator: Schema.String,
   requestedModel: Schema.String,
+  advisoryEffort: Schema.optional(codexAdvisoryEffortSchema),
+  sandboxPosture: codexSandboxPostureSchema,
   workspacePaths: Schema.Array(Schema.String),
   cwdCandidates: Schema.Array(Schema.String),
 }) {}
@@ -113,6 +140,15 @@ const bodyClientMetadataOption = (body: Schema.Json): Option.Option<Schema.Json>
       .at(0),
   );
 
+/** Extracts optional body `reasoning` without treating absence as malformed input. */
+const bodyReasoningOption = (body: Schema.Json): Option.Option<Schema.Json> =>
+  Option.fromUndefinedOr(
+    [body]
+      .filter(isJsonRecord)
+      .map((record) => record.reasoning)
+      .at(0),
+  );
+
 /** Decodes required Codex headers into their typed validation shape. */
 const decodeCodexHeaders = Effect.fnUntraced(function* (headers: Readonly<Record<string, string>>) {
   return yield* Schema.decodeUnknownEffect(codexRequestHeadersSchema)(
@@ -136,6 +172,18 @@ const decodeBodyClientMetadata = Effect.fnUntraced(function* (body: Schema.Json)
     onSome: (metadata) =>
       Schema.decodeUnknownEffect(codexBodyClientMetadataSchema)(metadata).pipe(
         Effect.mapError(() => invalidRequest("Malformed body client_metadata.")),
+      ),
+  });
+});
+
+/** Decodes optional Codex reasoning advisory input from the Responses request body. */
+const decodeAdvisoryEffort = Effect.fnUntraced(function* (body: Schema.Json) {
+  return yield* Option.match(bodyReasoningOption(body), {
+    onNone: () => Effect.map(Effect.void, (): CodexAdvisoryEffort | undefined => undefined),
+    onSome: (reasoning) =>
+      Schema.decodeUnknownEffect(codexBodyReasoningSchema)(reasoning).pipe(
+        Effect.map((decodedReasoning) => decodedReasoning.effort),
+        Effect.mapError(() => invalidRequest("Unsupported Codex reasoning.effort advisory.")),
       ),
   });
 });
@@ -264,6 +312,17 @@ const parseAgentTarget = Effect.fnUntraced(function* ({
   });
 });
 
+/** Normalizes Codex sandbox metadata into the coarse posture shared with drivers. */
+const sandboxPostureFromMetadata = ({
+  metadata,
+}: {
+  readonly metadata: typeof codexTurnMetadataSchema.Type;
+}): CodexSandboxPosture =>
+  Match.value(metadata.sandbox).pipe(
+    Match.when("none", (): CodexSandboxPosture => "none"),
+    Match.orElse((): CodexSandboxPosture => "enforced"),
+  );
+
 /** Returns absolute workspace paths from the validated Codex metadata object. */
 const workspacePathsFromMetadata = ({
   metadata,
@@ -324,6 +383,7 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
   const decodedHeaders = yield* decodeCodexHeaders(headers);
   const metadata = yield* decodeTurnMetadata(decodedHeaders["x-codex-turn-metadata"]);
   const bodyMetadata = yield* decodeBodyClientMetadata(body);
+  const advisoryEffort = yield* decodeAdvisoryEffort(body);
   const pathService = yield* Path.Path;
   yield* validateIdentityConsistency({ headers: decodedHeaders, metadata, bodyMetadata });
 
@@ -333,6 +393,7 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
     rawDriverOptions,
   });
   const workspacePaths = workspacePathsFromMetadata({ metadata, pathService });
+  const sandboxPosture = sandboxPostureFromMetadata({ metadata });
   const cwdCandidates = cwdCandidatesFromBody({ body, pathService });
   yield* validateCwdRequirement({ requireCwd, workspacePaths, cwdCandidates });
 
@@ -348,6 +409,8 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
       subagentKind: metadata.subagent_kind,
       originator: decodedHeaders.originator,
       requestedModel: responses.model,
+      advisoryEffort,
+      sandboxPosture,
       workspacePaths,
       cwdCandidates,
     }),

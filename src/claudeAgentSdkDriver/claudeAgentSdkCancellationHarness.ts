@@ -313,6 +313,7 @@ const makeCodex = ({ requestedCwd }: { readonly requestedCwd: string }): CodexTu
     subagentKind: "caara",
     originator: "codex_cli_rs",
     requestedModel: "claude/sonnet",
+    sandboxPosture: "enforced",
     workspacePaths: [requestedCwd],
     cwdCandidates: [requestedCwd],
   });

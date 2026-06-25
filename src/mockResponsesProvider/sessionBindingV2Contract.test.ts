@@ -32,6 +32,7 @@ const followUpCodex = new CodexTurnContext({
   subagentKind: "caara",
   originator: "codex_cli_rs",
   requestedModel: "diagnostic/basic",
+  sandboxPosture: "enforced",
   workspacePaths: [],
   cwdCandidates: [],
 });
