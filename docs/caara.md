@@ -220,9 +220,14 @@ Driver options accepted from provider query parameters:
 - `allowed_tools`
 - `disallowed_tools`
 - `include_partial_messages`
+- `permission_mode` (`permission-mode` is also accepted as a Claude CLI-style alias)
 - `activity`
 
 Unsupported option names and invalid option values fail the turn explicitly.
+
+`permission_mode` defaults to `dontAsk`. Accepted values are `auto`, `dontAsk`, and
+`bypassPermissions`; interactive Claude SDK modes are rejected. When `bypassPermissions` is used,
+the driver also sets the SDK's explicit dangerous-bypass opt-in.
 
 For a first turn, the driver starts an SDK `query()` with a generated durable session id. For a
 follow-up turn, it passes the stored Claude SDK resume cursor to `query()`. The prompt extractor
@@ -521,7 +526,7 @@ name = "Caara Responses"
 base_url = "http://127.0.0.1:8787/v1"
 wire_api = "responses"
 requires_openai_auth = false
-query_params = { effort = "high", max_budget_usd = "1" }
+query_params = { effort = "high", max_budget_usd = "1", permission_mode = "auto" }
 ```
 
 Use `query_params.effort` for an explicit Claude effort override. It wins over Codex

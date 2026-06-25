@@ -103,6 +103,80 @@ describe("Claude Agent SDK permission policy", () => {
     }),
   );
 
+  it.effect("accepts noninteractive permission modes from query options", () =>
+    Effect.gen(function* () {
+      const autoOptions = yield* buildClaudeAgentSdkQueryOptions({
+        cwd: projectRoot,
+        model: "sonnet",
+        rawDriverOptions: { permission_mode: "auto" },
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p111" },
+      });
+      const dontAskOptions = yield* buildClaudeAgentSdkQueryOptions({
+        cwd: projectRoot,
+        model: "sonnet",
+        rawDriverOptions: { permission_mode: "dontAsk" },
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p112" },
+      });
+      const bypassOptions = yield* buildClaudeAgentSdkQueryOptions({
+        cwd: projectRoot,
+        model: "sonnet",
+        rawDriverOptions: { permission_mode: "bypassPermissions" },
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p113" },
+      });
+      const hyphenAliasOptions = yield* buildClaudeAgentSdkQueryOptions({
+        cwd: projectRoot,
+        model: "sonnet",
+        rawDriverOptions: { "permission-mode": "auto" },
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p114" },
+      });
+
+      assert.strictEqual(autoOptions.permissionMode, "auto");
+      assert.strictEqual(dontAskOptions.permissionMode, "dontAsk");
+      assert.strictEqual(bypassOptions.permissionMode, "bypassPermissions");
+      assert.strictEqual(bypassOptions.allowDangerouslySkipPermissions, true);
+      assert.strictEqual(hyphenAliasOptions.permissionMode, "auto");
+    }),
+  );
+
+  it.effect("rejects interactive or ambiguous permission mode query options", () =>
+    Effect.gen(function* () {
+      const defaultResult = yield* Effect.result(
+        buildClaudeAgentSdkQueryOptions({
+          cwd: projectRoot,
+          model: "sonnet",
+          rawDriverOptions: { permission_mode: "default" },
+          startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p115" },
+        }),
+      );
+      const planResult = yield* Effect.result(
+        buildClaudeAgentSdkQueryOptions({
+          cwd: projectRoot,
+          model: "sonnet",
+          rawDriverOptions: { permission_mode: "plan" },
+          startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p116" },
+        }),
+      );
+      const duplicateAliasResult = yield* Effect.result(
+        buildClaudeAgentSdkQueryOptions({
+          cwd: projectRoot,
+          model: "sonnet",
+          rawDriverOptions: { permission_mode: "auto", "permission-mode": "dontAsk" },
+          startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p117" },
+        }),
+      );
+
+      assert.match(
+        driverErrorMessage(defaultResult),
+        /permission_mode.*auto.*dontAsk.*bypassPermissions/u,
+      );
+      assert.match(
+        driverErrorMessage(planResult),
+        /permission_mode.*auto.*dontAsk.*bypassPermissions/u,
+      );
+      assert.match(driverErrorMessage(duplicateAliasResult), /permission mode.*duplicate/i);
+    }),
+  );
+
   it.effect("rejects option attempts that would allow AskUserQuestion", () =>
     Effect.gen(function* () {
       const allowedToolsResult = yield* Effect.result(

@@ -3,6 +3,7 @@ import type {
   EffortLevel,
   OnUserDialog,
   Options as ClaudeQueryOptions,
+  PermissionMode,
 } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option, Schema } from "effect";
 
@@ -26,6 +27,23 @@ const claudeAgentSdkEfforts = [
   "max",
 ] as const satisfies readonly EffortLevel[];
 
+/** Permission modes Caara allows because they do not require interactive prompting. */
+const claudeAgentSdkNonInteractivePermissionModes = [
+  "auto",
+  "dontAsk",
+  "bypassPermissions",
+] as const satisfies readonly PermissionMode[];
+
+/** Claude SDK permission mode subset safe for noninteractive Codex turns. */
+type ClaudeAgentSdkNonInteractivePermissionMode =
+  (typeof claudeAgentSdkNonInteractivePermissionModes)[number];
+
+/** Returns the canonical provider query option name for Claude SDK permission mode. */
+const permissionModeOptionName = (): "permission_mode" => "permission_mode";
+
+/** Returns the Claude CLI-style provider query option alias for permission mode. */
+const permissionModeHyphenAliasOptionName = (): "permission-mode" => "permission-mode";
+
 /** Validated Claude Agent SDK options derived from provider query parameters. */
 export interface ClaudeAgentSdkDriverOptions {
   readonly effort: EffortLevel | undefined;
@@ -34,6 +52,7 @@ export interface ClaudeAgentSdkDriverOptions {
   readonly allowedTools: readonly string[] | undefined;
   readonly disallowedTools: readonly string[] | undefined;
   readonly includePartialMessages: boolean | undefined;
+  readonly permissionMode: ClaudeAgentSdkNonInteractivePermissionMode;
 }
 
 /** Query startup state used to choose between new-session and resume options. */
@@ -55,11 +74,16 @@ const supportedClaudeAgentSdkOptionNames = new Set([
   "allowed_tools",
   "disallowed_tools",
   "include_partial_messages",
+  permissionModeOptionName(),
+  permissionModeHyphenAliasOptionName(),
   "activity",
 ]);
 
 /** Schema for effort values supported by the installed Claude Agent SDK. */
 const effortSchema = Schema.Literals(claudeAgentSdkEfforts);
+
+/** Schema for Claude SDK permission modes that do not require interactive prompting. */
+const permissionModeSchema = Schema.Literals(claudeAgentSdkNonInteractivePermissionModes);
 
 /** Builds an explicit Claude SDK driver option validation failure. */
 const optionError = (message: string): AgentDriverError => new AgentDriverError({ message });
@@ -186,6 +210,43 @@ const parseBooleanOption = Effect.fnUntraced(function* ({
   });
 });
 
+/** Validates the optional Claude permission mode query parameter. */
+const parsePermissionModeOption = Effect.fnUntraced(function* (
+  rawDriverOptions: Readonly<Record<string, string>>,
+) {
+  const canonicalPermissionMode = rawDriverOptions[permissionModeOptionName()];
+  const hyphenAliasPermissionMode = rawDriverOptions[permissionModeHyphenAliasOptionName()];
+  const duplicatePermissionModeOption = Option.fromUndefinedOr(
+    [permissionModeOptionName()]
+      .filter(
+        () => canonicalPermissionMode !== undefined && hyphenAliasPermissionMode !== undefined,
+      )
+      .at(0),
+  );
+  yield* Option.match(duplicatePermissionModeOption, {
+    onNone: () => Effect.void,
+    onSome: () =>
+      optionError(
+        `Claude Agent SDK permission mode query option is duplicate; use only ${permissionModeOptionName()}.`,
+      ),
+  });
+
+  return yield* Option.match(
+    Option.fromUndefinedOr(canonicalPermissionMode ?? hyphenAliasPermissionMode),
+    {
+      onNone: () => Effect.succeed(claudeNonInteractivePermissionMode()),
+      onSome: (permissionMode) =>
+        Schema.decodeUnknownEffect(permissionModeSchema)(permissionMode).pipe(
+          Effect.mapError(() =>
+            optionError(
+              `Claude Agent SDK ${permissionModeOptionName()} must be one of ${claudeAgentSdkNonInteractivePermissionModes.join(", ")}.`,
+            ),
+          ),
+        ),
+    },
+  );
+});
+
 /** Parses the optional Claude SDK activity commentary visibility option. */
 export const parseClaudeAgentSdkActivityTransportVisibility = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
@@ -258,6 +319,15 @@ const disallowedToolsQueryOptions = (
   disallowedTools: [...withReservedInteractiveToolDisallowed(disallowedTools)],
 });
 
+/** Builds the SDK opt-in required when bypassing Claude permission checks. */
+const dangerousPermissionBypassQueryOptions = (
+  permissionMode: ClaudeAgentSdkNonInteractivePermissionMode,
+): Readonly<Partial<Pick<ClaudeQueryOptions, "allowDangerouslySkipPermissions">>> =>
+  Match.value(permissionMode).pipe(
+    Match.when("bypassPermissions", () => ({ allowDangerouslySkipPermissions: true })),
+    Match.orElse(() => ({})),
+  );
+
 /** Validates raw provider query params into SDK driver-owned options. */
 export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
@@ -288,6 +358,7 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
     value: rawDriverOptions.disallowed_tools,
     rejectReservedTool: false,
   });
+  const permissionMode = yield* parsePermissionModeOption(rawDriverOptions);
 
   return {
     effort,
@@ -296,6 +367,7 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
     allowedTools,
     disallowedTools,
     includePartialMessages,
+    permissionMode,
   } satisfies ClaudeAgentSdkDriverOptions;
 });
 
@@ -330,7 +402,8 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     ...toolsQueryOptions(driverOptions.tools),
     ...allowedToolsQueryOptions(driverOptions.allowedTools),
     ...disallowedToolsQueryOptions(driverOptions.disallowedTools),
-    permissionMode: claudeNonInteractivePermissionMode(),
+    permissionMode: driverOptions.permissionMode,
+    ...dangerousPermissionBypassQueryOptions(driverOptions.permissionMode),
     canUseTool: denyPermissionRequest,
     onUserDialog: cancelUserDialog,
     supportedDialogKinds: [],
