@@ -123,22 +123,15 @@ describe("Claude Agent SDK permission policy", () => {
         rawDriverOptions: { permission_mode: "bypassPermissions" },
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p113" },
       });
-      const hyphenAliasOptions = yield* buildClaudeAgentSdkQueryOptions({
-        cwd: projectRoot,
-        model: "sonnet",
-        rawDriverOptions: { "permission-mode": "auto" },
-        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p114" },
-      });
 
       assert.strictEqual(autoOptions.permissionMode, "auto");
       assert.strictEqual(dontAskOptions.permissionMode, "dontAsk");
       assert.strictEqual(bypassOptions.permissionMode, "bypassPermissions");
       assert.strictEqual(bypassOptions.allowDangerouslySkipPermissions, true);
-      assert.strictEqual(hyphenAliasOptions.permissionMode, "auto");
     }),
   );
 
-  it.effect("rejects interactive or ambiguous permission mode query options", () =>
+  it.effect("rejects unsupported permission mode query options", () =>
     Effect.gen(function* () {
       const defaultResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
@@ -156,11 +149,11 @@ describe("Claude Agent SDK permission policy", () => {
           startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p116" },
         }),
       );
-      const duplicateAliasResult = yield* Effect.result(
+      const hyphenatedOptionResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
           cwd: projectRoot,
           model: "sonnet",
-          rawDriverOptions: { permission_mode: "auto", "permission-mode": "dontAsk" },
+          rawDriverOptions: { "permission-mode": "auto" },
           startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p117" },
         }),
       );
@@ -173,7 +166,10 @@ describe("Claude Agent SDK permission policy", () => {
         driverErrorMessage(planResult),
         /permission_mode.*auto.*dontAsk.*bypassPermissions/u,
       );
-      assert.match(driverErrorMessage(duplicateAliasResult), /permission mode.*duplicate/i);
+      assert.match(
+        driverErrorMessage(hyphenatedOptionResult),
+        /Unsupported Claude Agent SDK driver option: permission-mode/u,
+      );
     }),
   );
 

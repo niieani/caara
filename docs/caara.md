@@ -220,7 +220,7 @@ Driver options accepted from provider query parameters:
 - `allowed_tools`
 - `disallowed_tools`
 - `include_partial_messages`
-- `permission_mode` (`permission-mode` is also accepted as a Claude CLI-style alias)
+- `permission_mode`
 - `activity`
 
 Unsupported option names and invalid option values fail the turn explicitly.

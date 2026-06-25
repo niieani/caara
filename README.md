@@ -93,7 +93,6 @@ Supported provider query params:
 | `disallowed_tools`         | comma-delimited tool list                           |
 | `include_partial_messages` | `true` or `false`; defaults to `true`               |
 | `permission_mode`          | `auto`, `dontAsk`, `bypassPermissions`              |
-| `permission-mode`          | alias for `permission_mode`                         |
 | `activity`                 | `on` or `off`; defaults to `on`                     |
 
 `permission_mode` defaults to `dontAsk`. Caara intentionally rejects interactive Claude permission

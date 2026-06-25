@@ -41,9 +41,6 @@ type ClaudeAgentSdkNonInteractivePermissionMode =
 /** Returns the canonical provider query option name for Claude SDK permission mode. */
 const permissionModeOptionName = (): "permission_mode" => "permission_mode";
 
-/** Returns the Claude CLI-style provider query option alias for permission mode. */
-const permissionModeHyphenAliasOptionName = (): "permission-mode" => "permission-mode";
-
 /** Validated Claude Agent SDK options derived from provider query parameters. */
 export interface ClaudeAgentSdkDriverOptions {
   readonly effort: EffortLevel | undefined;
@@ -75,7 +72,6 @@ const supportedClaudeAgentSdkOptionNames = new Set([
   "disallowed_tools",
   "include_partial_messages",
   permissionModeOptionName(),
-  permissionModeHyphenAliasOptionName(),
   "activity",
 ]);
 
@@ -214,37 +210,17 @@ const parseBooleanOption = Effect.fnUntraced(function* ({
 const parsePermissionModeOption = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
 ) {
-  const canonicalPermissionMode = rawDriverOptions[permissionModeOptionName()];
-  const hyphenAliasPermissionMode = rawDriverOptions[permissionModeHyphenAliasOptionName()];
-  const duplicatePermissionModeOption = Option.fromUndefinedOr(
-    [permissionModeOptionName()]
-      .filter(
-        () => canonicalPermissionMode !== undefined && hyphenAliasPermissionMode !== undefined,
-      )
-      .at(0),
-  );
-  yield* Option.match(duplicatePermissionModeOption, {
-    onNone: () => Effect.void,
-    onSome: () =>
-      optionError(
-        `Claude Agent SDK permission mode query option is duplicate; use only ${permissionModeOptionName()}.`,
-      ),
-  });
-
-  return yield* Option.match(
-    Option.fromUndefinedOr(canonicalPermissionMode ?? hyphenAliasPermissionMode),
-    {
-      onNone: () => Effect.succeed(claudeNonInteractivePermissionMode()),
-      onSome: (permissionMode) =>
-        Schema.decodeUnknownEffect(permissionModeSchema)(permissionMode).pipe(
-          Effect.mapError(() =>
-            optionError(
-              `Claude Agent SDK ${permissionModeOptionName()} must be one of ${claudeAgentSdkNonInteractivePermissionModes.join(", ")}.`,
-            ),
+  return yield* Option.match(Option.fromUndefinedOr(rawDriverOptions[permissionModeOptionName()]), {
+    onNone: () => Effect.succeed(claudeNonInteractivePermissionMode()),
+    onSome: (permissionMode) =>
+      Schema.decodeUnknownEffect(permissionModeSchema)(permissionMode).pipe(
+        Effect.mapError(() =>
+          optionError(
+            `Claude Agent SDK ${permissionModeOptionName()} must be one of ${claudeAgentSdkNonInteractivePermissionModes.join(", ")}.`,
           ),
         ),
-    },
-  );
+      ),
+  });
 });
 
 /** Parses the optional Claude SDK activity commentary visibility option. */

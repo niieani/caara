@@ -6,7 +6,8 @@ Add Claude SDK driver provider-query support for noninteractive permission modes
 
 ## Goal
 
-Claude driver accepts a permission-mode query option and forwards it to SDK `permissionMode`.
+Claude driver accepts `permission_mode` as the canonical query option and forwards it to SDK
+`permissionMode`.
 Allowed values only:
 
 - `auto`
