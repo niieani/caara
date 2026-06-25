@@ -3,6 +3,7 @@ description = "Delegates to the local Caara Responses provider with the Diagnost
 developer_instructions = "Use the local Caara Diagnostic fails-after-partial scenario. The expected provider result is terminal failure."
 model_provider = "caara"
 model = "diagnostic/fails-after-partial"
+model_supports_reasoning_summaries = true
 
 [model_providers.caara]
 name = "Caara Responses"

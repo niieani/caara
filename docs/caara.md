@@ -65,6 +65,13 @@ class CodexTurnContext extends Schema.Class("CodexTurnContext")({
   subagentKind: Schema.String,
   originator: Schema.String,
   requestedModel: Schema.String,
+  advisoryEffort: Schema.optional(Schema.Union([
+    Schema.Literal("low"),
+    Schema.Literal("medium"),
+    Schema.Literal("high"),
+    Schema.Literal("xhigh"),
+  ])),
+  sandboxPosture: Schema.Union([Schema.Literal("none"), Schema.Literal("enforced")]),
   workspacePaths: Schema.Array(Schema.String),
   cwdCandidates: Schema.Array(Schema.String),
 }) {}
@@ -120,6 +127,20 @@ kind and does not require that header to match metadata.
 
 Codex-specific headers and `x-codex-turn-metadata` are the authoritative source for turn identity.
 `client_metadata` is duplicate body-level context for validation, not route selection.
+
+## Codex Advisory Signals
+
+Caara decodes Codex-provided advisory signals at the transport edge and exposes them on
+`AgentDriverTurn.codex` for driver-owned fallback mapping:
+
+- `reasoning.effort` becomes optional advisory effort `low | medium | high | xhigh`.
+- `x-codex-turn-metadata.sandbox` becomes sandbox posture `none` when the metadata value is
+  `none`, otherwise `enforced`.
+
+Advisory signals are not global Caara policy. Driver query params stay highest precedence for the
+same behavior. For Claude, `query_params.effort` supersedes Codex advisory effort and remains the
+way to request Claude-only `max`. For Antigravity, `query_params.sandbox` supersedes Codex sandbox
+posture.
 
 ## Agent Target Selection
 
@@ -454,6 +475,7 @@ description = "Delegates to the local Caara Responses provider backed by Claude 
 developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"
 model = "claude/haiku"
+model_supports_reasoning_summaries = true
 
 [model_providers.caara]
 name = "Caara Responses"
@@ -472,6 +494,7 @@ description = "Delegates to the local Caara Responses provider backed by Antigra
 developer_instructions = "Use the local Caara Antigravity driver. Relay the provider response as-is."
 model_provider = "caara"
 model = "agy/gemini-3.5-flash"
+model_supports_reasoning_summaries = true
 
 [model_providers.caara]
 name = "Caara Responses"
@@ -482,8 +505,13 @@ request_max_retries = 0
 stream_max_retries = 0
 ```
 
+`model_supports_reasoning_summaries = true` lets Codex serialize the current dynamic effort
+selector to Caara as request body `reasoning.effort`. Do not add `model_reasoning_effort` unless a
+role intentionally pins fixed effort; that setting overrides dynamic selector behavior.
+
 `query_params` is a model-provider setting in Codex. Caara receives those parameters on the
-`/v1/responses` request URL and treats them as driver options.
+`/v1/responses` request URL and treats them as driver options. Driver query params override
+comparable Codex advisory signals.
 
 Example with Claude Code options:
 
@@ -495,6 +523,9 @@ wire_api = "responses"
 requires_openai_auth = false
 query_params = { effort = "high", max_budget_usd = "1" }
 ```
+
+Use `query_params.effort` for an explicit Claude effort override. It wins over Codex
+`reasoning.effort`, and it is the only way to request Claude-only `max`.
 
 ## Effect Usage
 

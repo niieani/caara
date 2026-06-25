@@ -3,6 +3,7 @@ description = "Delegates to the local Caara Responses provider with the Diagnost
 developer_instructions = "Use the local Caara Diagnostic hangs-until-cancel scenario. This response is expected to stay open until the managing Codex agent closes the subagent."
 model_provider = "caara"
 model = "diagnostic/hangs-until-cancel"
+model_supports_reasoning_summaries = true
 
 [model_providers.caara]
 name = "Caara Responses"

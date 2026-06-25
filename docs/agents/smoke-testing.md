@@ -63,6 +63,18 @@ cwd=/Volumes/Projects/Software/code-agents-as-responses-api
 readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code and `agy/<model>` targets to Antigravity, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 ```
 
+Effort serialization check: change Codex's effort selector, run another first turn through the same
+role, and inspect the retained provider log:
+
+```bash
+rg '"event":"caara.responses.request"|"reasoning"|"effort"' "$RUN_DIR/provider.log"
+```
+
+Expected: the logged request body includes `reasoning.effort` with the selected dynamic effort.
+This proves Codex serialized the advisory signal into Caara. Claude SDK effort behavior is then
+driver-owned: `query_params.effort` still overrides the advisory signal and remains the way to
+request Claude-only `max`.
+
 4. Send a follow-up prompt on the same subagent handle:
 
 ```text

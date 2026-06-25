@@ -50,6 +50,13 @@ stream_max_retries = 0
 
 The provider block is embedded in the role file because Codex validates agent role config layers before merging project-level provider config.
 
+Caara role files set `model_supports_reasoning_summaries = true` so Codex can serialize the current
+dynamic effort selector as request body `reasoning.effort`. Do not add `model_reasoning_effort`
+unless a role intentionally pins fixed effort and disables dynamic selector behavior.
+
+Driver query params remain highest precedence. For Claude, `query_params.effort` overrides Codex
+advisory effort and is still required for Claude-only values such as `max`.
+
 Manual Codex smoke flow: `docs/agents/smoke-testing.md`.
 
 ## State

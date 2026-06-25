@@ -33,6 +33,17 @@ The checked-in `caara-claude` role is Claude-specific (`claude/haiku`). If a run
 multi-agent tool does not expose newly added Diagnostic roles, record that as a role-discovery
 blocker and run the direct-provider fallback below for scenario evidence.
 
+To verify Codex dynamic effort serialization, change Codex's effort selector, run any Diagnostic
+role, and inspect the retained provider log:
+
+```bash
+rg '"event":"caara.responses.request"|"reasoning"|"effort"' "$PWD/temp.local/$(date +%F)/diagnostic-provider.log"
+```
+
+Expected: the logged request body includes `reasoning.effort` with the selected dynamic effort.
+Diagnostic scenarios only prove Codex-to-Caara advisory decoding; real driver behavior remains
+driver-owned.
+
 Direct-provider fallback requests must still be Codex-shaped: include Codex identity headers,
 `stream: true`, `client_metadata.thread_id`, `client_metadata.turn_id`, and `metadata.cwd` when the
 turn should create or reuse a workspace-bound session.

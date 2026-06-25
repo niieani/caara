@@ -3,6 +3,7 @@ description = "Delegates to the local Caara Responses provider with the Diagnost
 developer_instructions = "Use the local Caara Diagnostic basic scenario. Relay the provider response as-is."
 model_provider = "caara"
 model = "diagnostic/basic"
+model_supports_reasoning_summaries = true
 
 [model_providers.caara]
 name = "Caara Responses"
