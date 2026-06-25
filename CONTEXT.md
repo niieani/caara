@@ -45,6 +45,11 @@ The external-agent-specific options Caara receives from provider query parameter
 selected driver.
 _Avoid_: Global config, route config, raw query params
 
+**Driver option override**:
+A driver option that takes priority over comparable Codex advisory signals and driver defaults after
+the selected driver recognizes it.
+_Avoid_: Codex override, global option, fallback
+
 **Driver option schema**:
 The option schema owned by a driver for one external agent kind.
 _Avoid_: Caara option schema, shared effort scale, prefixed options
@@ -169,6 +174,16 @@ _Avoid_: Session close, session deletion
 **Codex turn context**:
 The validated Codex identity and workspace context extracted from a Codex turn.
 _Avoid_: Raw headers, request metadata
+
+**Codex advisory signal**:
+A Codex-derived hint, such as requested effort or sandbox posture, that Caara may offer to a driver
+without making it a global Caara policy.
+_Avoid_: Driver option, source of truth, permission policy
+
+**Sandbox posture**:
+The coarse sandbox state Caara derives from Codex for advisory driver input: no sandbox or some
+enforced sandbox.
+_Avoid_: Platform sandbox tag, permission profile, sandbox mode
 
 **Agent turn input**:
 The normalized prompt and context Caara gives to a driver for one turn.
