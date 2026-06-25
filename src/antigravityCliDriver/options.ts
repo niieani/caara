@@ -2,6 +2,7 @@ import { Effect, Match, Option, Schema } from "effect";
 import type * as Path from "effect/Path";
 
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
 import type { AntigravityCliSettingsValue } from "./settings.ts";
 
 /** Parsed Antigravity reasoning relay mode. */
@@ -109,6 +110,18 @@ const parseModelOption = Effect.fnUntraced(function* ({
     ),
   );
 });
+
+/** Maps Codex sandbox posture into Antigravity's default sandbox behavior. */
+const sandboxDefaultFromCodexPosture = (sandboxPosture: CodexSandboxPosture | undefined): boolean =>
+  Option.match(Option.fromUndefinedOr(sandboxPosture), {
+    onNone: () => false,
+    onSome: (posture) =>
+      Match.value(posture).pipe(
+        Match.when("none", () => false),
+        Match.when("enforced", () => true),
+        Match.exhaustive,
+      ),
+  });
 
 /** Parses one optional bounded integer Antigravity option. */
 const parseBoundedIntegerValue = ({
@@ -266,11 +279,13 @@ const validateDangerousSkipPermissions = Effect.fnUntraced(function* ({
 export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
   externalModelSpecifier,
   rawDriverOptions,
+  sandboxPosture,
   pathService,
   settings,
 }: {
   readonly externalModelSpecifier: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly sandboxPosture?: CodexSandboxPosture;
   readonly pathService: Path.Path;
   readonly settings: AntigravityCliSettingsValue;
 }) {
@@ -279,7 +294,7 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
   const sandbox = yield* parseBooleanOption({
     rawDriverOptions,
     optionName: "sandbox",
-    defaultValue: false,
+    defaultValue: sandboxDefaultFromCodexPosture(sandboxPosture),
   });
   const dangerouslySkipPermissions = yield* parseBooleanOption({
     rawDriverOptions,

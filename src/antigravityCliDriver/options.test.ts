@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import * as Path from "effect/Path";
 
+import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
 import { buildAntigravityCliArgv, parseAntigravityCliOptions } from "./options.ts";
 import type { AntigravityCliSettingsValue } from "./settings.ts";
 
@@ -83,9 +84,11 @@ const invalidOptionCases: readonly InvalidOptionCase[] = [
 /** Parses Antigravity options with the default Path service. */
 const parseOptions = ({
   rawDriverOptions,
+  sandboxPosture,
   settings = untrustedSettings,
 }: {
   readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly sandboxPosture?: CodexSandboxPosture;
   readonly settings?: AntigravityCliSettingsValue;
 }) =>
   Effect.gen(function* () {
@@ -93,6 +96,7 @@ const parseOptions = ({
     return yield* parseAntigravityCliOptions({
       externalModelSpecifier: "gemini-3.5-flash",
       rawDriverOptions,
+      sandboxPosture,
       pathService,
       settings,
     });
@@ -142,6 +146,75 @@ describe("Antigravity CLI options", () => {
           "/tmp/agy-driver.log",
         ],
       );
+    }),
+  );
+
+  it.effect("uses enforced Codex sandbox posture as the Antigravity sandbox fallback", () =>
+    Effect.gen(function* () {
+      const options = yield* parseOptions({
+        rawDriverOptions: {},
+        sandboxPosture: "enforced",
+      });
+      const argv = buildAntigravityCliArgv({
+        prompt: "turn turn-1",
+        options,
+        logFilePath: "/tmp/default.log",
+      });
+
+      assert.strictEqual(options.sandbox, true);
+      assert.strictEqual(argv.includes("--sandbox"), true);
+    }),
+  );
+
+  it.effect(
+    "keeps no-sandbox Codex posture and missing advisory posture unsandboxed by default",
+    () =>
+      Effect.gen(function* () {
+        const noSandboxOptions = yield* parseOptions({
+          rawDriverOptions: {},
+          sandboxPosture: "none",
+        });
+        const missingAdvisoryOptions = yield* parseOptions({
+          rawDriverOptions: {},
+        });
+
+        assert.strictEqual(noSandboxOptions.sandbox, false);
+        assert.strictEqual(missingAdvisoryOptions.sandbox, false);
+        assert.strictEqual(
+          buildAntigravityCliArgv({
+            prompt: "turn turn-1",
+            options: noSandboxOptions,
+            logFilePath: "/tmp/default.log",
+          }).includes("--sandbox"),
+          false,
+        );
+      }),
+  );
+
+  it.effect("keeps Antigravity sandbox query options above Codex sandbox posture", () =>
+    Effect.gen(function* () {
+      const explicitFalse = yield* parseOptions({
+        rawDriverOptions: { sandbox: "false" },
+        sandboxPosture: "enforced",
+      });
+      const explicitTrue = yield* parseOptions({
+        rawDriverOptions: { sandbox: "true" },
+        sandboxPosture: "none",
+      });
+
+      assert.strictEqual(explicitFalse.sandbox, false);
+      assert.strictEqual(explicitTrue.sandbox, true);
+    }),
+  );
+
+  it.effect("rejects invalid sandbox query options even with advisory posture present", () =>
+    Effect.gen(function* () {
+      const failure = yield* parseOptions({
+        rawDriverOptions: { sandbox: "yes" },
+        sandboxPosture: "enforced",
+      }).pipe(Effect.flip);
+
+      assert.ok(failure.message.includes("sandbox must be true or false."), failure.message);
     }),
   );
 

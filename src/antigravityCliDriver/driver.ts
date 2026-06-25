@@ -361,6 +361,7 @@ export const makeAntigravityCliAgentDriver = ({
     const options = yield* parseAntigravityCliOptions({
       externalModelSpecifier: turn.target.externalModelSpecifier,
       rawDriverOptions: turn.target.rawDriverOptions,
+      sandboxPosture: turn.codex.sandboxPosture,
       pathService,
       settings,
     });
