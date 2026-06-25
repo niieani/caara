@@ -36,7 +36,10 @@ Break the plan into **tracer bullet** issues. Each issue is a thin vertical slic
 
 ### 4. Quiz a subagent
 
-Present the proposed breakdown as a numbered list to a subagent. For each slice, show:
+Present the proposed breakdown as a numbered list to a subagent.
+If a grouping tasks makes sense (e.g. by context of the problem we're trying to solve), create a parent issue and link the child issues to it.
+
+For each slice, show:
 
 - **Title**: short descriptive name
 - **Blocked by**: which other slices (if any) must complete first
@@ -59,13 +62,11 @@ Publish issues in dependency order (blockers first) so you can reference real is
 <issue-template>
 ## Parent
 
-A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section).
+A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section). Mention to "Read and understand it first before starting work."
 
 ## What to build
 
 A concise description of this vertical slice. Describe the end-to-end behavior, not layer-by-layer implementation.
-
-Avoid specific file paths or code snippets — they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it here and note briefly that it came from a prototype. Trim to the decision-rich parts — not a working demo, just the important bits.
 
 ## Acceptance criteria
 
