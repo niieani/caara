@@ -1,9 +1,9 @@
 import { Effect, Match, Option, Schema } from "effect";
 import type * as Path from "effect/Path";
 
+import type { CaaraSettingsValue } from "../caaraSettings.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
-import type { AntigravityCliSettingsValue } from "./settings.ts";
 
 /** Parsed Antigravity reasoning relay mode. */
 export type AntigravityRelayMode = "on" | "off";
@@ -260,21 +260,21 @@ const parseLogFileOption = Effect.fnUntraced(function* ({
   });
 });
 
-/** Fails unless dangerous permission skipping is enabled by trusted host configuration. */
+/** Fails unless dangerous permission skipping is enabled by Caara server settings. */
 const validateDangerousSkipPermissions = Effect.fnUntraced(function* ({
-  settings,
+  caaraSettings,
   dangerouslySkipPermissions,
 }: {
-  readonly settings: AntigravityCliSettingsValue;
+  readonly caaraSettings: CaaraSettingsValue;
   readonly dangerouslySkipPermissions: boolean;
 }) {
-  const allowed = !dangerouslySkipPermissions || settings.allowDangerousSkipPermissions;
+  const allowed = !dangerouslySkipPermissions || caaraSettings.allowDangerousSkipPermissions;
   return yield* Option.match(Option.fromUndefinedOr([allowed].filter(Boolean).at(0)), {
     onNone: () =>
       Effect.fail(
         new AgentDriverError({
           message:
-            "Antigravity --dangerously-skip-permissions requires trusted driver configuration.",
+            "Antigravity --dangerously-skip-permissions requires --allow-dangerous-skip-permissions.",
         }),
       ),
     onSome: () => Effect.void,
@@ -283,17 +283,17 @@ const validateDangerousSkipPermissions = Effect.fnUntraced(function* ({
 
 /** Parses and validates Antigravity driver options from raw provider query params. */
 export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
+  caaraSettings,
   externalModelSpecifier,
   rawDriverOptions,
   sandboxPosture,
   pathService,
-  settings,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly externalModelSpecifier: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly sandboxPosture?: CodexSandboxPosture;
   readonly pathService: Path.Path;
-  readonly settings: AntigravityCliSettingsValue;
 }) {
   yield* validateSupportedOptions(rawDriverOptions);
   const model = yield* parseModelOption({ externalModelSpecifier, rawDriverOptions });
@@ -307,7 +307,7 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
     optionName: "dangerously_skip_permissions",
     defaultValue: false,
   });
-  yield* validateDangerousSkipPermissions({ settings, dangerouslySkipPermissions });
+  yield* validateDangerousSkipPermissions({ caaraSettings, dangerouslySkipPermissions });
   const printTimeoutSeconds = yield* parseBoundedIntegerOption({
     rawDriverOptions,
     optionName: "print_timeout_seconds",

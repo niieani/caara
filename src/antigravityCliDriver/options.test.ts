@@ -2,21 +2,13 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import * as Path from "effect/Path";
 
+import { defaultCaaraSettingsValue, type CaaraSettingsValue } from "../caaraSettings.ts";
 import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
 import { buildAntigravityCliArgv, parseAntigravityCliOptions } from "./options.ts";
-import type { AntigravityCliSettingsValue } from "./settings.ts";
 
-/** Untrusted Antigravity CLI settings used by default option parser tests. */
-const untrustedSettings: AntigravityCliSettingsValue = {
-  command: "agy",
-  homeDir: "/tmp/agy-home",
-  allowDangerousSkipPermissions: false,
-  environment: {},
-};
-
-/** Trusted Antigravity CLI settings used only for explicit skip-permission tests. */
-const trustedSettings: AntigravityCliSettingsValue = {
-  ...untrustedSettings,
+/** Caara settings used when explicit skip-permission tests allow dangerous bypass. */
+const dangerousCaaraSettings: CaaraSettingsValue = {
+  ...defaultCaaraSettingsValue,
   allowDangerousSkipPermissions: true,
 };
 
@@ -47,7 +39,8 @@ const invalidOptionCases: readonly InvalidOptionCase[] = [
   {
     name: "untrusted permission skip",
     rawDriverOptions: { dangerously_skip_permissions: "true" },
-    expected: "Antigravity --dangerously-skip-permissions requires trusted driver configuration.",
+    expected:
+      "Antigravity --dangerously-skip-permissions requires --allow-dangerous-skip-permissions.",
   },
   {
     name: "print timeout lower bound",
@@ -90,20 +83,20 @@ const invalidOptionCases: readonly InvalidOptionCase[] = [
 const parseOptions = ({
   rawDriverOptions,
   sandboxPosture,
-  settings = untrustedSettings,
+  caaraSettings = defaultCaaraSettingsValue,
 }: {
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly sandboxPosture?: CodexSandboxPosture;
-  readonly settings?: AntigravityCliSettingsValue;
+  readonly caaraSettings?: CaaraSettingsValue;
 }) =>
   Effect.gen(function* () {
     const pathService = yield* Path.Path;
     return yield* parseAntigravityCliOptions({
+      caaraSettings,
       externalModelSpecifier: "gemini-3.5-flash",
       rawDriverOptions,
       sandboxPosture,
       pathService,
-      settings,
     });
   }).pipe(Effect.provide(Path.layer));
 
@@ -115,7 +108,7 @@ describe("Antigravity CLI options", () => {
         "/tmp/two",
       ]);
       const options = yield* parseOptions({
-        settings: trustedSettings,
+        caaraSettings: dangerousCaaraSettings,
         rawDriverOptions: {
           model: "gemini-3.5-pro",
           print_timeout_seconds: "900",

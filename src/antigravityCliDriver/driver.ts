@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { CaaraSettings, type CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   type AgentDriverCancel,
   type AgentCancellationOutcome,
@@ -346,11 +347,13 @@ const observePriorResumeTranscript = Effect.fnUntraced(function* ({
 
 /** Creates a driver implementation from injected Antigravity process/filesystem services. */
 export const makeAntigravityCliAgentDriver = ({
+  caaraSettings,
   settings,
   fileSystem,
   pathService,
   spawner,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly settings: AntigravityCliSettingsValue;
   readonly fileSystem: FileSystem.FileSystem;
   readonly pathService: Path.Path;
@@ -359,11 +362,11 @@ export const makeAntigravityCliAgentDriver = ({
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     const prompt = yield* extractAntigravityCliPrompt(turn.prompt);
     const options = yield* parseAntigravityCliOptions({
+      caaraSettings,
       externalModelSpecifier: turn.target.externalModelSpecifier,
       rawDriverOptions: turn.target.rawDriverOptions,
       sandboxPosture: turn.codex.sandboxPosture,
       pathService,
-      settings,
     });
     const defaultLogFilePath = antigravityLogFilePath({
       pathService,
@@ -474,11 +477,13 @@ export const makeAntigravityCliAgentDriver = ({
 export const antigravityCliDriverLayer = Layer.effect(
   AgentDriverRegistry,
   Effect.gen(function* () {
+    const caaraSettings = yield* CaaraSettings;
     const settings = yield* AntigravityCliSettings;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const driver = makeAntigravityCliAgentDriver({
+      caaraSettings,
       settings,
       fileSystem,
       pathService,

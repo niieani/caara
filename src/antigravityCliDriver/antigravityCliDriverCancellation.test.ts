@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { defaultCaaraSettingsValue } from "../caaraSettings.ts";
 import type {
   AgentDriverTurn,
   AgentDriverTurnResult,
@@ -323,13 +324,13 @@ const startDriverTurn = Effect.fnUntraced(function* ({
   const pathService = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const driver = makeAntigravityCliAgentDriver({
+    caaraSettings: defaultCaaraSettingsValue,
     fileSystem,
     pathService,
     spawner,
     settings: {
       command: fixture.fakeAgyPath,
       homeDir: fixture.fakeHomeDir,
-      allowDangerousSkipPermissions: false,
       environment: {
         AGY_FAKE_INVOCATION_LOG: fixture.invocationLogPath,
         AGY_FAKE_MODE: fakeMode,

@@ -2,6 +2,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Option, Result, Stream } from "effect";
 
+import { defaultCaaraSettingsValue, type CaaraSettingsValue } from "../caaraSettings.ts";
 import { createRuntimeTurnSucceededEvent } from "../mockResponsesProvider/agentDriver.ts";
 import type { ClaudeAgentSdkQueryRuntime } from "./claudeAgentSdkClient.ts";
 import { runtimeEventsFromClaudeAgentSdkQuery } from "./events.ts";
@@ -9,6 +10,16 @@ import { buildClaudeAgentSdkQueryOptions } from "./options.ts";
 
 /** Stable cwd used by SDK permission policy tests. */
 const projectRoot = process.cwd();
+
+/** Builds Caara settings with a caller-selected dangerous permission gate. */
+const caaraSettings = ({
+  allowDangerousSkipPermissions = false,
+}: {
+  readonly allowDangerousSkipPermissions?: boolean;
+} = {}): CaaraSettingsValue => ({
+  ...defaultCaaraSettingsValue,
+  allowDangerousSkipPermissions,
+});
 
 /** Builds one fake SDK permission-denied system message. */
 const sdkPermissionDeniedMessage = (): SDKMessage =>
@@ -62,6 +73,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("builds non-interactive permission options that deny prompts explicitly", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
         rawDriverOptions: {},
@@ -106,18 +118,21 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("accepts noninteractive permission modes from query options", () =>
     Effect.gen(function* () {
       const autoOptions = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
         rawDriverOptions: { permission_mode: "auto" },
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p111" },
       });
       const dontAskOptions = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
         rawDriverOptions: { permission_mode: "dontAsk" },
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p112" },
       });
       const bypassOptions = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings({ allowDangerousSkipPermissions: true }),
         cwd: projectRoot,
         model: "sonnet",
         rawDriverOptions: { permission_mode: "bypassPermissions" },
@@ -131,10 +146,27 @@ describe("Claude Agent SDK permission policy", () => {
     }),
   );
 
+  it.effect("rejects dangerous permission bypass unless server settings allow it", () =>
+    Effect.gen(function* () {
+      const deniedResult = yield* Effect.result(
+        buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
+          cwd: projectRoot,
+          model: "sonnet",
+          rawDriverOptions: { permission_mode: "bypassPermissions" },
+          startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p114" },
+        }),
+      );
+
+      assert.match(driverErrorMessage(deniedResult), /--allow-dangerous-skip-permissions/u);
+    }),
+  );
+
   it.effect("rejects unsupported permission mode query options", () =>
     Effect.gen(function* () {
       const defaultResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
           rawDriverOptions: { permission_mode: "default" },
@@ -143,6 +175,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const planResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
           rawDriverOptions: { permission_mode: "plan" },
@@ -151,6 +184,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const hyphenatedOptionResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
           rawDriverOptions: { "permission-mode": "auto" },
@@ -177,6 +211,7 @@ describe("Claude Agent SDK permission policy", () => {
     Effect.gen(function* () {
       const allowedToolsResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
           rawDriverOptions: { allowed_tools: "AskUserQuestion" },
@@ -185,6 +220,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const toolsResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
           rawDriverOptions: { tools: "Read,AskUserQuestion" },

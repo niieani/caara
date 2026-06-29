@@ -8,6 +8,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
 import { InputLogger } from "../mockResponsesProvider/inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "../mockResponsesProvider/relayLogger.ts";
 import { RequestDiagnosticsLogger } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
@@ -155,11 +156,11 @@ const providerLayer = ({
     Layer.provideMerge(turnConcurrencyLive),
     Layer.provideMerge(antigravityCliDriverLayer),
     Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(caaraSettingsDefaultLayer),
     Layer.provideMerge(
       Layer.succeed(AntigravityCliSettings, {
         command: fakeAgyPath,
         homeDir: fakeHomeDir,
-        allowDangerousSkipPermissions: false,
         environment: {
           AGY_FAKE_INVOCATION_LOG: invocationLogPath,
           AGY_FAKE_MODE: "reasoning-activity",

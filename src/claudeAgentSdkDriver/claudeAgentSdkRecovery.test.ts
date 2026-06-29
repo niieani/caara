@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Match, Option, Stream } from "effect";
 import * as Path from "effect/Path";
 
+import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
 import {
   AgentDriverRegistry,
   type AgentDriverTurn,
@@ -142,6 +143,7 @@ const fakeRecoveryLayer = ({
   readonly sessionIds: readonly string[];
 }) =>
   claudeAgentSdkAgentDriverRegistryLive.pipe(
+    Layer.provideMerge(caaraSettingsDefaultLayer),
     Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, outcomes })),
     Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
     Layer.provideMerge(Path.layer),

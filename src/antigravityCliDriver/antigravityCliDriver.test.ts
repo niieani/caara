@@ -9,6 +9,7 @@ import { Effect, Layer, Match, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { CaaraSettings, defaultCaaraSettingsValue } from "../caaraSettings.ts";
 import { InputLogger } from "../mockResponsesProvider/inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "../mockResponsesProvider/relayLogger.ts";
 import {
@@ -255,11 +256,16 @@ const providerLayer = ({
       Layer.succeed(AntigravityCliSettings, {
         command: fakeAgyPath,
         homeDir: fakeHomeDir,
-        allowDangerousSkipPermissions: fakeMode === "trusted-skip-permissions",
         environment: {
           AGY_FAKE_INVOCATION_LOG: invocationLogPath,
           AGY_FAKE_MODE: fakeMode,
         },
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(CaaraSettings, {
+        ...defaultCaaraSettingsValue,
+        allowDangerousSkipPermissions: fakeMode === "trusted-skip-permissions",
       }),
     ),
   );

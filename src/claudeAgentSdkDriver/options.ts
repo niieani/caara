@@ -7,6 +7,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option, Schema } from "effect";
 
+import type { CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   claudeAskUserQuestionToolName,
   claudeNonInteractivePermissionDeniedMessage,
@@ -223,6 +224,25 @@ const parsePermissionModeOption = Effect.fnUntraced(function* (
   });
 });
 
+/** Fails dangerous Claude permission bypass unless the Caara process explicitly allows it. */
+const validateDangerousPermissionBypass = Effect.fnUntraced(function* ({
+  caaraSettings,
+  permissionMode,
+}: {
+  readonly caaraSettings: CaaraSettingsValue;
+  readonly permissionMode: ClaudeAgentSdkNonInteractivePermissionMode;
+}) {
+  const allowed =
+    permissionMode !== "bypassPermissions" || caaraSettings.allowDangerousSkipPermissions;
+  return yield* Option.match(Option.fromUndefinedOr([allowed].filter(Boolean).at(0)), {
+    onNone: () =>
+      optionError(
+        "Claude Agent SDK permission_mode=bypassPermissions requires --allow-dangerous-skip-permissions.",
+      ),
+    onSome: () => Effect.void,
+  });
+});
+
 /** Parses the optional Claude SDK activity commentary visibility option. */
 export const parseClaudeAgentSdkActivityTransportVisibility = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
@@ -350,18 +370,24 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
 /** Builds official Claude Agent SDK query options for one turn. */
 export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   advisoryEffort,
+  caaraSettings,
   cwd,
   model,
   rawDriverOptions,
   startup,
 }: {
   readonly advisoryEffort?: CodexAdvisoryEffort;
+  readonly caaraSettings: CaaraSettingsValue;
   readonly cwd: string;
   readonly model: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly startup: ClaudeAgentSdkSessionStartup;
 }) {
   const driverOptions = yield* parseClaudeAgentSdkDriverOptions(rawDriverOptions);
+  yield* validateDangerousPermissionBypass({
+    caaraSettings,
+    permissionMode: driverOptions.permissionMode,
+  });
   const effort = driverOptions.effort ?? claudeEffortFromCodexAdvisory(advisoryEffort);
   const sessionOptions = Match.valueTags(startup, {
     Start: ({ sessionId }) => ({ sessionId }),

@@ -12,6 +12,11 @@ import {
   antigravityCliSettingsFromEnvironment,
 } from "../antigravityCliDriver/settings.ts";
 import {
+  CaaraSettings,
+  caaraSettingsDefaultLayer,
+  type CaaraSettingsValue,
+} from "../caaraSettings.ts";
+import {
   AgentDriverError,
   AgentDriverRegistry,
   type AgentCancellationOutcome,
@@ -231,6 +236,7 @@ const applyInPlaceTargetChanges = Effect.fnUntraced(function* ({
 
 /** Starts one SDK query and wraps it in the driver turn result contract. */
 const sdkQueryTurnResult = Effect.fnUntraced(function* ({
+  caaraSettings,
   client,
   turn,
   prompt,
@@ -238,6 +244,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
   cursor,
   cwd,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly turn: AgentDriverTurn;
   readonly prompt: ClaudeAgentSdkQueryPrompt;
@@ -247,6 +254,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
 }) {
   const options = yield* buildClaudeAgentSdkQueryOptions({
     advisoryEffort: turn.codex.advisoryEffort,
+    caaraSettings,
     cwd,
     model: turn.target.externalModelSpecifier,
     rawDriverOptions: turn.target.rawDriverOptions,
@@ -269,12 +277,14 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
 
 /** Converts a failed SDK resume query into a fresh-session lost-continuity recovery. */
 const recoverFailedResumeQuery = ({
+  caaraSettings,
   turnResult,
   client,
   generator,
   turn,
   resume,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly turnResult: EffectContract<AgentDriverTurnResult, AgentDriverError>;
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
@@ -284,6 +294,7 @@ const recoverFailedResumeQuery = ({
   turnResult.pipe(
     Effect.catchTag("AgentDriverError", (error) =>
       recoverWithFreshSdkSession({
+        caaraSettings,
         client,
         generator,
         turn,
@@ -299,6 +310,7 @@ const recoverFailedResumeQuery = ({
 
 /** Starts a fresh SDK session and returns typed lost-continuity recovery metadata. */
 const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
+  caaraSettings,
   client,
   generator,
   turn,
@@ -306,6 +318,7 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
   diagnostics,
   freshCwd,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
   readonly turn: AgentDriverTurn;
@@ -316,6 +329,7 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
   const sessionId = yield* generator.nextSessionId;
   const options = yield* buildClaudeAgentSdkQueryOptions({
     advisoryEffort: turn.codex.advisoryEffort,
+    caaraSettings,
     cwd: freshCwd,
     model: turn.target.externalModelSpecifier,
     rawDriverOptions: turn.target.rawDriverOptions,
@@ -347,11 +361,13 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
 
 /** Starts or resumes a continuity-preserving SDK query. */
 const startContinuableSdkTurn = Effect.fnUntraced(function* ({
+  caaraSettings,
   client,
   generator,
   pathService,
   turn,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
   readonly pathService: Path.Path;
@@ -375,6 +391,7 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
   });
 
   const turnResult = sdkQueryTurnResult({
+    caaraSettings,
     client,
     turn,
     prompt,
@@ -387,6 +404,7 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
       Start: () => turnResult,
       Resume: ({ resume }) =>
         recoverFailedResumeQuery({
+          caaraSettings,
           turnResult,
           client,
           generator,
@@ -400,10 +418,12 @@ const startContinuableSdkTurn = Effect.fnUntraced(function* ({
 
 /** Builds a Claude Agent SDK agent driver from injected SDK services. */
 const createClaudeAgentSdkAgentDriver = ({
+  caaraSettings,
   client,
   generator,
   pathService,
 }: {
+  readonly caaraSettings: CaaraSettingsValue;
   readonly client: ClaudeAgentSdkClient["Service"];
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
   readonly pathService: Path.Path;
@@ -412,6 +432,7 @@ const createClaudeAgentSdkAgentDriver = ({
     return yield* Match.value(requiresFreshSessionForCwdChange(turn)).pipe(
       Match.when(true, () =>
         recoverWithFreshSdkSession({
+          caaraSettings,
           client,
           generator,
           turn,
@@ -424,7 +445,9 @@ const createClaudeAgentSdkAgentDriver = ({
           freshCwd: turn.requestedCwd ?? turn.cwd,
         }),
       ),
-      Match.orElse(() => startContinuableSdkTurn({ client, generator, pathService, turn })),
+      Match.orElse(() =>
+        startContinuableSdkTurn({ caaraSettings, client, generator, pathService, turn }),
+      ),
     );
   }),
 });
@@ -433,13 +456,16 @@ const createClaudeAgentSdkAgentDriver = ({
 export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
   AgentDriverRegistry,
   Effect.gen(function* () {
+    const caaraSettings = yield* CaaraSettings;
     const client = yield* ClaudeAgentSdkClient;
     const generator = yield* ClaudeAgentSdkSessionIdGenerator;
     const pathService = yield* Path.Path;
     const resolve: AgentDriverResolve = (target) =>
       Match.value(target.externalAgentKind).pipe(
         Match.when("claude", () =>
-          Effect.succeed(createClaudeAgentSdkAgentDriver({ client, generator, pathService })),
+          Effect.succeed(
+            createClaudeAgentSdkAgentDriver({ caaraSettings, client, generator, pathService }),
+          ),
         ),
         Match.when("diagnostic", () => Effect.succeed(diagnosticAgentDriver)),
         Match.orElse((externalAgentKind) =>
@@ -456,6 +482,7 @@ export const claudeAgentSdkAgentDriverRegistryLive = Layer.effect(
 
 /** Live Claude Agent SDK driver stack for Claude and Diagnostic registry tests. */
 export const claudeAgentSdkDriverLive = claudeAgentSdkAgentDriverRegistryLive.pipe(
+  Layer.provideMerge(caaraSettingsDefaultLayer),
   Layer.provideMerge(claudeAgentSdkClientLive),
   Layer.provideMerge(claudeAgentSdkSessionIdGeneratorLive),
   Layer.provideMerge(BunServices.layer),
@@ -465,14 +492,21 @@ export const claudeAgentSdkDriverLive = claudeAgentSdkAgentDriverRegistryLive.pi
 export const caaraAgentDriverRegistryLive = Layer.effect(
   AgentDriverRegistry,
   Effect.gen(function* () {
+    const caaraSettings = yield* CaaraSettings;
     const client = yield* ClaudeAgentSdkClient;
     const generator = yield* ClaudeAgentSdkSessionIdGenerator;
     const pathService = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const antigravityCliSettings = yield* AntigravityCliSettings;
-    const claudeDriver = createClaudeAgentSdkAgentDriver({ client, generator, pathService });
+    const claudeDriver = createClaudeAgentSdkAgentDriver({
+      caaraSettings,
+      client,
+      generator,
+      pathService,
+    });
     const antigravityCliDriver = makeAntigravityCliAgentDriver({
+      caaraSettings,
       settings: antigravityCliSettings,
       fileSystem,
       pathService,

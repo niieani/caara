@@ -8,6 +8,7 @@ import { assert } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import * as Path from "effect/Path";
 
+import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
 import {
   AgentDriverRegistry,
   type AgentCancellationOutcome,
@@ -291,6 +292,7 @@ export const fakeSdkHarness = ({
     recordedRequests,
     controls,
     layer: claudeAgentSdkAgentDriverRegistryLive.pipe(
+      Layer.provideMerge(caaraSettingsDefaultLayer),
       Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
       Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
       Layer.provideMerge(Path.layer),
