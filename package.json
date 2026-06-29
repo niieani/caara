@@ -8,6 +8,8 @@
   "module": "src/caara.ts",
   "scripts": {
     "start": "bun src/caara.ts",
+    "build:service": "bun run scripts/buildService.ts",
+    "build:service:all": "bun run scripts/buildService.ts --all",
     "prepare": "effect-tsgo patch",
     "typecheck": "tsgo -b",
     "lint": "biome lint && oxlint --disable-nested-config",
