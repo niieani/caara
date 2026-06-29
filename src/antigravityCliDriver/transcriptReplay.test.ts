@@ -19,7 +19,8 @@ import {
 /** Redacted Antigravity transcript fixture names replayed through the real mapper. */
 type TranscriptReplayFixtureName =
   | "hegel-manage-task-generic.transcript_full.jsonl"
-  | "hegel-known-result-out-of-order.transcript_full.jsonl";
+  | "hegel-known-result-out-of-order.transcript_full.jsonl"
+  | "hegel-run-command-running.transcript_full.jsonl";
 
 /** Runtime content-delta event narrowed from the driver-neutral event union. */
 type AgentRuntimeContentDelta = Extract<AgentRuntimeEvent, { readonly _tag: "ContentDelta" }>;
@@ -99,6 +100,15 @@ const contentDeltaTexts = ({
 }): readonly string[] =>
   events.filter((event) => isContentDeltaOfKind(event, contentKind)).map((event) => event.text);
 
+/** Redacted unknown RUNNING-row payload fragments that must not reach visible output or logs. */
+const unsafeRunCommandRunningFragments = [
+  "RAW_TASK_ID_SHOULD_NOT_LEAK",
+  "transcript_full.jsonl",
+  ".gemini/antigravity-cli/brain",
+  "RAW_TASK_LOG_PATH_SHOULD_NOT_LEAK",
+  "RAW_COMMAND_OUTPUT_PAYLOAD_SHOULD_NOT_LEAK",
+] as const;
+
 describe("Antigravity transcript replay fixtures", () => {
   it.effect("replays the Hegel manage_task GENERIC result shape without raw payload leakage", () =>
     Effect.gen(function* () {
@@ -151,5 +161,45 @@ describe("Antigravity transcript replay fixtures", () => {
           "Project structure summarized.",
         ]);
       }),
+  );
+
+  it.effect("replays a nonterminal run_command observation without raw payload leakage", () =>
+    Effect.gen(function* () {
+      const content = yield* readTranscriptReplayFixture(
+        "hegel-run-command-running.transcript_full.jsonl",
+      );
+      const observed = yield* observeAntigravityTranscriptContent({
+        state: emptyAntigravityTranscriptObservationState,
+        content,
+        telemetryContext: {
+          threadId: "thread-run-command-running",
+          turnId: "turn-run-command-running",
+        },
+      });
+      const runtimeEvents = yield* runtimeEventsFromAntigravityTranscript({
+        records: observed.records,
+      });
+      const visibleText = visibleContentDeltaTexts({ events: runtimeEvents }).join("\n");
+      const logText = (yield* TestConsole.logLines).join("\n");
+
+      assert.deepStrictEqual(
+        observed.records.map((record) => record.step_index),
+        [0, 1, 2, 3],
+      );
+      assert.deepStrictEqual(visibleContentDeltaTexts({ events: runtimeEvents }), [
+        "Running command: `sleep 60`",
+        "Confirm command observation is nonterminal before final answer.",
+        "Command started; final answer still delivered.",
+      ]);
+      assert.ok(logText.includes('"event":"caara.antigravity.transcript.ignored_record"'));
+      assert.ok(logText.includes('"shape":"MODEL/RUN_COMMAND/RUNNING"'));
+      assert.ok(logText.includes('"threadId":"thread-run-command-running"'));
+      assert.ok(logText.includes('"turnId":"turn-run-command-running"'));
+      assert.match(logText, /"payloadSha256":"[a-f0-9]{64}"/u);
+      for (const unsafeFragment of unsafeRunCommandRunningFragments) {
+        assert.ok(!visibleText.includes(unsafeFragment), unsafeFragment);
+        assert.ok(!logText.includes(unsafeFragment), unsafeFragment);
+      }
+    }),
   );
 });

@@ -176,13 +176,9 @@ const isSupportedTranscriptRecord = (record: AntigravityTranscriptRecord): boole
       record.status === "DONE",
   ].some(Boolean);
 
-/** Returns whether one unknown model row is safe to ignore as an opaque tool result. */
-const isIgnorableUnknownModelResultRecord = (record: AntigravityTranscriptRecord): boolean =>
-  record.source === "MODEL" &&
-  record.status === "DONE" &&
-  record.content !== undefined &&
-  record.type !== "PLANNER_RESPONSE" &&
-  !supportedModelResultRecordTypes.some((type) => type === record.type);
+/** Returns whether one schema-valid unsupported row is safe to ignore as an observation. */
+const isIgnorableUnknownObservationRecord = (record: AntigravityTranscriptRecord): boolean =>
+  !isSupportedTranscriptRecord(record);
 
 /** Encodes one ignored Antigravity transcript row warning as a structured log line. */
 const encodeIgnoredTranscriptRecordWarning = ({
@@ -197,6 +193,7 @@ const encodeIgnoredTranscriptRecordWarning = ({
   Schema.encodeSync(Schema.UnknownFromJsonString)({
     event: "caara.antigravity.transcript.ignored_record",
     level: "warn",
+    provider: "antigravity",
     ...telemetryContext,
     source: record.source,
     type: record.type,
@@ -204,17 +201,17 @@ const encodeIgnoredTranscriptRecordWarning = ({
     shape: transcriptRecordShape(record),
     shapeCount: ignoredTranscriptRecordShapeCount({ records, record }),
     step_index: record.step_index,
-    contentLength: record.content?.length ?? 0,
-    contentSha256: contentSha256(record.content ?? ""),
+    payloadLength: record.content?.length ?? 0,
+    payloadSha256: payloadSha256(record.content ?? ""),
   });
 
 /** Returns the stable source/type/status shape key for one Antigravity transcript row. */
 const transcriptRecordShape = (record: AntigravityTranscriptRecord): string =>
   `${record.source}/${record.type}/${record.status}`;
 
-/** Returns the SHA-256 digest of one ignored row content payload without logging the payload. */
-const contentSha256 = (content: string): string =>
-  createHash("sha256").update(content).digest("hex");
+/** Returns the SHA-256 digest of one ignored row payload without logging the payload. */
+const payloadSha256 = (payload: string): string =>
+  createHash("sha256").update(payload).digest("hex");
 
 /** Counts ignored rows with the same source/type/status shape in one observed transcript chunk. */
 const ignoredTranscriptRecordShapeCount = ({
@@ -226,11 +223,11 @@ const ignoredTranscriptRecordShapeCount = ({
 }): number =>
   records.filter(
     (candidate) =>
-      isIgnorableUnknownModelResultRecord(candidate) &&
+      isIgnorableUnknownObservationRecord(candidate) &&
       transcriptRecordShape(candidate) === transcriptRecordShape(record),
   ).length;
 
-/** Logs safe structured telemetry for ignored Antigravity transcript result rows. */
+/** Logs safe structured telemetry for ignored Antigravity transcript observation rows. */
 const logIgnoredTranscriptRecords = Effect.fnUntraced(function* ({
   records,
   telemetryContext,
@@ -238,7 +235,7 @@ const logIgnoredTranscriptRecords = Effect.fnUntraced(function* ({
   readonly records: readonly AntigravityTranscriptRecord[];
   readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
-  for (const record of records.filter(isIgnorableUnknownModelResultRecord)) {
+  for (const record of records.filter(isIgnorableUnknownObservationRecord)) {
     yield* Console.log(encodeIgnoredTranscriptRecordWarning({ record, records, telemetryContext }));
   }
 });
@@ -250,7 +247,7 @@ const validateSupportedTranscriptRecord = Effect.fnUntraced(function* (
   return yield* Match.value(isSupportedTranscriptRecord(record)).pipe(
     Match.when(true, () => Effect.succeed(record)),
     Match.when(
-      () => isIgnorableUnknownModelResultRecord(record),
+      () => isIgnorableUnknownObservationRecord(record),
       () => Effect.succeed(record),
     ),
     Match.orElse(() =>

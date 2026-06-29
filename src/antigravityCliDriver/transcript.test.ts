@@ -208,7 +208,7 @@ describe("Antigravity transcript observation", () => {
     }),
   );
 
-  it.effect("fails explicitly on malformed JSONL and unknown transcript shapes", () =>
+  it.effect("fails explicitly on malformed JSONL", () =>
     Effect.gen(function* () {
       const malformed = yield* Effect.flip(
         observeAntigravityTranscriptContent({
@@ -217,20 +217,31 @@ describe("Antigravity transcript observation", () => {
         }),
       );
       assert.match(malformed.message, /Malformed Antigravity transcript_full\.jsonl record/u);
+    }),
+  );
 
-      const unknownShape = yield* Effect.flip(
-        observeAntigravityTranscriptContent({
-          state: emptyAntigravityTranscriptObservationState,
-          content: recordLine({
-            step_index: 0,
-            source: "MODEL",
-            type: "UNKNOWN_REQUIRED_EVENT",
-            status: "DONE",
-            created_at: "2026-06-23T03:09:01Z",
-          }),
+  it.effect("logs safe telemetry for schema-valid unknown observation rows", () =>
+    Effect.gen(function* () {
+      const observed = yield* observeAntigravityTranscriptContent({
+        state: emptyAntigravityTranscriptObservationState,
+        telemetryContext: {
+          threadId: "thread-unknown-shape",
+          turnId: "turn-unknown-shape",
+        },
+        content: recordLine({
+          step_index: 0,
+          source: "MODEL",
+          type: "UNKNOWN_REQUIRED_EVENT",
+          status: "DONE",
+          created_at: "2026-06-23T03:09:01Z",
         }),
-      );
-      assert.match(unknownShape.message, /Unsupported Antigravity transcript record/u);
+      });
+      const logText = (yield* TestConsole.logLines).join("\n");
+
+      assert.strictEqual(observed.records.length, 1);
+      assert.ok(logText.includes('"provider":"antigravity"'));
+      assert.ok(logText.includes('"shape":"MODEL/UNKNOWN_REQUIRED_EVENT/DONE"'));
+      assert.ok(logText.includes('"payloadLength":0'));
     }),
   );
 
@@ -358,8 +369,8 @@ describe("Antigravity transcript observation", () => {
       assert.ok(logText.includes('"turnId":"turn-ignored-row"'));
       assert.ok(logText.includes('"shape":"MODEL/GENERIC/DONE"'));
       assert.ok(logText.includes('"shapeCount":2'));
-      assert.ok(logText.includes('"contentLength":39'));
-      assert.match(logText, /"contentSha256":"[a-f0-9]{64}"/u);
+      assert.ok(logText.includes('"payloadLength":39'));
+      assert.match(logText, /"payloadSha256":"[a-f0-9]{64}"/u);
       assert.ok(!logText.includes(rawIgnoredContent));
     }),
   );
