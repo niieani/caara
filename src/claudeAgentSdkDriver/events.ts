@@ -24,6 +24,7 @@ import {
   type ClaudeAgentSdkRuntimeEventState,
 } from "./claudeAgentSdkRuntimeEventState.ts";
 import { resetClaudeAgentSdkStreamTracking, runtimeEventsFromStreamEvent } from "./streamEvents.ts";
+import { logIgnoredClaudeSdkObservation, stringField } from "./unknownObservationTelemetry.ts";
 
 /** SDK permission-denied message emitted after noninteractive permission rejection. */
 type ClaudeAgentSdkPermissionDeniedMessage = Extract<
@@ -297,8 +298,28 @@ const runtimeEventsFromAssistantTextContent = ({
     ),
   );
 
+/** Returns the normalized shape for one unknown assistant content block. */
+const unknownAssistantContentShape = (content: unknown): string =>
+  `assistant/content/${stringField(content, "type") ?? "unknown"}`;
+
+/** Logs one ignored assistant content block and returns no runtime events. */
+const ignoredAssistantContentEvents = ({
+  state,
+  content,
+  sessionId,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly content: unknown;
+  readonly sessionId: string;
+}) =>
+  logIgnoredClaudeSdkObservation({
+    shape: unknownAssistantContentShape(content),
+    payload: content,
+    sessionId,
+  }).pipe(Effect.map(() => noRuntimeEvents(state)));
+
 /** Converts a completed SDK assistant message into fallback text runtime events. */
-const runtimeEventsFromAssistantMessage = ({
+const runtimeEventsFromAssistantMessage = Effect.fnUntraced(function* ({
   state,
   message,
   transportVisibility,
@@ -306,7 +327,7 @@ const runtimeEventsFromAssistantMessage = ({
   readonly state: ClaudeAgentSdkRuntimeEventState;
   readonly message: Extract<SDKMessage, { readonly type: "assistant" }>;
   readonly transportVisibility: AgentRuntimeTransportVisibility;
-}): ClaudeAgentSdkRuntimeEventResult => {
+}) {
   const [initialState, initialEvents] = Match.value(hasToolUseContent(message)).pipe(
     Match.when(true, () => flushPendingAssistantTexts({ state, messagePhase: "commentary" })),
     Match.orElse(() => noRuntimeEvents(state)),
@@ -320,37 +341,47 @@ const runtimeEventsFromAssistantMessage = ({
   const messagePhase = messagePhaseFromAssistantStopReason(message.message.stop_reason);
 
   for (const [contentIndex, content] of message.message.content.entries()) {
-    const [updatedState, nextEvents] = Match.value(content).pipe(
+    const [updatedState, nextEvents] = yield* Match.value(content).pipe(
       Match.when(
         () => isAlreadyStreamedAssistantContent({ state: nextState, contentIndex, content }),
-        () => noRuntimeEvents(nextState),
+        () => Effect.succeed(noRuntimeEvents(nextState)),
       ),
       Match.when({ type: "text" }, (textContent) =>
-        runtimeEventsFromAssistantTextContent({
-          state: nextState,
-          text: textContent.text,
-          phaseKnown,
-          messagePhase,
-        }),
+        Effect.succeed(
+          runtimeEventsFromAssistantTextContent({
+            state: nextState,
+            text: textContent.text,
+            phaseKnown,
+            messagePhase,
+          }),
+        ),
       ),
       Match.when({ type: "thinking" }, (thinkingContent) =>
-        reasoningTextEvents({ state: nextState, text: thinkingContent.thinking }),
+        Effect.succeed(reasoningTextEvents({ state: nextState, text: thinkingContent.thinking })),
       ),
       Match.when({ type: "tool_use" }, (toolUseContent) =>
-        runtimeEventsFromToolUse({
+        Effect.succeed(
+          runtimeEventsFromToolUse({
+            state: nextState,
+            content: toolUseContent,
+            transportVisibility,
+          }),
+        ),
+      ),
+      Match.orElse((unknownContent) =>
+        ignoredAssistantContentEvents({
           state: nextState,
-          content: toolUseContent,
-          transportVisibility,
+          content: unknownContent,
+          sessionId: message.session_id,
         }),
       ),
-      Match.orElse(() => noRuntimeEvents(nextState)),
     );
     nextState = updatedState;
     events.push(...nextEvents);
   }
 
   return [resetClaudeAgentSdkStreamTracking(nextState), events] as const;
-};
+});
 
 /** Converts a user tool_result message into activity commentary when present. */
 const runtimeEventsFromUserMessage = ({
@@ -414,6 +445,24 @@ const runtimeEventsFromTaskProgress = ({
     transportVisibility,
   });
 
+/** Returns the normalized shape for one ignored SDK message. */
+const ignoredSdkMessageShape = (message: unknown): string =>
+  `message/${stringField(message, "type") ?? "unknown"}`;
+
+/** Logs one ignored SDK message and returns no runtime events. */
+const ignoredSdkMessageEvents = ({
+  state,
+  message,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly message: unknown;
+}) =>
+  logIgnoredClaudeSdkObservation({
+    shape: ignoredSdkMessageShape(message),
+    payload: message,
+    sessionId: stringField(message, "session_id"),
+  }).pipe(Effect.map(() => noRuntimeEvents(state)));
+
 /** Converts one SDK message into zero or more Caara runtime lifecycle events. */
 const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
   state,
@@ -426,16 +475,14 @@ const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
 }) {
   return yield* Match.value(message).pipe(
     Match.when({ type: "stream_event" }, (sdkMessage) =>
-      Effect.succeed(runtimeEventsFromStreamEvent({ state, message: sdkMessage })),
+      runtimeEventsFromStreamEvent({ state, message: sdkMessage }),
     ),
     Match.when({ type: "assistant" }, (sdkMessage) =>
-      Effect.succeed(
-        runtimeEventsFromAssistantMessage({
-          state,
-          message: sdkMessage,
-          transportVisibility,
-        }),
-      ),
+      runtimeEventsFromAssistantMessage({
+        state,
+        message: sdkMessage,
+        transportVisibility,
+      }),
     ),
     Match.when({ type: "user" }, (sdkMessage) =>
       Effect.succeed(
@@ -479,7 +526,7 @@ const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
     Match.when({ type: "system", subtype: "permission_denied" }, (sdkMessage) =>
       Effect.succeed(runtimeEventsFromPermissionDenied({ state, message: sdkMessage })),
     ),
-    Match.orElse(() => Effect.succeed(noRuntimeEvents(state))),
+    Match.orElse((sdkMessage) => ignoredSdkMessageEvents({ state, message: sdkMessage })),
   );
 });
 
