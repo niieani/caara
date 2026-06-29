@@ -4,13 +4,18 @@ import path from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { TestClock } from "effect/testing";
 
+import type { CaaraDoctorResult } from "./caaraDoctor.ts";
 import {
   runCaaraInstallService,
   runCaaraUninstallService,
+  type CaaraServiceDoctor,
   type CaaraServiceManager,
 } from "./caaraServiceLifecycle.ts";
+import { serviceManagerStartCommands } from "./caaraServiceManager.ts";
 import { parseCaaraServiceConfigYaml } from "./caaraSettings.ts";
+import { CaaraStatusError, type CaaraHealthProbe } from "./caaraStatus.ts";
 
 /** Builds one isolated service lifecycle test root under temp.local. */
 const testRoot = (): string =>
@@ -63,14 +68,63 @@ const sourceRuntime = ({ executablePath }: { readonly executablePath: string }) 
 
 /** Fake service manager recording unload attempts without touching launchd/systemd. */
 const recordingServiceManager = (events: string[]): CaaraServiceManager => ({
+  start: Effect.fnUntraced(function* ({ serviceFilePath, serviceId }) {
+    events.push(`start:${serviceId}:${serviceFilePath}`);
+    yield* Effect.void;
+  }),
+  statusHint: ({ serviceId }) => `status ${serviceId}`,
   unload: Effect.fnUntraced(function* ({ serviceId, serviceFilePath }) {
-    events.push(`${serviceId}:${serviceFilePath}`);
+    events.push(`unload:${serviceId}:${serviceFilePath}`);
     yield* Effect.void;
   }),
 });
 
 /** Original config fixture used to prove install-service preservation semantics. */
 const originalConfigFixture = (): string => "host: 127.0.0.2\nport: 8788\n";
+
+/** Builds one successful doctor result for service start tests. */
+const doctorOkResult = ({ configPath }: { readonly configPath: string }): CaaraDoctorResult => ({
+  exitCode: 0,
+  message: "Caara doctor ok",
+  checks: [],
+  appendedPathEntries: [],
+  configUpdated: false,
+  configPath,
+});
+
+/** Builds a doctor seam that records each repair attempt. */
+const recordingDoctor = ({
+  events,
+  result,
+}: {
+  readonly events: string[];
+  readonly result: CaaraDoctorResult;
+}): CaaraServiceDoctor => ({
+  fix: ({ args }) =>
+    Effect.gen(function* () {
+      events.push(`doctor:${args.join(" ")}`);
+      yield* Effect.void;
+      return result;
+    }),
+});
+
+/** Builds a health probe seam that records each probed URL. */
+const recordingHealthProbe = ({ events }: { readonly events: string[] }): CaaraHealthProbe => ({
+  probe: (url) =>
+    Effect.gen(function* () {
+      events.push(`health:${url}`);
+      yield* Effect.void;
+      return { status: "ok", service: "caara" } as const;
+    }),
+});
+
+/** Builds a health probe that records attempts and always fails. */
+const failingHealthProbe = ({ attempts }: { readonly attempts: string[] }): CaaraHealthProbe => ({
+  probe: Effect.fnUntraced(function* (url) {
+    attempts.push(url);
+    return yield* new CaaraStatusError({ message: "connection refused" });
+  }),
+});
 
 describe("Caara service lifecycle", () => {
   it.effect("fails install-service --no-start from source mode with build guidance", () =>
@@ -130,7 +184,7 @@ describe("Caara service lifecycle", () => {
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
       });
       const installedBinary = path.join(env.XDG_BIN_HOME, "caara");
-      const serviceFile = path.join(env.XDG_CONFIG_HOME, "systemd", "user", "dev.caara.service");
+      const serviceFile = path.join(env.XDG_CONFIG_HOME, "systemd", "user", "caara.service");
       const serviceUnit = yield* readFile({ filePath: serviceFile });
 
       assert.match(serviceUnit, new RegExp(`ExecStart=${installedBinary}`, "u"));
@@ -202,7 +256,7 @@ describe("Caara service lifecycle", () => {
       assert.strictEqual(yield* fileExists({ filePath: serviceFile }), false);
       assert.strictEqual(yield* fileExists({ filePath: receiptPath }), false);
       assert.strictEqual(yield* fileExists({ filePath: configPath }), true);
-      assert.match(managerEvents.at(0) ?? "", /dev\.caara/u);
+      assert.match(managerEvents.at(0) ?? "", /unload:dev\.caara/u);
 
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
       yield* runCaaraInstallService({
@@ -225,4 +279,156 @@ describe("Caara service lifecycle", () => {
       );
     }),
   );
+
+  it.effect("starts the installed service after doctor repair and health verification", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const events: string[] = [];
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
+      const serviceFile = path.join(env.HOME, "Library", "LaunchAgents", "dev.caara.plist");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--host", "0.0.0.0", "--port", "8799"],
+        doctor: recordingDoctor({ events, result: doctorOkResult({ configPath }) }),
+        env,
+        healthProbe: recordingHealthProbe({ events }),
+        platform: "darwin",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+        serviceManager: recordingServiceManager(events),
+      });
+
+      assert.strictEqual(result.exitCode, 0);
+      assert.deepStrictEqual(events, [
+        "doctor:--fix --host 0.0.0.0 --port 8799",
+        `start:dev.caara:${serviceFile}`,
+        "health:http://127.0.0.1:8799/health",
+      ]);
+      assert.match(result.message, /service started/u);
+      assert.match(result.message, /Caara healthy/u);
+    }),
+  );
+
+  it.effect("does not run doctor, start, or health verification for --no-start", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const events: string[] = [];
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start"],
+        doctor: recordingDoctor({
+          events,
+          result: doctorOkResult({ configPath: path.join(root, "unused.yaml") }),
+        }),
+        env,
+        healthProbe: recordingHealthProbe({ events }),
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+        serviceManager: recordingServiceManager(events),
+      });
+
+      assert.strictEqual(result.exitCode, 0);
+      assert.deepStrictEqual(events, []);
+      assert.match(result.message, /--no-start complete/u);
+    }),
+  );
+
+  it.effect("fails before service start when doctor repair leaves missing executables", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const events: string[] = [];
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: [],
+        doctor: recordingDoctor({
+          events,
+          result: {
+            ...doctorOkResult({ configPath }),
+            exitCode: 1,
+            message: "Caara doctor found missing executables\nmissing Fake requires fake-agent",
+          },
+        }),
+        env,
+        healthProbe: recordingHealthProbe({ events }),
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+        serviceManager: recordingServiceManager(events),
+      });
+
+      assert.strictEqual(result.exitCode, 1);
+      assert.deepStrictEqual(events, ["doctor:--fix"]);
+      assert.match(result.message, /missing Fake/u);
+    }),
+  );
+
+  it.effect(
+    "reports health timeout with the last health error and status hint",
+    () =>
+      Effect.gen(function* () {
+        const root = testRoot();
+        const env = serviceEnv({ root });
+        const events: string[] = [];
+        const healthAttempts: string[] = [];
+        const sourceExecutable = path.join(root, "dist", "caara-source");
+        const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
+        yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+        const result = yield* runCaaraInstallService({
+          args: ["--port", "8799"],
+          doctor: recordingDoctor({ events, result: doctorOkResult({ configPath }) }),
+          env,
+          healthProbe: failingHealthProbe({ attempts: healthAttempts }),
+          platform: "linux",
+          runtime: compiledRuntime({ executablePath: sourceExecutable }),
+          serviceManager: recordingServiceManager(events),
+        }).pipe(TestClock.withLive);
+
+        assert.strictEqual(result.exitCode, 1);
+        assert.strictEqual(healthAttempts.length, 21);
+        assert.match(result.message, /connection refused/u);
+        assert.match(result.message, /status caara\.service/u);
+      }),
+    10_000,
+  );
+
+  it("selects platform-specific service start commands", () => {
+    assert.deepStrictEqual(
+      serviceManagerStartCommands({
+        platform: "darwin",
+        request: {
+          serviceId: "dev.caara",
+          serviceFilePath: "/Users/caara/Library/LaunchAgents/dev.caara.plist",
+        },
+        userId: "501",
+      }),
+      [
+        ["launchctl", "bootstrap", "gui/501", "/Users/caara/Library/LaunchAgents/dev.caara.plist"],
+        ["launchctl", "enable", "gui/501/dev.caara"],
+        ["launchctl", "kickstart", "-k", "gui/501/dev.caara"],
+      ],
+    );
+    assert.deepStrictEqual(
+      serviceManagerStartCommands({
+        platform: "linux",
+        request: {
+          serviceId: "caara.service",
+          serviceFilePath: "/home/caara/.config/systemd/user/caara.service",
+        },
+        userId: "1000",
+      }),
+      [
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", "caara.service"],
+      ],
+    );
+  });
 });

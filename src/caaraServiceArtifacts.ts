@@ -19,7 +19,8 @@ export type CaaraServiceRuntime =
     };
 
 /** Environment values used by service lifecycle commands. */
-export interface CaaraServiceLifecycleEnvironment extends CaaraSettingsEnvironment {
+export interface CaaraServiceLifecycleEnvironment
+  extends CaaraSettingsEnvironment, Readonly<Record<string, string | undefined>> {
   readonly XDG_BIN_HOME?: string | undefined;
   readonly XDG_STATE_HOME?: string | undefined;
 }
@@ -44,8 +45,19 @@ export interface CaaraServicePaths {
   readonly serviceFilePath: string;
 }
 
-/** Stable user service id shared by launchd and systemd. */
-const caaraServiceId = (): string => "dev.caara";
+/** Stable launchd user service label. */
+const launchdServiceId = (): string => "dev.caara";
+
+/** Stable systemd user service unit name. */
+const systemdServiceId = (): string => "caara.service";
+
+/** Stable user service id for one service manager platform. */
+const caaraServiceId = ({ platform }: { readonly platform: CaaraServicePlatform }): string =>
+  Match.value(platform).pipe(
+    Match.when("darwin", launchdServiceId),
+    Match.when("linux", systemdServiceId),
+    Match.exhaustive,
+  );
 
 /** Builds one typed lifecycle failure. */
 export const caaraServiceLifecycleError = (message: string): CaaraServiceLifecycleError =>
@@ -110,13 +122,10 @@ export const resolveServicePaths = Effect.fnUntraced(function* ({
   const stateHome = yield* resolveStateHome({ env });
   const configPath = defaultCaaraConfigPath({ env });
   const stateDir = path.join(stateHome, "caara");
+  const serviceId = caaraServiceId({ platform });
   const serviceFilePath = Match.value(platform).pipe(
-    Match.when("darwin", () =>
-      path.join(home, "Library", "LaunchAgents", `${caaraServiceId()}.plist`),
-    ),
-    Match.when("linux", () =>
-      path.join(configHome, "systemd", "user", `${caaraServiceId()}.service`),
-    ),
+    Match.when("darwin", () => path.join(home, "Library", "LaunchAgents", `${serviceId}.plist`)),
+    Match.when("linux", () => path.join(configHome, "systemd", "user", serviceId)),
     Match.exhaustive,
   );
 
@@ -127,7 +136,7 @@ export const resolveServicePaths = Effect.fnUntraced(function* ({
     configDir: path.dirname(configPath),
     stateDir,
     receiptPath: path.join(stateDir, "install-receipt.json"),
-    serviceId: caaraServiceId(),
+    serviceId,
     serviceFilePath,
   } satisfies CaaraServicePaths;
 });
