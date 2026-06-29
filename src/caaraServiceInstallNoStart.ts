@@ -150,6 +150,19 @@ const applyInstallConfig = Effect.fnUntraced(function* ({
   );
 });
 
+/** Replaces default config paths with the config path selected by settings resolution. */
+const servicePathsWithResolvedConfig = ({
+  paths,
+  resolution,
+}: {
+  readonly paths: CaaraServicePaths;
+  readonly resolution: CaaraSettingsResolution;
+}): CaaraServicePaths => ({
+  ...paths,
+  configPath: resolution.configPath,
+  configDir: path.dirname(resolution.configPath),
+});
+
 /** User-facing text for one config install outcome. */
 const configOutcomeText = (outcome: ConfigInstallOutcome): string =>
   Match.valueTags(outcome, {
@@ -201,8 +214,11 @@ const writeServiceFile = Effect.fnUntraced(function* ({
       fs.writeFile(
         paths.serviceFilePath,
         renderServiceFile({
-          binaryPath: paths.installedBinaryPath,
           platform,
+          program: {
+            binaryPath: paths.installedBinaryPath,
+            args: ["--config", paths.configPath],
+          },
           serviceId: paths.serviceId,
         }),
         "utf8",
@@ -281,12 +297,13 @@ export const installServiceNoStartArtifacts = Effect.fnUntraced(function* ({
 }) {
   const compiledRuntime = yield* requireCompiledRuntime({ runtime });
   const servicePlatform = yield* requireServicePlatform({ platform });
-  const paths = yield* resolveServicePaths({ env, platform: servicePlatform });
+  const defaultPaths = yield* resolveServicePaths({ env, platform: servicePlatform });
   const resolution = yield* resolveCaaraSettingsResolutionFromArgs({
     args: options.settingsArgs,
     configLoader,
     env,
   });
+  const paths = servicePathsWithResolvedConfig({ paths: defaultPaths, resolution });
   const configOutcome = yield* applyInstallConfig({ options, paths, resolution });
   yield* copyInstalledBinary({
     from: compiledRuntime.executablePath,

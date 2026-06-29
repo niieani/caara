@@ -1,5 +1,6 @@
-import { Console, Effect, Match, Option, Schema } from "effect";
+import { Effect, Match, Option, Schema } from "effect";
 
+import { writeCaaraStructuredLogLine } from "../caaraLogging.ts";
 import {
   AgentDriverError,
   type AgentRuntimeEvent,
@@ -194,7 +195,9 @@ const missingFinalDiagnosticRuntimeEvents = Effect.fnUntraced(function* ({
   readonly records: readonly AntigravityTranscriptRecord[];
   readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
-  yield* Console.log(encodeMissingFinalTranscriptWarning({ records, telemetryContext }));
+  yield* writeCaaraStructuredLogLine(
+    encodeMissingFinalTranscriptWarning({ records, telemetryContext }),
+  );
   return finalAnswerRuntimeEvents(antigravityMissingFinalDiagnosticText());
 });
 

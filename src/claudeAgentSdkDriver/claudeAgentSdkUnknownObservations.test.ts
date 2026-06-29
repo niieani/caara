@@ -1,8 +1,9 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { TestConsole } from "effect/testing";
 
+import { CaaraAppLogWriter } from "../caaraLogging.ts";
 import type { AgentDriverTurn, AgentRuntimeEvent } from "../mockResponsesProvider/agentDriver.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
@@ -13,6 +14,7 @@ import {
   sdkMessageDelta,
   sdkTextDelta,
 } from "./claudeAgentSdkDriverTestHarness.ts";
+import { logIgnoredClaudeSdkObservation } from "./unknownObservationTelemetry.ts";
 
 /** Stable cwd used by unknown-observation regression tests. */
 const projectRoot = process.cwd();
@@ -180,7 +182,39 @@ const contentDeltaTexts = (events: readonly AgentRuntimeEvent[]): readonly strin
 const encodedRuntimeEvents = (events: readonly AgentRuntimeEvent[]): string =>
   Schema.encodeSync(Schema.UnknownFromJsonString)(events);
 
+/** Builds an in-memory app log layer for runtime telemetry assertions. */
+const appLogCaptureLayer = ({ lines }: { readonly lines: string[] }) =>
+  Layer.succeed(CaaraAppLogWriter, {
+    writeLine: Effect.fnUntraced(function* (line: string) {
+      lines.push(line);
+      yield* Effect.void;
+    }),
+  });
+
 describe("Claude Agent SDK unknown observations", () => {
+  it.effect("writes ignored observation telemetry to the app-owned log when available", () =>
+    Effect.gen(function* () {
+      const appLogLines: string[] = [];
+
+      yield* logIgnoredClaudeSdkObservation({
+        shape: "message/future_observation",
+        payload: {
+          secret: "RAW_UNKNOWN_SDK_MESSAGE_SHOULD_NOT_LEAK",
+        },
+        sessionId: sdkSessionId(),
+        index: 7,
+      }).pipe(Effect.provide(appLogCaptureLayer({ lines: appLogLines })));
+
+      const consoleText = (yield* TestConsole.logLines).join("\n");
+      const appLogText = appLogLines.join("\n");
+
+      assert.ok(consoleText.includes('"event":"caara.claude_sdk.ignored_observation"'));
+      assert.ok(appLogText.includes('"event":"caara.claude_sdk.ignored_observation"'));
+      assert.ok(appLogText.includes('"shape":"message/future_observation"'));
+      assert.ok(!appLogText.includes("RAW_UNKNOWN_SDK_MESSAGE_SHOULD_NOT_LEAK"));
+    }),
+  );
+
   it.effect("ignores unknown SDK message types with payload-safe telemetry", () =>
     Effect.gen(function* () {
       const harness = fakeSdkHarness({

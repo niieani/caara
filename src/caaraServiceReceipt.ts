@@ -8,6 +8,7 @@ import { caaraServiceLifecycleError, type CaaraServicePaths } from "./caaraServi
 /** Receipt written by `install-service` and consumed by `uninstall-service`. */
 const CaaraInstallReceipt = Schema.Struct({
   binaryPath: Schema.String,
+  configPath: Schema.String,
   serviceId: Schema.String,
   serviceFilePath: Schema.String,
   installedAtUnixMs: Schema.Finite,
@@ -25,6 +26,7 @@ export const writeInstallReceipt = Effect.fnUntraced(function* ({
   const installedAtUnixMs = yield* Clock.currentTimeMillis;
   const receipt = {
     binaryPath: paths.installedBinaryPath,
+    configPath: paths.configPath,
     serviceId: paths.serviceId,
     serviceFilePath: paths.serviceFilePath,
     installedAtUnixMs,

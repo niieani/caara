@@ -45,6 +45,12 @@ export interface CaaraServicePaths {
   readonly serviceFilePath: string;
 }
 
+/** Executable and argv used by a generated Caara user service file. */
+export interface CaaraServiceProgram {
+  readonly binaryPath: string;
+  readonly args: readonly string[];
+}
+
 /** Stable launchd user service label. */
 const launchdServiceId = (): string => "dev.caara";
 
@@ -152,10 +158,10 @@ const xmlEscape = (value: string): string =>
 
 /** Renders the launchd user agent plist for Caara. */
 export const renderLaunchdPlist = ({
-  binaryPath,
+  program,
   serviceId,
 }: {
-  readonly binaryPath: string;
+  readonly program: CaaraServiceProgram;
   readonly serviceId: string;
 }): string =>
   [
@@ -167,7 +173,9 @@ export const renderLaunchdPlist = ({
     `  <string>${xmlEscape(serviceId)}</string>`,
     "  <key>ProgramArguments</key>",
     "  <array>",
-    `    <string>${xmlEscape(binaryPath)}</string>`,
+    ...[program.binaryPath, ...program.args].map(
+      (argument) => `    <string>${xmlEscape(argument)}</string>`,
+    ),
     "  </array>",
     "  <key>EnvironmentVariables</key>",
     "  <dict>",
@@ -183,15 +191,34 @@ export const renderLaunchdPlist = ({
     "",
   ].join("\n");
 
+/** Escapes one systemd ExecStart argument without invoking a shell. */
+const systemdExecStartArgument = (argument: string): string => {
+  const escaped = argument
+    .replaceAll("%", "%%")
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("$", "\\$")
+    .replaceAll("`", "\\`");
+  return Match.value(/[\s"\\$`]/u.test(argument)).pipe(
+    Match.when(true, () => `"${escaped}"`),
+    Match.orElse(() => escaped),
+  );
+};
+
 /** Renders the systemd user unit for Caara. */
-export const renderSystemdUserUnit = ({ binaryPath }: { readonly binaryPath: string }): string =>
-  [
+export const renderSystemdUserUnit = ({
+  program,
+}: {
+  readonly program: CaaraServiceProgram;
+}): string => {
+  const execStart = [program.binaryPath, ...program.args].map(systemdExecStartArgument).join(" ");
+  return [
     "[Unit]",
     "Description=Caara Responses API service",
     "",
     "[Service]",
     "Type=simple",
-    `ExecStart=${binaryPath}`,
+    `ExecStart=${execStart}`,
     "Environment=CAARA_SERVICE=1",
     "Restart=always",
     "",
@@ -199,19 +226,20 @@ export const renderSystemdUserUnit = ({ binaryPath }: { readonly binaryPath: str
     "WantedBy=default.target",
     "",
   ].join("\n");
+};
 
 /** Renders the platform-specific service manager file content. */
 export const renderServiceFile = ({
-  binaryPath,
   platform,
+  program,
   serviceId,
 }: {
-  readonly binaryPath: string;
   readonly platform: CaaraServicePlatform;
+  readonly program: CaaraServiceProgram;
   readonly serviceId: string;
 }): string =>
   Match.value(platform).pipe(
-    Match.when("darwin", () => renderLaunchdPlist({ binaryPath, serviceId })),
-    Match.when("linux", () => renderSystemdUserUnit({ binaryPath })),
+    Match.when("darwin", () => renderLaunchdPlist({ program, serviceId })),
+    Match.when("linux", () => renderSystemdUserUnit({ program })),
     Match.exhaustive,
   );

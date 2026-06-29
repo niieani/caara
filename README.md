@@ -81,8 +81,9 @@ dist/caara install-service
 
 `install-service` copies the current compiled executable to
 `${XDG_BIN_HOME:-$HOME/.local/bin}/caara`, writes the service config and launchd/systemd user unit,
-runs `doctor --fix`, starts/enables the service, and verifies `/health`. Use `--no-start` to only
-write artifacts:
+runs `doctor --fix`, starts/enables the service, and verifies `/health`. The generated service
+invokes Caara with `--config <resolved-config-path>` so explicit install config paths remain
+durable. Use `--no-start` to only write artifacts:
 
 ```bash
 dist/caara install-service --no-start

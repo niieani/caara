@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { Console, Effect, Match, Option, Schema } from "effect";
+import { Effect, Match, Option, Schema } from "effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
+import { writeCaaraStructuredLogLine } from "../caaraLogging.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRelayMode } from "./options.ts";
 import { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
@@ -236,7 +237,9 @@ const logIgnoredTranscriptRecords = Effect.fnUntraced(function* ({
   readonly telemetryContext?: AntigravityTranscriptTelemetryContext;
 }) {
   for (const record of records.filter(isIgnorableUnknownObservationRecord)) {
-    yield* Console.log(encodeIgnoredTranscriptRecordWarning({ record, records, telemetryContext }));
+    yield* writeCaaraStructuredLogLine(
+      encodeIgnoredTranscriptRecordWarning({ record, records, telemetryContext }),
+    );
   }
 });
 

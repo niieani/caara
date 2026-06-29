@@ -212,7 +212,7 @@ export const runCaaraUninstallService = Effect.fnUntraced(function* ({
   yield* removePath({ filePath: receipt.binaryPath });
   yield* removePath({ filePath: paths.receiptPath });
   const purgePaths = Match.value(options.purge).pipe(
-    Match.when(true, () => [paths.configDir, paths.stateDir] as const),
+    Match.when(true, () => [path.dirname(receipt.configPath), paths.stateDir] as const),
     Match.orElse(() => [] as readonly string[]),
   );
   yield* Effect.forEach(purgePaths, (filePath) => removePath({ filePath }), { discard: true });

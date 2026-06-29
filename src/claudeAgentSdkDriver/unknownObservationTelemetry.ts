@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
-import { Console, Effect, Match, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
+
+import { writeCaaraStructuredLogLine } from "../caaraLogging.ts";
 
 /** Payload-safe telemetry fields for one ignored Claude SDK observation. */
 export interface IgnoredClaudeSdkObservation {
@@ -63,5 +65,5 @@ const encodeIgnoredClaudeSdkObservationWarning = ({
 export const logIgnoredClaudeSdkObservation = Effect.fnUntraced(function* (
   observation: IgnoredClaudeSdkObservation,
 ) {
-  yield* Console.log(encodeIgnoredClaudeSdkObservationWarning(observation));
+  yield* writeCaaraStructuredLogLine(encodeIgnoredClaudeSdkObservationWarning(observation));
 });

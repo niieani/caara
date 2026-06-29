@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Console, Context, Effect, Layer, Option, Schema } from "effect";
 
 import type { CaaraSettingsEnvironment, CaaraSettingsValue } from "./caaraSettings.ts";
 
@@ -201,6 +201,16 @@ export const appendCaaraLogLine = Effect.fnUntraced(function* ({
   yield* Effect.tryPromise({
     try: () => fs.appendFile(logFile, `${line}\n`, "utf8"),
     catch: caaraLogErrorFromCause,
+  });
+});
+
+/** Writes one structured log line to console and to the app-owned log when configured. */
+export const writeCaaraStructuredLogLine = Effect.fnUntraced(function* (line: string) {
+  const appLog = yield* Effect.serviceOption(CaaraAppLogWriter);
+  yield* Console.log(line);
+  return yield* Option.match(appLog, {
+    onNone: () => Effect.void,
+    onSome: (writer) => writer.writeLine(line).pipe(Effect.orDie),
   });
 });
 
