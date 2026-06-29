@@ -13,6 +13,15 @@ relays normalized runtime events back as OpenAI Responses SSE events.
 
 Caara serves `POST /v1/responses` on `http://127.0.0.1:8787`.
 
+Startup settings:
+
+- `--config <path>` selects a YAML config file. Default:
+  `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`.
+- `--host <host>` sets the HTTP bind host. Default: `127.0.0.1`.
+- `--port <integer>` sets the HTTP port. Default: `8787`.
+- `--allow-dangerous-skip-permissions` enables request-level dangerous bypass modes. Default:
+  disabled.
+
 Supported request shape:
 
 - `model`: required string in `<external-agent-kind>/<external-model>` form.
@@ -40,6 +49,199 @@ For each valid streaming turn, Caara:
 
 Malformed requests, unsupported model strings, conflicting required identity, missing working
 directory, invalid driver options, and unrecoverable driver failures fail explicitly.
+
+## User Service And Operations
+
+Caara can install itself as a per-user service on macOS and Linux. There is no root/system daemon
+mode. The service runs a compiled single-file Bun executable from an installer-managed user-local
+binary path, not `bun run start` and not a cloned repository.
+
+Supported root commands:
+
+```text
+caara [--config <path>] [--host <host>] [--port <port>] [--allow-dangerous-skip-permissions]
+caara install-service [--config <path>] [--host <host>] [--port <port>] [--allow-dangerous-skip-permissions] [--no-start]
+caara uninstall-service [--purge]
+caara status [--config <path>] [--host <host>] [--port <port>]
+caara doctor [--config <path>] [--fix]
+```
+
+Service install flow:
+
+1. Run `bun run build:service` from the repository, or use a release artifact.
+2. Run `dist/caara install-service`.
+3. Caara copies the compiled executable to `${XDG_BIN_HOME:-$HOME/.local/bin}/caara`.
+4. Caara creates or updates `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`.
+5. Caara writes the platform service file and install receipt.
+6. Caara runs `doctor --fix`.
+7. By default, Caara enables/starts the user service and polls `/health`.
+
+`install-service --no-start` stops after writing the binary, config, service file, and receipt. It
+does not run doctor, start the service, or verify health.
+
+Platform service identity:
+
+| Platform | Service id | Service file |
+| --- | --- | --- |
+| macOS launchd | `dev.caara` | `$HOME/Library/LaunchAgents/dev.caara.plist` |
+| Linux systemd user | `caara.service` | `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service` |
+
+Default start commands:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.caara.plist"
+launchctl enable "gui/$(id -u)/dev.caara"
+launchctl kickstart -k "gui/$(id -u)/dev.caara"
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now caara.service
+```
+
+`caara status` resolves the same config/CLI settings as the server and probes `GET /health`.
+Bind-all hosts map to loopback probe targets: `0.0.0.0` becomes `127.0.0.1`, and `::` becomes
+`::1`.
+
+Health is intentionally shallow. `GET /health` returns HTTP 200 with:
+
+```json
+{ "status": "ok", "service": "caara" }
+```
+
+This only proves that Caara's HTTP router is live. It does not check Claude Code, Antigravity,
+driver authentication, external-agent availability, session state, or future request success.
+
+Default `install-service` waits up to 5 seconds for health, polling every 250ms. If verification
+fails, output includes the last health error and a service-manager status hint, such as
+`launchctl print gui/<uid>/dev.caara` or `systemctl --user status caara.service`.
+
+`caara doctor` checks executable requirements declared by registered drivers. The Diagnostic driver
+declares no external executable requirements, Claude declares `claude`, and Antigravity declares
+`agy`. `doctor --fix` searches configured path prefixes, inherited `PATH`, and built-in service
+defaults, then appends discovered non-default executable directories to the config `path`.
+`install-service` runs doctor fix before starting and fails before service start if a required
+registered-driver executable is still missing.
+
+`caara uninstall-service` unloads/stops the user service, removes the service manager file, removes
+the installer-managed binary recorded in the install receipt, and removes the receipt. It preserves
+config, state, sessions, and logs by default. `caara uninstall-service --purge` also removes the
+Caara config directory and state directory.
+
+## Service Configuration
+
+The service config is strict YAML. Supported top-level keys:
+
+```yaml
+host: 127.0.0.1
+port: 8787
+allowDangerousSkipPermissions: false
+path:
+  - /absolute/path/to/bin
+logFile: /absolute/path/to/caara.log
+```
+
+Rules:
+
+- CLI flags override YAML; YAML overrides built-in defaults.
+- Missing default config is allowed and uses built-in defaults.
+- Missing explicit `--config` fails.
+- Malformed YAML, multi-document YAML, unknown keys, wrong types, empty `host`, invalid `port`,
+  relative `path` entries, and relative `logFile` fail explicitly.
+- Existing config is preserved by `install-service` unless explicit install flags update service
+  settings. Install output says whether config was created, preserved, or updated.
+
+Built-in defaults:
+
+| Setting | Default |
+| --- | --- |
+| `host` | `127.0.0.1` |
+| `port` | `8787` |
+| `allowDangerousSkipPermissions` | `false` |
+| `path` | `[]` |
+| `logFile` | `${XDG_STATE_HOME:-$HOME/.local/state}/caara/logs/caara.log` |
+
+Non-loopback hosts are allowed but dangerous. Caara has no authentication layer. Binding to
+`0.0.0.0`, `::`, or another non-loopback address can expose a code-agent bridge to the network and
+should only be used in controlled setups such as containerized isolation with bind-mounted
+workspaces.
+
+## Service Execution Path And Logs
+
+Config `path` contains user prefixes only; built-in defaults are computed and are not written into
+config. Foreground server runs use:
+
+```text
+config path prefixes + inherited process PATH
+```
+
+Installed service runs set `CAARA_SERVICE=1` and use:
+
+```text
+config path prefixes + $HOME/.local/bin + /opt/homebrew/bin + /usr/local/bin + /usr/bin + /bin
+```
+
+This keeps service startup independent from transient interactive shell state while still allowing
+`doctor --fix` to persist non-default executable directories needed by external drivers.
+
+Caara owns its JSONL app log instead of relying on launchd or systemd stdout/stderr files. Default
+location:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/caara/logs/caara.log
+```
+
+Set `logFile` to an absolute path to override it. Rotation happens before app-owned runtime layers
+initialize. The current fixed policy rotates at 10 MiB and retains 3 rotated files:
+`caara.log.1`, `caara.log.2`, and `caara.log.3`.
+
+## Release And Bootstrap Contract
+
+Build scripts:
+
+```bash
+bun run build:service
+bun run build:service:all
+bun run build:service:all --codesign-identity "Developer ID Application: Example"
+```
+
+Current-host output:
+
+```text
+dist/caara
+dist/checksums.txt
+```
+
+Release artifact names:
+
+```text
+dist/caara-darwin-arm64
+dist/caara-darwin-x64
+dist/caara-linux-arm64
+dist/caara-linux-x64
+dist/checksums.txt
+```
+
+`checksums.txt` uses conventional SHA-256 lines:
+
+```text
+<sha256>  <artifact-basename>
+```
+
+`--codesign-identity` is optional and applies only to macOS release artifacts in the `--all` build.
+Linux artifacts are never codesigned by this script.
+
+Future pipeable installer contract:
+
+1. Select the release asset for the host OS and CPU architecture.
+2. Download that asset plus `checksums.txt`.
+3. Verify the SHA-256 checksum.
+4. Place or execute the selected binary.
+5. Run `caara install-service`, forwarding user install args.
+
+Future Homebrew cask contract: the cask should install the binary and delegate lifecycle to
+`caara install-service` and `caara uninstall-service`. It should not duplicate launchd/systemd
+service definitions or uninstall policy.
 
 ## Codex Turn Context
 
@@ -227,7 +429,8 @@ Unsupported option names and invalid option values fail the turn explicitly.
 
 `permission_mode` defaults to `dontAsk`. Accepted values are `auto`, `dontAsk`, and
 `bypassPermissions`; interactive Claude SDK modes are rejected. When `bypassPermissions` is used,
-the driver also sets the SDK's explicit dangerous-bypass opt-in.
+the driver also sets the SDK's explicit dangerous-bypass opt-in. `bypassPermissions` is rejected
+unless Caara was started with `--allow-dangerous-skip-permissions`.
 
 For a first turn, the driver starts an SDK `query()` with a generated durable session id. For a
 follow-up turn, it passes the stored Claude SDK resume cursor to `query()`. The prompt extractor
@@ -531,6 +734,8 @@ query_params = { effort = "high", max_budget_usd = "1", permission_mode = "auto"
 
 Use `query_params.effort` for an explicit Claude effort override. It wins over Codex
 `reasoning.effort`, and it is the only way to request Claude-only `max`.
+Use `query_params.permission_mode = "bypassPermissions"` only when Caara was started with
+`--allow-dangerous-skip-permissions`.
 
 Example with Antigravity options:
 
@@ -546,6 +751,8 @@ query_params = { print_timeout_seconds = "7200", sandbox = "true" }
 Use `query_params.print_timeout_seconds` for an explicit Antigravity print-mode wait. It accepts
 integer seconds from `1` through `86400`. When omitted, Caara still passes `7200s` to `agy` instead
 of relying on the CLI's `5m0s` default.
+Use `query_params.dangerously_skip_permissions = "true"` only when Caara was started with
+`--allow-dangerous-skip-permissions`.
 
 ## Effect Usage
 
@@ -561,7 +768,7 @@ Primary checks:
 
 ```bash
 bun run fmt
-bun lint
+bun run lint
 bun run typecheck
 bun run test --run
 ```

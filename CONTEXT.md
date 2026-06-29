@@ -9,6 +9,20 @@ speaks the Responses-compatible subagent transport it already supports.
 The bridge that lets Codex delegate subagent work to external code agents.
 _Avoid_: Provider, mock provider, simulator
 
+**Caara user service**:
+The per-user long-running Caara process that serves Codex on localhost.
+_Avoid_: System daemon, root service, repo script
+
+**Caara service configuration**:
+The user-owned configuration for the installed Caara user service, distinct from Codex provider
+query parameters and driver-owned options.
+_Avoid_: Launchd config, systemd config, environment defaults
+
+**Caara service execution path**:
+The ordered executable search path Caara gives its user service and external drivers, composed from
+user-configured path prefixes followed by Caara's built-in defaults.
+_Avoid_: Shell PATH, workspace paths, driver add_dirs
+
 **Managing agent**:
 The parent Codex session that creates and talks to subagents.
 _Avoid_: Parent process, caller
@@ -213,6 +227,11 @@ _Avoid_: Raw thinking, hidden chain of thought, activity commentary
 The driver-specific setting bundle that controls what an external agent is allowed to attempt
 without asking. Caara forwards it as driver options rather than defining one global permission mode.
 _Avoid_: Caara permission mode, global safety tier
+
+**Dangerous permission skip allowance**:
+A Caara process-level host trust gate that permits requests to use external-agent permission bypass
+features when the selected driver supports them.
+_Avoid_: Driver permission posture, permission prompt
 
 **Permission prompt**:
 A runtime approval request from an external agent or harness to perform an action during a turn

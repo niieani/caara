@@ -45,11 +45,76 @@ Start the local Responses-compatible bridge on `127.0.0.1:8787`:
 bun run start
 ```
 
+Startup flags:
+
+| Flag                                 | Values / shape                    |
+| ------------------------------------ | --------------------------------- |
+| `--config`                           | absolute or relative YAML path    |
+| `--host`                             | non-empty bind host               |
+| `--port`                             | integer from `1` to `65535`       |
+| `--allow-dangerous-skip-permissions` | enables dangerous driver bypasses |
+
+For example:
+
+```bash
+bun run start --port 8788
+```
+
 Caara serves:
 
 - `POST /v1/responses`
+- `GET /health`
 - `stream: true` only
 - Responses SSE output only
+
+`GET /health` returns HTTP 200 with `{"status":"ok","service":"caara"}` when Caara's HTTP router is
+up. It is shallow: it does not verify Claude, Antigravity, credentials, or driver availability.
+
+## User Service
+
+Build a standalone executable, then install Caara as a per-user service:
+
+```bash
+bun run build:service
+dist/caara install-service
+```
+
+`install-service` copies the current compiled executable to
+`${XDG_BIN_HOME:-$HOME/.local/bin}/caara`, writes the service config and launchd/systemd user unit,
+runs `doctor --fix`, starts/enables the service, and verifies `/health`. Use `--no-start` to only
+write artifacts:
+
+```bash
+dist/caara install-service --no-start
+```
+
+Operator commands:
+
+```bash
+caara status
+caara doctor
+caara doctor --fix
+caara uninstall-service
+caara uninstall-service --purge
+```
+
+Defaults:
+
+- config: `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`
+- state/receipt/logs: `${XDG_STATE_HOME:-$HOME/.local/state}/caara`
+- app log: `<state>/logs/caara.log`, rotated at 10 MiB with 3 retained files
+- macOS service id/file: `dev.caara`,
+  `$HOME/Library/LaunchAgents/dev.caara.plist`
+- Linux service id/file: `caara.service`,
+  `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service`
+
+Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, and `logFile`.
+CLI flags override YAML; YAML overrides built-in defaults. Foreground runs prepend config `path`
+entries to inherited `PATH`; installed services prepend config `path` entries to built-in defaults
+including `$HOME/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin`.
+
+Non-loopback `host` values expose an unauthenticated local agent bridge. Use them only in controlled
+setups, such as containerized isolation with bind-mounted workspaces.
 
 ## Request Contract
 
@@ -97,7 +162,8 @@ Supported provider query params:
 
 `permission_mode` defaults to `dontAsk`. Caara intentionally rejects interactive Claude permission
 modes because Codex subagent turns do not have an approval loop. `bypassPermissions` also sets the
-SDK's required dangerous-bypass opt-in.
+SDK's required dangerous-bypass opt-in, and is rejected unless the server was started with
+`--allow-dangerous-skip-permissions`.
 
 `AskUserQuestion` is always reserved for unsupported interactive questions. Attempts to allow it via
 `tools` or `allowed_tools` fail explicitly; it is always included in `disallowedTools`.
@@ -128,16 +194,16 @@ available.
 
 Supported provider query params:
 
-| Query param                    | Values / shape                                  |
-| ------------------------------ | ----------------------------------------------- |
-| `model`                        | non-empty model override                        |
-| `print_timeout_seconds`        | integer from `1` to `86400`; defaults to `7200` |
-| `sandbox`                      | `true` or `false`; defaults from Codex sandbox  |
-| `dangerously_skip_permissions` | `true` or `false`; requires trusted host config |
-| `add_dirs`                     | JSON array of non-empty absolute paths          |
-| `log_file`                     | absolute path                                   |
-| `reasoning`                    | `on` or `off`; defaults to `on`                 |
-| `activity`                     | `on` or `off`; defaults to `on`                 |
+| Query param                    | Values / shape                                    |
+| ------------------------------ | ------------------------------------------------- |
+| `model`                        | non-empty model override                          |
+| `print_timeout_seconds`        | integer from `1` to `86400`; defaults to `7200`   |
+| `sandbox`                      | `true` or `false`; defaults from Codex sandbox    |
+| `dangerously_skip_permissions` | `true` or `false`; requires server dangerous gate |
+| `add_dirs`                     | JSON array of non-empty absolute paths            |
+| `log_file`                     | absolute path                                     |
+| `reasoning`                    | `on` or `off`; defaults to `on`                   |
+| `activity`                     | `on` or `off`; defaults to `on`                   |
 
 `reasoning=off` hides Antigravity thinking output from the Codex reasoning stream. `activity=off`
 keeps command/activity lifecycle in relay logs while hiding Codex-visible commentary.
@@ -145,8 +211,8 @@ keeps command/activity lifecycle in relay logs while hiding Codex-visible commen
 Caara always passes `--print-timeout` to `agy`. When `print_timeout_seconds` is omitted, Caara uses
 `7200` seconds instead of the `agy` CLI's own `5m0s` default.
 
-`dangerously_skip_permissions=true` is rejected unless the local Antigravity driver settings allow
-dangerous permission skipping.
+`dangerously_skip_permissions=true` is rejected unless the server was started with
+`--allow-dangerous-skip-permissions`.
 
 ## Diagnostic Driver
 

@@ -18,6 +18,21 @@ Expected startup line:
 Listening on http://localhost:8787
 ```
 
+Optional health preflight from another terminal:
+
+```bash
+bun src/caara.ts status
+```
+
+Expected output:
+
+```text
+Caara healthy at http://127.0.0.1:8787/health
+```
+
+Installed-service status and health behavior is documented in
+[docs/caara.md](../caara.md#user-service-and-operations).
+
 For Codex subagent path smokes, use one of the checked-in Diagnostic roles:
 
 - `caara-diagnostic-basic`
