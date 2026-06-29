@@ -2,6 +2,7 @@ import { Effect, Layer, Match } from "effect";
 
 import { mainLayerFromArgs } from "./caaraApp.ts";
 import { runCaaraDoctorCli } from "./caaraDoctor.ts";
+import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
 import { runCaaraStatusCli } from "./caaraStatus.ts";
 
 /** Selected top-level Caara command after shallow root dispatch. */
@@ -16,6 +17,14 @@ export type CaaraCommandSelection =
     }
   | {
       readonly _tag: "Doctor";
+      readonly args: readonly string[];
+    }
+  | {
+      readonly _tag: "InstallService";
+      readonly args: readonly string[];
+    }
+  | {
+      readonly _tag: "UninstallService";
       readonly args: readonly string[];
     };
 
@@ -42,6 +51,22 @@ export const selectCaaraCommand = ({
           args: args.slice(1),
         }) satisfies CaaraCommandSelection,
     ),
+    Match.when(
+      "install-service",
+      () =>
+        ({
+          _tag: "InstallService",
+          args: args.slice(1),
+        }) satisfies CaaraCommandSelection,
+    ),
+    Match.when(
+      "uninstall-service",
+      () =>
+        ({
+          _tag: "UninstallService",
+          args: args.slice(1),
+        }) satisfies CaaraCommandSelection,
+    ),
     Match.orElse(
       () =>
         ({
@@ -62,5 +87,8 @@ export const caaraCliMain = Effect.fnUntraced(function* ({
     Server: ({ args: serverArgs }) => Layer.launch(mainLayerFromArgs({ args: serverArgs })),
     Status: ({ args: statusArgs }) => runCaaraStatusCli({ args: statusArgs }),
     Doctor: ({ args: doctorArgs }) => runCaaraDoctorCli({ args: doctorArgs }),
+    InstallService: ({ args: installArgs }) => runCaaraInstallServiceCli({ args: installArgs }),
+    UninstallService: ({ args: uninstallArgs }) =>
+      runCaaraUninstallServiceCli({ args: uninstallArgs }),
   });
 });

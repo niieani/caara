@@ -16,5 +16,13 @@ describe("Caara CLI dispatch", () => {
       _tag: "Doctor",
       args: ["--fix"],
     });
+    assert.deepStrictEqual(selectCaaraCommand({ args: ["install-service", "--no-start"] }), {
+      _tag: "InstallService",
+      args: ["--no-start"],
+    });
+    assert.deepStrictEqual(selectCaaraCommand({ args: ["uninstall-service", "--purge"] }), {
+      _tag: "UninstallService",
+      args: ["--purge"],
+    });
   });
 });
