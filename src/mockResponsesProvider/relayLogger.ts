@@ -1,5 +1,7 @@
 import { Console, Context, Effect, Layer, Schema } from "effect";
 
+import { CaaraAppLogWriter } from "../caaraLogging.ts";
+
 /** Relay event recorded when a Codex turn is accepted by the transport. */
 export interface TurnAcceptedRelayEvent {
   readonly _tag: "TurnAccepted";
@@ -138,3 +140,19 @@ export const relayLoggerLive = Layer.succeed(RelayLogger, {
     yield* Console.log(encodeRelayLogLine(event));
   }),
 });
+
+/** Relay logger that writes to both foreground console and the app-owned JSONL log. */
+export const relayLoggerWithAppLogLive = Layer.effect(
+  RelayLogger,
+  Effect.gen(function* () {
+    const appLog = yield* CaaraAppLogWriter;
+    return {
+      log: Effect.fnUntraced(function* (event: RelayLogEvent) {
+        const line = encodeRelayLogLine(event);
+        yield* Effect.all([Console.log(line), appLog.writeLine(line).pipe(Effect.orDie)], {
+          discard: true,
+        });
+      }),
+    };
+  }),
+);

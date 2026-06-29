@@ -1,5 +1,7 @@
 import { Console, Context, Effect, Layer, Schema } from "effect";
 
+import { CaaraAppLogWriter } from "../caaraLogging.ts";
+
 /** Effect shape returned by input logger implementations. */
 export type InputLoggerEffect = ReturnType<typeof Console.log>;
 
@@ -21,3 +23,19 @@ export const inputLoggerLive = Layer.succeed(InputLogger, {
     yield* Console.log(encodeInputLogLine(input));
   }),
 });
+
+/** Input logger that writes to both foreground console and the app-owned JSONL log. */
+export const inputLoggerWithAppLogLive = Layer.effect(
+  InputLogger,
+  Effect.gen(function* () {
+    const appLog = yield* CaaraAppLogWriter;
+    return {
+      logInput: Effect.fnUntraced(function* (input: Schema.Json) {
+        const line = encodeInputLogLine(input);
+        yield* Effect.all([Console.log(line), appLog.writeLine(line).pipe(Effect.orDie)], {
+          discard: true,
+        });
+      }),
+    };
+  }),
+);

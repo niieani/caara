@@ -1,6 +1,8 @@
 import { Console, Context, Effect, Layer, Schema } from "effect";
 import type { HttpServerRequest } from "effect/unstable/http";
 
+import { CaaraAppLogWriter } from "../caaraLogging.ts";
+
 /** Header names whose values must not be written to diagnostic logs. */
 const sensitiveHeaderNames = new Set([
   "authorization",
@@ -62,6 +64,22 @@ export const requestDiagnosticsLoggerLive = Layer.succeed(RequestDiagnosticsLogg
     yield* Console.log(encodeDiagnosticsLogLine(diagnostics));
   }),
 });
+
+/** Diagnostics logger that writes to both foreground console and the app-owned JSONL log. */
+export const requestDiagnosticsLoggerWithAppLogLive = Layer.effect(
+  RequestDiagnosticsLogger,
+  Effect.gen(function* () {
+    const appLog = yield* CaaraAppLogWriter;
+    return {
+      logRequest: Effect.fnUntraced(function* (diagnostics: ResponsesRequestDiagnostics) {
+        const line = encodeDiagnosticsLogLine(diagnostics);
+        yield* Effect.all([Console.log(line), appLog.writeLine(line).pipe(Effect.orDie)], {
+          discard: true,
+        });
+      }),
+    };
+  }),
+);
 
 /** Returns true when a JSON value is an object record rather than an array. */
 const isJsonRecord = (value: Schema.Json): value is Readonly<Record<string, Schema.Json>> =>
