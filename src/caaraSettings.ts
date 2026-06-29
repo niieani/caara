@@ -42,6 +42,14 @@ interface SelectedConfigPath {
   readonly explicit: boolean;
 }
 
+/** Full settings resolution result with the config document that produced it. */
+export interface CaaraSettingsResolution {
+  readonly settings: CaaraSettingsValue;
+  readonly configPath: string;
+  readonly configExplicit: boolean;
+  readonly config: CaaraServiceConfigValue;
+}
+
 /** Startup settings validation failure for the Caara process. */
 export class CaaraSettingsError extends Schema.TaggedErrorClass<CaaraSettingsError>()(
   "CaaraSettingsError",
@@ -529,8 +537,8 @@ const mergeSettings = Effect.fnUntraced(function* ({
   } satisfies CaaraSettingsValue;
 });
 
-/** Resolves Caara settings from root CLI args, YAML config, and built-in defaults. */
-export const resolveCaaraSettingsFromArgs = Effect.fnUntraced(function* ({
+/** Resolves Caara settings plus the selected YAML config document from root CLI args. */
+export const resolveCaaraSettingsResolutionFromArgs = Effect.fnUntraced(function* ({
   args,
   env = process.env,
   configLoader = bunCaaraConfigLoader,
@@ -542,7 +550,27 @@ export const resolveCaaraSettingsFromArgs = Effect.fnUntraced(function* ({
   const cliOptions = yield* parseCaaraCliOptions({ args });
   const selected = yield* selectConfigPath({ cliOptions, env });
   const config = yield* loadSelectedConfig({ selected, configLoader });
-  return yield* mergeSettings({ config, cliOptions });
+  const settings = yield* mergeSettings({ config, cliOptions });
+  return {
+    settings,
+    configPath: selected.configPath,
+    configExplicit: selected.explicit,
+    config,
+  } satisfies CaaraSettingsResolution;
+});
+
+/** Resolves Caara settings from root CLI args, YAML config, and built-in defaults. */
+export const resolveCaaraSettingsFromArgs = Effect.fnUntraced(function* ({
+  args,
+  env = process.env,
+  configLoader = bunCaaraConfigLoader,
+}: {
+  readonly args: readonly string[];
+  readonly env?: CaaraSettingsEnvironment;
+  readonly configLoader?: CaaraConfigLoader;
+}) {
+  const resolution = yield* resolveCaaraSettingsResolutionFromArgs({ args, env, configLoader });
+  return resolution.settings;
 });
 
 /** Builds a Caara settings layer from a concrete settings value. */

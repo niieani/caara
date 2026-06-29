@@ -32,7 +32,7 @@ const executionPathError = (message: string): CaaraSettingsError =>
   new CaaraSettingsError({ message });
 
 /** Splits one PATH string into non-empty executable search directories. */
-const pathEntriesFromValue = (value: string | undefined): readonly string[] =>
+export const pathEntriesFromValue = (value: string | undefined): readonly string[] =>
   [value]
     .filter((pathValue): pathValue is string => pathValue !== undefined)
     .flatMap((pathValue) => pathValue.split(path.delimiter))

@@ -1,5 +1,6 @@
 import { Effect, Layer, Match, Option, Stream } from "effect";
 
+import type { AgentDriverExecutableRequirement } from "../agentDriverRequirements.ts";
 import {
   AgentDriverError,
   AgentDriverRegistry,
@@ -27,6 +28,10 @@ import {
 } from "./diagnosticDriverSession.ts";
 
 export { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
+
+/** Diagnostic driver has no external executable requirement. */
+export const diagnosticAgentDriverExecutableRequirements =
+  [] as const satisfies readonly AgentDriverExecutableRequirement[];
 
 /** Parsed and bounded options for the diagnostic/basic scenario. */
 interface DiagnosticBasicOptions {

@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import type { AgentDriverExecutableRequirement } from "../agentDriverRequirements.ts";
 import { makeAntigravityCliAgentDriver } from "../antigravityCliDriver/driver.ts";
 import {
   AntigravityCliSettings,
@@ -46,6 +47,15 @@ import {
   type ClaudeAgentSdkSessionStartup,
 } from "./options.ts";
 import { extractClaudeAgentSdkPrompt } from "./prompt.ts";
+
+/** Claude Agent SDK driver requires the Claude Code CLI on the service PATH. */
+export const claudeAgentSdkExecutableRequirements = [
+  {
+    driverName: "Claude",
+    externalAgentKind: "claude",
+    executableName: "claude",
+  },
+] as const satisfies readonly AgentDriverExecutableRequirement[];
 
 /** Service used to generate SDK session ids behind an injectable seam. */
 export class ClaudeAgentSdkSessionIdGenerator extends Context.Service<

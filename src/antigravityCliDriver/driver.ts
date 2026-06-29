@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import type { AgentDriverExecutableRequirement } from "../agentDriverRequirements.ts";
 import { CaaraSettings, type CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   type AgentDriverCancel,
@@ -45,6 +46,15 @@ import {
   type AntigravityTranscriptObservation,
   type AntigravityTranscriptTelemetryContext,
 } from "./transcript.ts";
+
+/** Antigravity CLI driver requires `agy` on the service PATH. */
+export const antigravityCliExecutableRequirements = [
+  {
+    driverName: "Antigravity",
+    externalAgentKind: "agy",
+    executableName: "agy",
+  },
+] as const satisfies readonly AgentDriverExecutableRequirement[];
 
 /** Builds a durable Caara session from an Antigravity conversation id. */
 const durableAntigravitySession = ({

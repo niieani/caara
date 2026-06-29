@@ -1,6 +1,7 @@
 import { Effect, Layer, Match } from "effect";
 
 import { mainLayerFromArgs } from "./caaraApp.ts";
+import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraStatusCli } from "./caaraStatus.ts";
 
 /** Selected top-level Caara command after shallow root dispatch. */
@@ -11,6 +12,10 @@ export type CaaraCommandSelection =
     }
   | {
       readonly _tag: "Status";
+      readonly args: readonly string[];
+    }
+  | {
+      readonly _tag: "Doctor";
       readonly args: readonly string[];
     };
 
@@ -26,6 +31,14 @@ export const selectCaaraCommand = ({
       () =>
         ({
           _tag: "Status",
+          args: args.slice(1),
+        }) satisfies CaaraCommandSelection,
+    ),
+    Match.when(
+      "doctor",
+      () =>
+        ({
+          _tag: "Doctor",
           args: args.slice(1),
         }) satisfies CaaraCommandSelection,
     ),
@@ -48,5 +61,6 @@ export const caaraCliMain = Effect.fnUntraced(function* ({
   return yield* Match.valueTags(command, {
     Server: ({ args: serverArgs }) => Layer.launch(mainLayerFromArgs({ args: serverArgs })),
     Status: ({ args: statusArgs }) => runCaaraStatusCli({ args: statusArgs }),
+    Doctor: ({ args: doctorArgs }) => runCaaraDoctorCli({ args: doctorArgs }),
   });
 });

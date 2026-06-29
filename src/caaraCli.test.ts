@@ -12,5 +12,9 @@ describe("Caara CLI dispatch", () => {
       _tag: "Server",
       args: ["--port", "8799"],
     });
+    assert.deepStrictEqual(selectCaaraCommand({ args: ["doctor", "--fix"] }), {
+      _tag: "Doctor",
+      args: ["--fix"],
+    });
   });
 });
