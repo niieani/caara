@@ -198,6 +198,7 @@ describe("Caara service lifecycle", () => {
       const env = serviceEnv({ root });
       const sourceExecutable = path.join(root, "dist", "caara-source");
       const explicitConfigPath = path.join(root, "custom config", "caara.yaml");
+      const relativeConfigPath = path.relative(process.cwd(), explicitConfigPath);
       const defaultConfigPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
       const serviceFile = path.join(env.XDG_CONFIG_HOME, "systemd", "user", "caara.service");
       const receiptPath = path.join(env.XDG_STATE_HOME, "caara", "install-receipt.json");
@@ -205,7 +206,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: explicitConfigPath, content: "port: 8787\n" });
 
       const result = yield* runCaaraInstallService({
-        args: ["--no-start", "--config", explicitConfigPath, "--port", "8798"],
+        args: ["--no-start", "--config", relativeConfigPath, "--port", "8798"],
         env,
         platform: "linux",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -221,7 +222,8 @@ describe("Caara service lifecycle", () => {
       assert.strictEqual(yield* fileExists({ filePath: defaultConfigPath }), false);
       assert.match(serviceUnit, /ExecStart=.* --config /u);
       assert.match(serviceUnit, /"[^"]*custom config\/caara\.yaml"/u);
-      assert.ok(receipt.includes(explicitConfigPath));
+      assert.ok(receipt.includes(`"configPath":"${explicitConfigPath}"`));
+      assert.ok(!receipt.includes(`"configPath":"${relativeConfigPath}"`));
     }),
   );
 

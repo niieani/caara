@@ -150,18 +150,21 @@ const applyInstallConfig = Effect.fnUntraced(function* ({
   );
 });
 
-/** Replaces default config paths with the config path selected by settings resolution. */
+/** Replaces default config paths with the absolute config path selected by settings resolution. */
 const servicePathsWithResolvedConfig = ({
   paths,
   resolution,
 }: {
   readonly paths: CaaraServicePaths;
   readonly resolution: CaaraSettingsResolution;
-}): CaaraServicePaths => ({
-  ...paths,
-  configPath: resolution.configPath,
-  configDir: path.dirname(resolution.configPath),
-});
+}): CaaraServicePaths => {
+  const configPath = path.resolve(resolution.configPath);
+  return {
+    ...paths,
+    configPath,
+    configDir: path.dirname(configPath),
+  };
+};
 
 /** User-facing text for one config install outcome. */
 const configOutcomeText = (outcome: ConfigInstallOutcome): string =>

@@ -76,8 +76,9 @@ Service install flow:
 6. Caara runs `doctor --fix`.
 7. By default, Caara enables/starts the user service and polls `/health`.
 
-The generated service invokes Caara with `--config <resolved-config-path>`, including explicit
-`install-service --config <path>` values, so service restarts keep using the selected config file.
+The generated service invokes Caara with `--config <absolute-resolved-config-path>`, including
+explicit `install-service --config <path>` values, so service restarts keep using the selected
+config file without depending on a working directory.
 
 `install-service --no-start` stops after writing the binary, config, service file, and receipt. It
 does not run doctor, start the service, or verify health.
