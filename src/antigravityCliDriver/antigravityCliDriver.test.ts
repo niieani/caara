@@ -424,6 +424,7 @@ describe("Antigravity CLI driver", () => {
       assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "turn turn-1"]);
       assert.ok(!invocation.args.includes("--print"));
       assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "gemini-3.5-flash"]);
+      assert.deepStrictEqual(invocation.args.slice(4, 6), ["--print-timeout", "7200s"]);
       assert.ok(invocation.args.includes("--log-file"));
       assert.strictEqual(invocation.cwd, projectRoot);
 

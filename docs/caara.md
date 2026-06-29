@@ -532,6 +532,21 @@ query_params = { effort = "high", max_budget_usd = "1", permission_mode = "auto"
 Use `query_params.effort` for an explicit Claude effort override. It wins over Codex
 `reasoning.effort`, and it is the only way to request Claude-only `max`.
 
+Example with Antigravity options:
+
+```toml
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+query_params = { print_timeout_seconds = "7200", sandbox = "true" }
+```
+
+Use `query_params.print_timeout_seconds` for an explicit Antigravity print-mode wait. It accepts
+integer seconds from `1` through `86400`. When omitted, Caara still passes `7200s` to `agy` instead
+of relying on the CLI's `5m0s` default.
+
 ## Effect Usage
 
 The HTTP server is built on Effect v4 and `@effect/platform-bun`.

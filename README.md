@@ -131,7 +131,7 @@ Supported provider query params:
 | Query param                    | Values / shape                                  |
 | ------------------------------ | ----------------------------------------------- |
 | `model`                        | non-empty model override                        |
-| `print_timeout_seconds`        | integer from `1` to `7200`                      |
+| `print_timeout_seconds`        | integer from `1` to `86400`; defaults to `7200` |
 | `sandbox`                      | `true` or `false`; defaults from Codex sandbox  |
 | `dangerously_skip_permissions` | `true` or `false`; requires trusted host config |
 | `add_dirs`                     | JSON array of non-empty absolute paths          |
@@ -141,6 +141,9 @@ Supported provider query params:
 
 `reasoning=off` hides Antigravity thinking output from the Codex reasoning stream. `activity=off`
 keeps command/activity lifecycle in relay logs while hiding Codex-visible commentary.
+
+Caara always passes `--print-timeout` to `agy`. When `print_timeout_seconds` is omitted, Caara uses
+`7200` seconds instead of the `agy` CLI's own `5m0s` default.
 
 `dangerously_skip_permissions=true` is rejected unless the local Antigravity driver settings allow
 dangerous permission skipping.

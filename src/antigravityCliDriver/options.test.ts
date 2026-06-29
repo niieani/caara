@@ -52,7 +52,12 @@ const invalidOptionCases: readonly InvalidOptionCase[] = [
   {
     name: "print timeout lower bound",
     rawDriverOptions: { print_timeout_seconds: "0" },
-    expected: "print_timeout_seconds must be an integer from 1 to 7200.",
+    expected: "print_timeout_seconds must be an integer from 1 to 86400.",
+  },
+  {
+    name: "print timeout upper bound",
+    rawDriverOptions: { print_timeout_seconds: "86401" },
+    expected: "print_timeout_seconds must be an integer from 1 to 86400.",
   },
   {
     name: "relative add dir",
@@ -145,6 +150,36 @@ describe("Antigravity CLI options", () => {
           "--log-file",
           "/tmp/agy-driver.log",
         ],
+      );
+    }),
+  );
+
+  it.effect("defaults print timeout to two hours and accepts explicit twenty four hours", () =>
+    Effect.gen(function* () {
+      const defaultOptions = yield* parseOptions({
+        rawDriverOptions: {},
+      });
+      const maximumOptions = yield* parseOptions({
+        rawDriverOptions: { print_timeout_seconds: "86400" },
+      });
+
+      assert.strictEqual(defaultOptions.printTimeoutSeconds, 7200);
+      assert.deepStrictEqual(
+        buildAntigravityCliArgv({
+          prompt: "turn turn-1",
+          options: defaultOptions,
+          logFilePath: "/tmp/default.log",
+        }).slice(4, 6),
+        ["--print-timeout", "7200s"],
+      );
+      assert.strictEqual(maximumOptions.printTimeoutSeconds, 86400);
+      assert.deepStrictEqual(
+        buildAntigravityCliArgv({
+          prompt: "turn turn-1",
+          options: maximumOptions,
+          logFilePath: "/tmp/default.log",
+        }).slice(4, 6),
+        ["--print-timeout", "86400s"],
       );
     }),
   );

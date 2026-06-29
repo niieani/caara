@@ -11,7 +11,7 @@ export type AntigravityRelayMode = "on" | "off";
 /** Driver-owned Antigravity CLI options parsed from provider query params. */
 export interface AntigravityCliOptions {
   readonly model: string;
-  readonly printTimeoutSeconds: number | undefined;
+  readonly printTimeoutSeconds: number;
   readonly sandbox: boolean;
   readonly dangerouslySkipPermissions: boolean;
   readonly addDirs: readonly string[];
@@ -31,6 +31,12 @@ const antigravityOptionNames = [
   "reasoning",
   "activity",
 ] as const;
+
+/** Default Antigravity print-mode wait timeout that Caara passes to `agy`. */
+const defaultPrintTimeoutSeconds = 7200;
+
+/** Maximum Antigravity print-mode wait timeout accepted as driver passthrough. */
+const maxPrintTimeoutSeconds = 86400;
 
 /** JSON encoded `add_dirs` option schema. */
 const AddDirsOption = Schema.fromJsonString(Schema.Array(Schema.NonEmptyString));
@@ -306,7 +312,7 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
     rawDriverOptions,
     optionName: "print_timeout_seconds",
     min: 1,
-    max: 7200,
+    max: maxPrintTimeoutSeconds,
   });
   const addDirs = yield* parseAddDirsOption({ rawDriverOptions, pathService });
   const logFile = yield* parseLogFileOption({ rawDriverOptions, pathService });
@@ -315,7 +321,7 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
 
   return {
     model,
-    printTimeoutSeconds,
+    printTimeoutSeconds: printTimeoutSeconds ?? defaultPrintTimeoutSeconds,
     sandbox,
     dangerouslySkipPermissions,
     addDirs,
@@ -349,10 +355,8 @@ export const buildAntigravityCliArgv = ({
   }),
   "--model",
   options.model,
-  ...Option.match(Option.fromUndefinedOr(options.printTimeoutSeconds), {
-    onNone: () => [],
-    onSome: (seconds) => ["--print-timeout", `${seconds}s`],
-  }),
+  "--print-timeout",
+  `${options.printTimeoutSeconds}s`,
   ...Match.value(options.sandbox).pipe(
     Match.when(true, () => ["--sandbox"]),
     Match.orElse(() => []),
