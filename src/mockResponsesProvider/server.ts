@@ -377,8 +377,20 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   });
 });
 
+/** Shallow Caara health response body. */
+export const caaraHealthResponseBody = {
+  status: "ok",
+  service: "caara",
+} as const;
+
+/** Handles `GET /health` for shallow router health checks. */
+export const handleHealth = HttpServerResponse.jsonUnsafe(caaraHealthResponseBody);
+
+/** HTTP route layer for the Caara health endpoint. */
+export const caaraHealthRouteLayer = HttpRouter.add("GET", "/health", handleHealth);
+
 /** HTTP route layer for the mock Responses provider. */
-export const mockResponsesRoutesLayer = HttpRouter.add("POST", "/v1/responses", (request) =>
+export const responsesCreateRouteLayer = HttpRouter.add("POST", "/v1/responses", (request) =>
   handleResponsesCreate(request).pipe(
     Effect.catchTags({
       InvalidResponsesRequest: (error: InvalidResponsesRequest) =>
@@ -388,6 +400,12 @@ export const mockResponsesRoutesLayer = HttpRouter.add("POST", "/v1/responses", 
         Effect.succeed(turnConcurrencyConflictResponse(error)),
     }),
   ),
+);
+
+/** HTTP route layer for Caara's full Responses-compatible router. */
+export const mockResponsesRoutesLayer = Layer.mergeAll(
+  caaraHealthRouteLayer,
+  responsesCreateRouteLayer,
 );
 
 /** Scoped server layer that serves the mock Responses router on the current HTTP server. */

@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
 import { BunRuntime } from "@effect/platform-bun";
-import { Layer } from "effect";
 
-import { mainLayer } from "./caaraApp.ts";
+import { caaraCliMain } from "./caaraCli.ts";
 
-BunRuntime.runMain(Layer.launch(mainLayer));
+BunRuntime.runMain(caaraCliMain({ args: process.argv.slice(2) }));
