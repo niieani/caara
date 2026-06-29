@@ -17,10 +17,16 @@ export interface ClaudeAgentSdkBufferedAssistantTextStreamBlock {
   readonly text: string;
 }
 
+/** Active SDK content block whose unknown start shape makes all child deltas non-displayable. */
+export interface ClaudeAgentSdkIgnoredStreamBlock {
+  readonly _tag: "Ignored";
+}
+
 /** Active SDK content block currently tracked across raw stream events. */
 export type ClaudeAgentSdkActiveStreamBlock =
   | ClaudeAgentSdkDisplayableStreamBlock
-  | ClaudeAgentSdkBufferedAssistantTextStreamBlock;
+  | ClaudeAgentSdkBufferedAssistantTextStreamBlock
+  | ClaudeAgentSdkIgnoredStreamBlock;
 
 /** Assistant text waiting for a later SDK message or stream stop reason to classify its phase. */
 export type ClaudeAgentSdkPendingAssistantText =

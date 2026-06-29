@@ -9,6 +9,9 @@ import {
   fakeSdkHarness,
   runDriverTurn,
   sdkAssistantTextMessage,
+  sdkContentBlockStop,
+  sdkMessageDelta,
+  sdkTextDelta,
 } from "./claudeAgentSdkDriverTestHarness.ts";
 
 /** Stable cwd used by unknown-observation regression tests. */
@@ -23,6 +26,7 @@ const unsafeUnknownObservationFragments = [
   "RAW_UNKNOWN_ASSISTANT_BLOCK_SHOULD_NOT_LEAK",
   "RAW_UNKNOWN_STREAM_BLOCK_SHOULD_NOT_LEAK",
   "RAW_UNKNOWN_STREAM_DELTA_SHOULD_NOT_LEAK",
+  "RAW_TEXT_DELTA_AFTER_UNKNOWN_BLOCK_SHOULD_NOT_LEAK",
 ] as const;
 
 /** Builds Codex identity context for one direct unknown-observation driver test turn. */
@@ -135,11 +139,11 @@ const sdkAssistantWithUnknownContent = (): SDKMessage => ({
 });
 
 /** Builds a stream event whose content block is outside the installed SDK union. */
-const sdkUnknownStreamBlock = (): SDKMessage => ({
+const sdkUnknownStreamBlock = ({ index = 0 }: { readonly index?: number } = {}): SDKMessage => ({
   type: "stream_event",
   event: {
     type: "content_block_start",
-    index: 0,
+    index,
     content_block: {
       // @ts-expect-error Future stream content block intentionally falls outside current union.
       type: "future_stream_block",
@@ -152,11 +156,11 @@ const sdkUnknownStreamBlock = (): SDKMessage => ({
 });
 
 /** Builds a stream event whose delta is outside the installed SDK union. */
-const sdkUnknownStreamDelta = (): SDKMessage => ({
+const sdkUnknownStreamDelta = ({ index = 0 }: { readonly index?: number } = {}): SDKMessage => ({
   type: "stream_event",
   event: {
     type: "content_block_delta",
-    index: 0,
+    index,
     delta: {
       // @ts-expect-error Future stream delta intentionally falls outside current union.
       type: "future_stream_delta",
@@ -236,7 +240,7 @@ describe("Claude Agent SDK unknown observations", () => {
         runtimeMessages: [
           [
             sdkUnknownStreamBlock(),
-            sdkUnknownStreamDelta(),
+            sdkUnknownStreamDelta({ index: 1 }),
             sdkAssistantTextMessage({
               sessionId: sdkSessionId(),
               text: "Final answer after unknown stream observations.",
@@ -255,6 +259,45 @@ describe("Claude Agent SDK unknown observations", () => {
       assert.ok(logText.includes('"shape":"stream_event/content_block_start/future_stream_block"'));
       assert.ok(logText.includes('"shape":"stream_event/content_block_delta/future_stream_delta"'));
       assert.match(logText, /"payloadSha256":"[a-f0-9]{64}"/u);
+      for (const unsafeFragment of unsafeUnknownObservationFragments) {
+        assert.ok(!eventText.includes(unsafeFragment), unsafeFragment);
+        assert.ok(!logText.includes(unsafeFragment), unsafeFragment);
+      }
+    }),
+  );
+
+  it.effect("does not orphan text deltas from an ignored stream block", () =>
+    Effect.gen(function* () {
+      const harness = fakeSdkHarness({
+        sessionIds: [sdkSessionId()],
+        runtimeMessages: [
+          [
+            sdkUnknownStreamBlock(),
+            sdkTextDelta({
+              sessionId: sdkSessionId(),
+              text: "RAW_TEXT_DELTA_AFTER_UNKNOWN_BLOCK_SHOULD_NOT_LEAK",
+            }),
+            sdkContentBlockStop({ sessionId: sdkSessionId() }),
+            sdkMessageDelta({ sessionId: sdkSessionId(), stopReason: "end_turn" }),
+            sdkAssistantTextMessage({
+              sessionId: sdkSessionId(),
+              text: "Final answer after ignored stream block text.",
+            }),
+          ],
+        ],
+      });
+
+      const { events } = yield* runDriverTurn({ harness, turn: makeTurn() });
+      const eventText = encodedRuntimeEvents(events);
+      const logText = (yield* TestConsole.logLines).join("\n");
+
+      assert.deepStrictEqual(contentDeltaTexts(events), [
+        "Final answer after ignored stream block text.",
+      ]);
+      assert.ok(logText.includes('"shape":"stream_event/content_block_start/future_stream_block"'));
+      assert.ok(
+        logText.includes('"shape":"stream_event/content_block_delta/ignored_block/text_delta"'),
+      );
       for (const unsafeFragment of unsafeUnknownObservationFragments) {
         assert.ok(!eventText.includes(unsafeFragment), unsafeFragment);
         assert.ok(!logText.includes(unsafeFragment), unsafeFragment);

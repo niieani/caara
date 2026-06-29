@@ -16,6 +16,7 @@ import type {
   ClaudeAgentSdkActiveStreamBlock,
   ClaudeAgentSdkBufferedAssistantTextStreamBlock,
   ClaudeAgentSdkDisplayableStreamBlock,
+  ClaudeAgentSdkIgnoredStreamBlock,
   ClaudeAgentSdkRuntimeEventResult,
   ClaudeAgentSdkRuntimeEventState,
 } from "./claudeAgentSdkRuntimeEventState.ts";
@@ -74,6 +75,42 @@ const ignoredStreamObservationEvents = ({
     sessionId: context.sessionId,
     index: context.index,
   }).pipe(Effect.map(() => noRuntimeEvents(state)));
+
+/** Records one unknown stream block index so child deltas cannot become orphan text. */
+const withIgnoredStreamBlock = ({
+  state,
+  index,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly index: number;
+}): ClaudeAgentSdkRuntimeEventState => ({
+  ...state,
+  ...withActiveStreamBlock({
+    state,
+    index,
+    block: { _tag: "Ignored" } satisfies ClaudeAgentSdkIgnoredStreamBlock,
+    markStreamedContent: false,
+  }),
+});
+
+/** Logs and tracks one unknown stream block start. */
+const ignoredStreamBlockStartedEvents = ({
+  state,
+  event,
+  contentBlock,
+  context,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly event: ClaudeAgentSdkContentBlockStartEvent;
+  readonly contentBlock: unknown;
+  readonly context: IgnoredStreamObservationContext;
+}) =>
+  logIgnoredClaudeSdkObservation({
+    shape: `stream_event/content_block_start/${stringField(contentBlock, "type") ?? "unknown"}`,
+    payload: contentBlock,
+    sessionId: context.sessionId,
+    index: context.index,
+  }).pipe(Effect.map(() => noRuntimeEvents(withIgnoredStreamBlock({ state, index: event.index }))));
 
 /** Returns whether one SDK stream event carries a content block index. */
 const hasStreamEventIndex = (
@@ -405,6 +442,16 @@ const runtimeEventsFromActiveContentBlockDelta = ({
         context,
       }),
     ),
+    Match.when({ _tag: "Ignored" }, () =>
+      ignoredStreamObservationEvents({
+        state,
+        shape: `stream_event/content_block_delta/ignored_block/${
+          stringField(event.delta, "type") ?? "unknown"
+        }`,
+        payload: event.delta,
+        context,
+      }),
+    ),
     Match.exhaustive,
   );
 
@@ -481,10 +528,10 @@ const runtimeEventsFromContentBlockStart = ({
       ),
     ),
     Match.orElse((contentBlock) =>
-      ignoredStreamObservationEvents({
+      ignoredStreamBlockStartedEvents({
         state,
-        shape: `stream_event/content_block_start/${stringField(contentBlock, "type") ?? "unknown"}`,
-        payload: contentBlock,
+        event,
+        contentBlock,
         context,
       }),
     ),
@@ -540,6 +587,17 @@ const runtimeEventsFromContentBlockStop = ({
                   itemId: displayableBlock.itemId,
                 },
               ],
+            ] as const,
+        ),
+        Match.when(
+          { _tag: "Ignored" },
+          () =>
+            [
+              {
+                ...state,
+                activeStreamBlocks: withoutActiveStreamBlock({ state, index: event.index }),
+              },
+              [],
             ] as const,
         ),
         Match.exhaustive,
