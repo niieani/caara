@@ -146,6 +146,33 @@ describe("Claude Agent SDK permission policy", () => {
     }),
   );
 
+  it.effect("passes Caara service-mode execution PATH to the SDK subprocess environment", () =>
+    Effect.gen(function* () {
+      const options = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: {
+          ...defaultCaaraSettingsValue,
+          path: ["/config/bin"],
+        },
+        cwd: projectRoot,
+        model: "sonnet",
+        processEnvironment: {
+          ANTHROPIC_API_KEY: "test-api-key",
+          CAARA_SERVICE: "1",
+          HOME: "/Users/caara",
+          PATH: "/ignored/shell/bin",
+        },
+        rawDriverOptions: {},
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p118" },
+      });
+
+      assert.strictEqual(
+        options.env?.PATH,
+        "/config/bin:/Users/caara/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+      );
+      assert.strictEqual(options.env?.ANTHROPIC_API_KEY, "test-api-key");
+    }),
+  );
+
   it.effect("rejects dangerous permission bypass unless server settings allow it", () =>
     Effect.gen(function* () {
       const deniedResult = yield* Effect.result(

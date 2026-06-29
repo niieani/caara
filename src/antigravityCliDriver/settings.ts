@@ -1,4 +1,7 @@
-import { Context, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
+
+import { caaraPathEnvironment, type CaaraExecutionPathEnvironment } from "../caaraExecutionPath.ts";
+import { CaaraSettings } from "../caaraSettings.ts";
 
 /** Configuration needed by the Antigravity CLI driver to start `agy` turns. */
 export interface AntigravityCliSettingsValue {
@@ -21,10 +24,17 @@ const homeDirFromEnv = (env: Readonly<Record<string, string | undefined>>): stri
 export const antigravityCliSettingsFromEnvironment = ({
   env = process.env,
 }: {
-  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly env?: CaaraExecutionPathEnvironment;
 } = {}) =>
-  Layer.succeed(AntigravityCliSettings, {
-    command: "agy",
-    homeDir: homeDirFromEnv(env),
-    environment: {},
-  });
+  Layer.effect(
+    AntigravityCliSettings,
+    Effect.gen(function* () {
+      const caaraSettings = yield* CaaraSettings;
+      const environment = yield* caaraPathEnvironment({ settings: caaraSettings, env });
+      return {
+        command: "agy",
+        homeDir: homeDirFromEnv(env),
+        environment,
+      } satisfies AntigravityCliSettingsValue;
+    }),
+  );

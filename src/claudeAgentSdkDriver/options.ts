@@ -7,6 +7,10 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option, Schema } from "effect";
 
+import {
+  caaraProcessEnvironmentWithExecutionPath,
+  type CaaraExecutionPathEnvironment,
+} from "../caaraExecutionPath.ts";
 import type { CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   claudeAskUserQuestionToolName,
@@ -373,6 +377,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   caaraSettings,
   cwd,
   model,
+  processEnvironment = process.env,
   rawDriverOptions,
   startup,
 }: {
@@ -380,6 +385,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   readonly caaraSettings: CaaraSettingsValue;
   readonly cwd: string;
   readonly model: string;
+  readonly processEnvironment?: CaaraExecutionPathEnvironment;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly startup: ClaudeAgentSdkSessionStartup;
 }) {
@@ -393,9 +399,14 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     Start: ({ sessionId }) => ({ sessionId }),
     Resume: ({ resume }) => ({ resume }),
   });
+  const env = yield* caaraProcessEnvironmentWithExecutionPath({
+    settings: caaraSettings,
+    env: processEnvironment,
+  }).pipe(Effect.mapError((error) => optionError(error.message)));
 
   return {
     cwd,
+    env,
     model,
     ...sessionOptions,
     includePartialMessages: driverOptions.includePartialMessages ?? true,

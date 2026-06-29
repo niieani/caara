@@ -3,18 +3,19 @@ import { assert } from "@effect/vitest";
 
 import type { ClaudeAgentSdkQueryRequest } from "./claudeAgentSdkClient.ts";
 
-/** SDK option keys installed by Caara's noninteractive permission policy. */
-type ClaudeQueryPermissionPolicyKey =
+/** SDK option keys installed by Caara's runtime policy/defaults. */
+type ClaudeQueryCaaraRuntimeKey =
   | "canUseTool"
   | "disallowedTools"
+  | "env"
   | "onUserDialog"
   | "permissionMode"
   | "supportedDialogKinds";
 
-/** SDK query options after removing permission-policy callbacks and defaults. */
+/** SDK query options after removing Caara runtime policy/default fields. */
 export type ClaudeQueryOptionsWithoutPermissionPolicy = Omit<
   ClaudeQueryOptions,
-  ClaudeQueryPermissionPolicyKey
+  ClaudeQueryCaaraRuntimeKey
 >;
 
 /** SDK query request shape after removing permission-policy callbacks and defaults. */
@@ -23,10 +24,11 @@ export interface ClaudeQueryRequestWithoutPermissionPolicy {
   readonly options: ClaudeQueryOptionsWithoutPermissionPolicy;
 }
 
-/** Returns SDK options without Caara's always-on noninteractive permission policy fields. */
+/** Returns SDK options without Caara's always-on runtime policy/default fields. */
 export const queryOptionsWithoutPermissionPolicy = ({
   canUseTool: _canUseTool,
   disallowedTools: _disallowedTools,
+  env: _env,
   onUserDialog: _onUserDialog,
   permissionMode: _permissionMode,
   supportedDialogKinds: _supportedDialogKinds,
