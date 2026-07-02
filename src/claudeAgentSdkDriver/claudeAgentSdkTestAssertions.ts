@@ -9,6 +9,7 @@ type ClaudeQueryCaaraRuntimeKey =
   | "disallowedTools"
   | "env"
   | "onUserDialog"
+  | "pathToClaudeCodeExecutable"
   | "permissionMode"
   | "supportedDialogKinds";
 
@@ -30,6 +31,7 @@ export const queryOptionsWithoutPermissionPolicy = ({
   disallowedTools: _disallowedTools,
   env: _env,
   onUserDialog: _onUserDialog,
+  pathToClaudeCodeExecutable: _pathToClaudeCodeExecutable,
   permissionMode: _permissionMode,
   supportedDialogKinds: _supportedDialogKinds,
   ...options

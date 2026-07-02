@@ -28,6 +28,7 @@ import {
   ClaudeAgentSdkSessionIdGenerator,
   claudeAgentSdkAgentDriverRegistryLive,
 } from "./driver.ts";
+import { ClaudeAgentSdkSettings } from "./settings.ts";
 
 /** Stable cwd used by SDK recovery tests. */
 const projectRoot = process.cwd();
@@ -132,6 +133,11 @@ const fakeSessionIdLayer = ({ sessionIds }: { readonly sessionIds: readonly stri
   });
 };
 
+/** Builds deterministic Claude SDK settings for fake recovery tests. */
+const fakeSettingsLayer = Layer.succeed(ClaudeAgentSdkSettings, {
+  pathToClaudeCodeExecutable: Effect.sync(() => "/test/bin/claude"),
+});
+
 /** Builds the fake SDK recovery driver layer. */
 const fakeRecoveryLayer = ({
   recordedRequests,
@@ -146,6 +152,7 @@ const fakeRecoveryLayer = ({
     Layer.provideMerge(caaraSettingsDefaultLayer),
     Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, outcomes })),
     Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
+    Layer.provideMerge(fakeSettingsLayer),
     Layer.provideMerge(Path.layer),
   );
 

@@ -24,6 +24,7 @@ import {
   ClaudeAgentSdkSessionIdGenerator,
   claudeAgentSdkAgentDriverRegistryLive,
 } from "./driver.ts";
+import { ClaudeAgentSdkSettings } from "./settings.ts";
 
 /** SDK query request with non-optional options for assertions. */
 export interface RecordedQueryRequest {
@@ -452,6 +453,11 @@ const fakeSessionIdLayer = ({ sessionIds }: { readonly sessionIds: readonly stri
   });
 };
 
+/** Builds deterministic Claude SDK settings for fake driver tests. */
+const fakeSettingsLayer = Layer.succeed(ClaudeAgentSdkSettings, {
+  pathToClaudeCodeExecutable: Effect.sync(() => "/test/bin/claude"),
+});
+
 /** Builds one fake SDK driver harness from session ids and runtime messages. */
 export const fakeSdkHarness = ({
   runtimeMessages,
@@ -475,6 +481,7 @@ export const fakeSdkHarness = ({
       Layer.provideMerge(caaraSettingsDefaultLayer),
       Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
       Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
+      Layer.provideMerge(fakeSettingsLayer),
       Layer.provideMerge(Path.layer),
     ),
   };

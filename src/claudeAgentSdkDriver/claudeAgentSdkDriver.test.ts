@@ -160,6 +160,7 @@ describe("Claude Agent SDK driver", () => {
         const { result, events } = yield* runDriverTurn({ harness, turn });
         const request = harness.recordedRequests.at(0);
         assert.ok(request, "missing SDK query request");
+        assert.strictEqual(request.options.pathToClaudeCodeExecutable, "/test/bin/claude");
         const promptMessages = yield* collectPromptMessages(request.prompt);
 
         assertRequestsUseNonInteractivePermissionPolicy(harness.recordedRequests);

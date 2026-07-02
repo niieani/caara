@@ -328,6 +328,17 @@ const dangerousPermissionBypassQueryOptions = (
     Match.orElse(() => ({})),
   );
 
+/** Builds the optional SDK executable-path override object. */
+const pathToClaudeCodeExecutableQueryOptions = (
+  pathToClaudeCodeExecutable: string | undefined,
+): Readonly<Partial<Pick<ClaudeQueryOptions, "pathToClaudeCodeExecutable">>> =>
+  Option.match(Option.fromUndefinedOr(pathToClaudeCodeExecutable), {
+    onNone: () => ({}),
+    onSome: (nextPathToClaudeCodeExecutable) => ({
+      pathToClaudeCodeExecutable: nextPathToClaudeCodeExecutable,
+    }),
+  });
+
 /** Validates raw provider query params into SDK driver-owned options. */
 export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
   rawDriverOptions: Readonly<Record<string, string>>,
@@ -377,6 +388,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   caaraSettings,
   cwd,
   model,
+  pathToClaudeCodeExecutable,
   processEnvironment = process.env,
   rawDriverOptions,
   startup,
@@ -385,6 +397,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   readonly caaraSettings: CaaraSettingsValue;
   readonly cwd: string;
   readonly model: string;
+  readonly pathToClaudeCodeExecutable?: string;
   readonly processEnvironment?: CaaraExecutionPathEnvironment;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly startup: ClaudeAgentSdkSessionStartup;
@@ -415,6 +428,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     ...toolsQueryOptions(driverOptions.tools),
     ...allowedToolsQueryOptions(driverOptions.allowedTools),
     ...disallowedToolsQueryOptions(driverOptions.disallowedTools),
+    ...pathToClaudeCodeExecutableQueryOptions(pathToClaudeCodeExecutable),
     permissionMode: driverOptions.permissionMode,
     ...dangerousPermissionBypassQueryOptions(driverOptions.permissionMode),
     canUseTool: denyPermissionRequest,

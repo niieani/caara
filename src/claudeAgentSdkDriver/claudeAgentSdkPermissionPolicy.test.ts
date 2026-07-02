@@ -173,6 +173,21 @@ describe("Claude Agent SDK permission policy", () => {
     }),
   );
 
+  it.effect("passes the resolved Claude Code executable path to the SDK", () =>
+    Effect.gen(function* () {
+      const options = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings(),
+        cwd: projectRoot,
+        model: "sonnet",
+        pathToClaudeCodeExecutable: "/resolved/bin/claude",
+        rawDriverOptions: {},
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p119" },
+      });
+
+      assert.strictEqual(options.pathToClaudeCodeExecutable, "/resolved/bin/claude");
+    }),
+  );
+
   it.effect("rejects dangerous permission bypass unless server settings allow it", () =>
     Effect.gen(function* () {
       const deniedResult = yield* Effect.result(

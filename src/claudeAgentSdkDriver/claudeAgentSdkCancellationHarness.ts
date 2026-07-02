@@ -26,6 +26,7 @@ import {
   ClaudeAgentSdkSessionIdGenerator,
   claudeAgentSdkAgentDriverRegistryLive,
 } from "./driver.ts";
+import { ClaudeAgentSdkSettings } from "./settings.ts";
 
 /** Stable cwd used by SDK cancellation tests. */
 const projectRoot = process.cwd();
@@ -265,6 +266,11 @@ const fakeSessionIdLayer = ({ sessionIds }: { readonly sessionIds: readonly stri
   });
 };
 
+/** Builds deterministic Claude SDK settings for fake cancellation tests. */
+const fakeSettingsLayer = Layer.succeed(ClaudeAgentSdkSettings, {
+  pathToClaudeCodeExecutable: Effect.sync(() => "/test/bin/claude"),
+});
+
 /** Builds one fake SDK cancellation harness from session ids and runtime configs. */
 export const fakeSdkHarness = ({
   sessionIds,
@@ -295,6 +301,7 @@ export const fakeSdkHarness = ({
       Layer.provideMerge(caaraSettingsDefaultLayer),
       Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
       Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
+      Layer.provideMerge(fakeSettingsLayer),
       Layer.provideMerge(Path.layer),
     ),
   };
