@@ -38,6 +38,12 @@ export interface RuntimeMessageItem {
 /** Concrete output item union emitted by the runtime event encoder. */
 export type RuntimeOutputItem = RuntimeReasoningItem | RuntimeMessageItem;
 
+/** Minimal failed Responses error object emitted for accepted Caara driver failures. */
+export interface RuntimeResponseError {
+  readonly code: "server_error";
+  readonly message: string;
+}
+
 /** Terminal state tracked while converting runtime events into Responses frames. */
 export type RuntimeResponseTerminalState = "open" | "succeeded" | "failed";
 
@@ -58,21 +64,42 @@ export interface RuntimeResponseState {
   readonly output: readonly RuntimeOutputItem[];
   readonly items: readonly RuntimeItemState[];
   readonly terminal: RuntimeResponseTerminalState;
+  readonly failureMessage: string | undefined;
 }
+
+/** Builds the Codex-visible error text for one accepted driver failure. */
+export const caaraDriverFailureMessage = ({ message }: { readonly message: string }): string =>
+  `Caara driver failed: ${message}`;
+
+/** Builds fallback driver failure detail used when a stream halts before any terminal event. */
+export const missingRuntimeTerminalFailureMessage = (): string =>
+  "driver stream ended without terminal event";
 
 /** Builds a minimal Responses object for the current stream state. */
 export const createRuntimeResponse = ({
   request,
   output,
+  status,
+  error,
 }: {
   readonly request: ResponsesCreateRequest;
   readonly output: readonly RuntimeOutputItem[];
+  readonly status?: "failed";
+  readonly error?: RuntimeResponseError;
 }) => ({
   id: "resp_diagnostic_driver",
   object: "response" as const,
   model: request.model,
   created_at: mockResponsesFixture.createdAtEpochSeconds,
   output,
+  ...Option.match(Option.fromUndefinedOr(status), {
+    onNone: () => ({}),
+    onSome: (responseStatus) => ({ status: responseStatus }),
+  }),
+  ...Option.match(Option.fromUndefinedOr(error), {
+    onNone: () => ({}),
+    onSome: (responseError) => ({ error: responseError }),
+  }),
 });
 
 /** Builds the initial Responses created event and streaming encoder state. */
@@ -90,6 +117,7 @@ export const initialRuntimeResponseState = ({
     output: [],
     items: [],
     terminal: "open",
+    failureMessage: undefined,
   },
   createdEvent: {
     event: "response.created",
@@ -192,14 +220,24 @@ export const completedEventFromState = ({
 export const failedEventFromState = ({
   request,
   state,
+  failureMessage = state.failureMessage ?? missingRuntimeTerminalFailureMessage(),
 }: {
   readonly request: ResponsesCreateRequest;
   readonly state: RuntimeResponseState;
+  readonly failureMessage?: string;
 }): SseEvent => ({
   event: "response.failed",
   data: {
     type: "response.failed",
-    response: createRuntimeResponse({ request, output: state.output }),
+    response: createRuntimeResponse({
+      request,
+      output: state.output,
+      status: "failed",
+      error: {
+        code: "server_error",
+        message: caaraDriverFailureMessage({ message: failureMessage }),
+      },
+    }),
     sequence_number: state.sequenceNumber,
   } satisfies OpenAiSchema.ResponseStreamEvent,
 });

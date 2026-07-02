@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 
-import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { BunHttpServer } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
@@ -16,7 +15,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
-import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
+import {
+  assistantTextFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { CaaraSessionBinding } from "./sessionDirectory.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
@@ -137,14 +139,14 @@ const setHeaders = ({
 interface ResponseSseFrame {
   readonly event: string;
   readonly id: string | undefined;
-  readonly data: OpenAiSchema.ResponseStreamEvent;
+  readonly data: unknown;
 }
 
 /** Decodes Responses SSE frames from a response byte stream. */
 const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
   stream.pipe(
     Stream.decodeText(),
-    Stream.pipeThroughChannel(Sse.decodeDataSchema(OpenAiSchema.ResponseStreamEvent)),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
@@ -305,6 +307,10 @@ describe("runtime stream failure handling", () => {
         "response.created",
         "response.failed",
       ]);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failedFrames),
+        `Caara driver failed: ${diagnosticDriverFixture.runtimeFailureBeforeOutputMessage}`,
+      );
       assert.strictEqual(yield* bindingExists({ stateDir }), false);
       assert.deepStrictEqual(
         relayEvents.map((event) => event._tag),
@@ -375,6 +381,10 @@ describe("runtime stream failure handling", () => {
         "response.reasoning_summary_text.delta",
         "response.failed",
       ]);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failedFrames),
+        `Caara driver failed: ${diagnosticDriverFixture.runtimeFailureAfterPartialMessage}`,
+      );
       const bindingAfterFailure = yield* readPersistedBinding({ stateDir });
       assert.strictEqual(bindingAfterFailure.lastTurnId, "turn-runtime-seed");
       assert.strictEqual(bindingAfterFailure.createdFromTurnId, "turn-runtime-seed");

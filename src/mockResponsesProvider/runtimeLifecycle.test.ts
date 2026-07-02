@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { AgentDriverError, type AgentRuntimeEvent } from "./agentDriver.ts";
 import type { ResponsesCreateRequest } from "./protocol.ts";
 import { createResponseEventsFromRuntimeEvents } from "./responseEvents.ts";
+import { failedErrorMessageFromResponseFrames } from "./responseFrameTestHelpers.ts";
 
 /** Stable Responses request used by runtime lifecycle encoder tests. */
 const request = {
@@ -127,6 +128,14 @@ const failedAfterPartialLifecycle: readonly AgentRuntimeEvent[] = [
   },
 ];
 
+/** Runtime lifecycle for a terminal driver failure before output. */
+const failedBeforeOutputLifecycle: readonly AgentRuntimeEvent[] = [
+  {
+    _tag: "TurnFailed",
+    error: new AgentDriverError({ message: "runtime failed before output" }),
+  },
+];
+
 describe("runtime lifecycle events", () => {
   it("encodes a complete assistant text lifecycle with one terminal success", () => {
     const events = createResponseEventsFromRuntimeEvents({
@@ -195,5 +204,23 @@ describe("runtime lifecycle events", () => {
       "response.failed",
     ]);
     assert.strictEqual(terminalEventCount(events), 1);
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(events),
+      "Caara driver failed: runtime failed after partial output",
+    );
+  });
+
+  it("encodes terminal failure before output with actionable driver error details", () => {
+    const events = createResponseEventsFromRuntimeEvents({
+      request,
+      runtimeEvents: failedBeforeOutputLifecycle,
+    });
+
+    assert.deepStrictEqual(eventNames(events), ["response.created", "response.failed"]);
+    assert.strictEqual(terminalEventCount(events), 1);
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(events),
+      "Caara driver failed: runtime failed before output",
+    );
   });
 });

@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect";
 
-import type { AgentRuntimeEvent } from "./agentDriver.ts";
+import type { AgentDriverError, AgentRuntimeEvent } from "./agentDriver.ts";
 import type { ResponsesCreateRequest } from "./protocol.ts";
 import {
   runtimeTransportEventToSseEvents,
@@ -18,14 +18,16 @@ const defaultRuntimeFailureHandler = Effect.fnUntraced(function* () {
 });
 
 /** Streams Responses-compatible SSE frames from normalized driver runtime events. */
-export const createResponseEventStreamFromRuntimeEvents = <E, R>({
+export const createResponseEventStreamFromRuntimeEvents = <R>({
   request,
   runtimeEvents,
   onRuntimeFailure = () => defaultRuntimeFailureHandler(),
 }: {
   readonly request: ResponsesCreateRequest;
-  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, E, R>;
-  readonly onRuntimeFailure?: (error: E) => ReturnType<typeof defaultRuntimeFailureHandler>;
+  readonly runtimeEvents: Stream.Stream<AgentRuntimeEvent, AgentDriverError, R>;
+  readonly onRuntimeFailure?: (
+    error: AgentDriverError,
+  ) => ReturnType<typeof defaultRuntimeFailureHandler>;
 }): Stream.Stream<SseEvent, never, R> => {
   const initial = initialRuntimeResponseState({ request });
   const transportEvents = runtimeEvents.pipe(
@@ -41,6 +43,7 @@ export const createResponseEventStreamFromRuntimeEvents = <E, R>({
           yield* onRuntimeFailure(error);
           return {
             _tag: "RuntimeFailure",
+            error,
           } satisfies RuntimeTransportEvent;
         }),
       ),

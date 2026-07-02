@@ -1,7 +1,7 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { Match, Option } from "effect";
 
-import type { AgentRuntimeEvent } from "./agentDriver.ts";
+import type { AgentDriverError, AgentRuntimeEvent } from "./agentDriver.ts";
 import type { ResponsesCreateRequest } from "./protocol.ts";
 import {
   completedEventFromState,
@@ -9,6 +9,7 @@ import {
   createReasoningItem,
   failedEventFromState,
   initialRuntimeResponseState,
+  missingRuntimeTerminalFailureMessage,
   runtimeItemState,
   type RuntimeItemState,
   type RuntimeOutputItem,
@@ -25,6 +26,7 @@ export type RuntimeTransportEvent =
     }
   | {
       readonly _tag: "RuntimeFailure";
+      readonly error: AgentDriverError;
     };
 
 /** Encoder step result carrying next state and the SSE frames emitted by one event. */
@@ -425,17 +427,20 @@ const turnSucceededToSseEvents = ({
 const turnFailedToSseEvents = ({
   request,
   state,
+  error,
 }: {
   readonly request: ResponsesCreateRequest;
   readonly state: RuntimeResponseState;
+  readonly error: AgentDriverError;
 }): readonly [RuntimeResponseState, readonly SseEvent[]] =>
   [
     {
       ...state,
       sequenceNumber: state.sequenceNumber + 1,
       terminal: "failed",
+      failureMessage: error.message,
     },
-    [failedEventFromState({ request, state })],
+    [failedEventFromState({ request, state, failureMessage: error.message })],
   ] as const;
 
 /** Converts one runtime lifecycle event plus encoder state into SSE frames and next state. */
@@ -458,7 +463,7 @@ const runtimeEventToSseEvents = ({
         ItemCompleted: (event) => itemCompletedToSseEvents({ state, runtimeEvent: event }),
         PermissionDenied: () => [state, []] as const,
         TurnSucceeded: () => turnSucceededToSseEvents({ request, state }),
-        TurnFailed: () => turnFailedToSseEvents({ request, state }),
+        TurnFailed: (event) => turnFailedToSseEvents({ request, state, error: event.error }),
       }),
     ),
     Match.orElse(() => [state, []] as const),
@@ -476,14 +481,21 @@ export const runtimeTransportEventToSseEvents = ({
 }): readonly [RuntimeResponseState, readonly SseEvent[]] =>
   Match.valueTags(transportEvent, {
     RuntimeEvent: ({ runtimeEvent }) => runtimeEventToSseEvents({ request, state, runtimeEvent }),
-    RuntimeFailure: () =>
+    RuntimeFailure: (transportEvent) =>
       [
         {
           ...state,
           sequenceNumber: state.sequenceNumber + 1,
           terminal: "failed",
+          failureMessage: transportEvent.error.message,
         },
-        [failedEventFromState({ request, state })],
+        [
+          failedEventFromState({
+            request,
+            state,
+            failureMessage: transportEvent.error.message,
+          }),
+        ],
       ] as const,
   });
 
@@ -498,7 +510,13 @@ export const terminalEventsFromState = ({
   Match.value(state.terminal).pipe(
     Match.when("succeeded", (): readonly SseEvent[] => []),
     Match.when("failed", (): readonly SseEvent[] => []),
-    Match.orElse((): readonly SseEvent[] => [failedEventFromState({ request, state })]),
+    Match.orElse((): readonly SseEvent[] => [
+      failedEventFromState({
+        request,
+        state,
+        failureMessage: state.failureMessage ?? missingRuntimeTerminalFailureMessage(),
+      }),
+    ]),
   );
 
 /** Builds Responses-compatible SSE frames from normalized driver runtime events. */
