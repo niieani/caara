@@ -245,3 +245,101 @@ _Avoid_: Permission prompt, follow-up task, recovery prompt
 **Responses transport**:
 The Codex-facing OpenAI Responses-compatible HTTP and SSE shape Caara speaks.
 _Avoid_: Caara API, provider API
+
+## Skill Pack Language
+
+**Caara skill pack**:
+Repo-shipped Codex skills that coordinate multi-model work over Caara-backed subagents. Addons
+demonstrating Caara's value; the Caara service stays unaware of them.
+_Avoid_: Caara feature, core module, plugin
+
+**Panel**:
+The set of subagents convened for one strategy run, assembled from installed agent roles plus the
+native Codex subagent, maximizing model-family diversity.
+_Avoid_: Team, swarm, cluster
+
+**Panelist**:
+One panel seat: an agent target plus an optional deliberation role overlay.
+_Avoid_: Agent kind, worker, clone
+
+**Deliberation role**:
+An optional posture overlay applied to a panelist, such as skeptic, proposer, or reviewer, layered
+on top of the model's baseline personality.
+_Avoid_: Agent kind, personality, system prompt
+
+**Strategy**:
+A named coordination pattern for how a panel is spawned, communicates, and converges: ensemble,
+debate, or cross-review. Selected by the orchestrating skill unless the user names one explicitly.
+_Avoid_: Protocol, topology, workflow
+
+**Ensemble**:
+The strategy where isolated panelists attempt the same task in parallel and the results are
+synthesized, to catch any single model's omissions and blind spots.
+_Avoid_: Fan-out, parallel panel, replication
+
+**Debate**:
+The strategy where panelists see each other's positions across rounds and argue toward a stronger
+shared answer, preserving dissent.
+_Avoid_: Discussion, adversarial convergence, dialogue
+
+**Cross-review**:
+The strategy where one panelist produces work and a panelist from a different model family reviews
+it, avoiding self-review bias.
+_Avoid_: Code review, critique pass
+
+**Deliberation artifact**:
+A panelist's full work product written to an orchestrator-assigned file path. The data plane of a
+strategy run: downstream panelists must read artifacts, never trust summaries of them.
+_Avoid_: Output, transcript, report
+
+**Routing summary**:
+The bounded reply a panelist returns alongside an artifact path. Orchestration metadata only; never
+evidence, never forwarded as substantive input.
+_Avoid_: Summary of record, abstract, evidence
+
+**Synthesis seat**:
+The panel assignment for consolidating all panelist work into one result. Seated by context budget
+and output shape; held by the orchestrator inline only for terminal, small runs.
+_Avoid_: Judge, aggregator, merger
+
+**Adjudication**:
+The orchestrator's non-delegable final call on a strategy run: accept the synthesis or iterate.
+Rests on the synthesis artifact, routing summaries, and mechanical verification — never on raw
+panelist artifacts. Complete only when every dissent item is resolved with a stated reason or
+carried as an open item.
+_Avoid_: Review, sign-off, approval
+
+**Mechanical verification**:
+Integrity checks on claimed panelist work without reading its content: existence, size, diff
+presence, test runs.
+_Avoid_: Reading, review, spot-check
+
+**Open item**:
+An unresolved tension carried in the synthesis output with the reason it remains open, such as
+needing user input or an underspecified requirement. Empty by default; the passive replacement for
+escalation.
+_Avoid_: Escalation, blocker, TODO
+
+**Stall test**:
+The iterate guard: a debate round counts as movement only if a position changed with a cited cause,
+new evidence entered, or an open item closed. Two consecutive stalled rounds force acceptance with
+open items.
+_Avoid_: Round cap, iteration limit, timeout
+
+**Sycophantic convergence**:
+The dominant panel failure mode: panelists capitulating to please the orchestrator or each other
+rather than from evidence. Countered by assertive posture, concessions naming their cause, and
+orchestrator neutrality.
+_Avoid_: Consensus, agreement, alignment
+
+**Run directory**:
+The per-run artifact staging area outside the project workspace, laid out per seat by the
+orchestrator so isolated panelists cannot stumble on sibling work. Copying results back into the
+project afterwards is the orchestrator's optional, explicit step.
+_Avoid_: Project temp folder, workspace subdirectory, scratch dir
+
+**Contamination**:
+The isolation failure mode: a panelist meant to work independently discovering sibling work in the
+workspace and building on it instead of producing novel work. Prevented by the run directory;
+in-project outputs that cannot leave the workspace need prompt guards or worktrees.
+_Avoid_: Cheating, leakage, cross-talk
