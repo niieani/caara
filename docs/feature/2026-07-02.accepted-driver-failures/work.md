@@ -38,3 +38,14 @@
   `Response` schema.
 - Existing provider tests were updated from accepted HTTP 500 expectations to SSE failure assertions;
   registry failures before `DriverStarted` still assert JSON transport errors.
+
+## Claude Native Binary Regression
+
+- Claude SDK activity tests now queue `ClaudeAgentSdkClientError` outcomes before fake runtimes so
+  the real Claude driver path can fail from `handleResponsesCreate` after the accepted driver
+  boundary.
+- Regression uses the observed native CLI message:
+  `Native CLI binary for darwin-arm64 not found. Reinstall @anthropic-ai/claude-agent-sdk without --omit=optional, or set options.pathToClaudeCodeExecutable.`
+- Assertions cover `response.created` then `response.failed`, exact Codex-facing error message,
+  no assistant final answer, no `response.completed`, `TurnFailed` logging, no completed Claude
+  binding, and a follow-up successful turn in the same provider lifetime.

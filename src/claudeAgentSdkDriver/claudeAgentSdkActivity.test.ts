@@ -15,8 +15,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
+import { failedErrorMessageFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
+import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
 import { turnConcurrencyLive } from "../mockResponsesProvider/turnConcurrency.ts";
 import {
   collectPromptMessages,
@@ -34,6 +36,13 @@ const projectRoot = process.cwd();
 
 /** Returns the stable Claude SDK session id used by fake activity runs. */
 const sdkSessionId = (): string => "00000000-0000-4000-8000-00000000a101";
+
+/** Returns the stable Claude SDK session id used by the native-binary failure turn. */
+const nativeBinaryFailureSessionId = (): string => "00000000-0000-4000-8000-00000000a102";
+
+/** Observed Claude Agent SDK native CLI binary remediation text. */
+const nativeBinaryFailureMessage = (): string =>
+  "Native CLI binary for darwin-arm64 not found. Reinstall @anthropic-ai/claude-agent-sdk without --omit=optional, or set options.pathToClaudeCodeExecutable.";
 
 /** Stable Codex thread id used to isolate SDK activity bindings. */
 const makeThreadId = (): string => "codex-thread-claude-sdk-activity";
@@ -324,16 +333,21 @@ const providerHarness = ({
   inputs,
   diagnostics,
   relayEvents,
+  queryFailureMessages,
   runtimeMessages = sdkActivityMessages(),
+  sessionIds = [sdkSessionId()],
 }: {
   readonly stateDir: string;
   readonly inputs: Array<Schema.Json>;
   readonly diagnostics: Array<ResponsesRequestDiagnostics>;
   readonly relayEvents: Array<RelayLogEvent>;
+  readonly queryFailureMessages?: readonly string[];
   readonly runtimeMessages?: readonly SDKMessage[];
+  readonly sessionIds?: readonly string[];
 }) => {
   const harness = fakeSdkHarness({
-    sessionIds: [sdkSessionId()],
+    queryFailureMessages,
+    sessionIds,
     runtimeMessages: [runtimeMessages],
   });
   return {
@@ -372,6 +386,50 @@ const makeStateDir = Effect.fnUntraced(function* () {
   });
 });
 
+/** Returns the persisted Claude binding path for the activity test session key. */
+const persistedClaudeBindingPath = ({ stateDir }: { readonly stateDir: string }): string =>
+  sessionBindingFilePath({
+    stateDir,
+    externalAgentKind: "claude",
+    driverInstanceId: "claude",
+    codexThreadId: makeThreadId(),
+  });
+
+/** Returns whether a Claude binding exists for the activity test session key. */
+const claudeBindingExists = Effect.fnUntraced(function* ({
+  stateDir,
+}: {
+  readonly stateDir: string;
+}) {
+  return yield* Effect.tryPromise({
+    try: () => Bun.file(persistedClaudeBindingPath({ stateDir })).exists(),
+    catch: claudeAgentSdkActivityTestError,
+  });
+});
+
+/** Executes one Claude SDK activity request using the provided layer. */
+const executeClaudeSdkActivityRequest = Effect.fnUntraced(function* ({
+  turnId,
+  url,
+  input,
+}: {
+  readonly turnId: string;
+  readonly url: string;
+  readonly input?: Schema.Json;
+}) {
+  const request = setHeaders({
+    request: yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.post(url),
+      makeBody({ turnId, input }),
+    ),
+    headers: makeHeaders(turnId),
+  });
+  const response = yield* HttpClient.execute(request);
+  const frames = yield* decodeUnknownResponseSseFrames(response.stream);
+  assert.strictEqual(response.status, 200);
+  return frames;
+});
+
 /** Runs one Claude SDK activity turn through the provider boundary. */
 const runClaudeSdkActivityTurn = ({
   stateDir,
@@ -394,16 +452,7 @@ const runClaudeSdkActivityTurn = ({
 }) => {
   const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents, runtimeMessages });
   return Effect.gen(function* () {
-    const request = setHeaders({
-      request: yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post(url),
-        makeBody({ turnId, input }),
-      ),
-      headers: makeHeaders(turnId),
-    });
-    const response = yield* HttpClient.execute(request);
-    const frames = yield* decodeUnknownResponseSseFrames(response.stream);
-    assert.strictEqual(response.status, 200);
+    const frames = yield* executeClaudeSdkActivityRequest({ turnId, url, input });
     return {
       frames,
       recordedRequests: harness.recordedRequests,
@@ -454,7 +503,88 @@ const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =
     .filter((event) => event._tag === "RuntimeEventRelayed")
     .map((event) => event.runtimeEventTag);
 
+/** Exercises a Claude native-binary failure and a follow-up success in one provider lifetime. */
+const assertNativeBinaryFailureThenRecovery = Effect.fnUntraced(function* ({
+  stateDir,
+  relayEvents,
+}: {
+  readonly stateDir: string;
+  readonly relayEvents: readonly RelayLogEvent[];
+}) {
+  const failedFrames = yield* executeClaudeSdkActivityRequest({
+    turnId: "turn-claude-sdk-native-binary-failure",
+    url: "/v1/responses",
+  });
+
+  assert.deepStrictEqual(eventNames(failedFrames), ["response.created", "response.failed"]);
+  assert.strictEqual(
+    failedErrorMessageFromResponseFrames(failedFrames),
+    `Caara driver failed: ${nativeBinaryFailureMessage()}`,
+  );
+  assert.deepStrictEqual(assistantMessageDoneData(failedFrames), []);
+  assert.strictEqual(eventNames(failedFrames).includes("response.completed"), false);
+  assert.deepStrictEqual(
+    relayEvents.filter(
+      (event): event is Extract<RelayLogEvent, { readonly _tag: "TurnFailed" }> =>
+        event._tag === "TurnFailed",
+    ),
+    [
+      {
+        _tag: "TurnFailed",
+        threadId: makeThreadId(),
+        turnId: "turn-claude-sdk-native-binary-failure",
+        message: nativeBinaryFailureMessage(),
+      },
+    ],
+  );
+  assert.strictEqual(
+    relayEvents.some((event) => event._tag === "TurnCompleted"),
+    false,
+  );
+  assert.strictEqual(yield* claudeBindingExists({ stateDir }), false);
+
+  const recoveryFrames = yield* executeClaudeSdkActivityRequest({
+    turnId: "turn-claude-sdk-after-native-binary-failure",
+    url: "/v1/responses",
+  });
+  const recoveryMessages = assistantMessageDoneData(recoveryFrames);
+  assert.deepStrictEqual(
+    recoveryMessages.map((message) => [message.item.phase, messageText(message)]),
+    [
+      ["commentary", "Reading src/server.ts"],
+      ["commentary", "Starting task: inspect runtime events"],
+      ["commentary", "Inspecting runtime events"],
+      ["commentary", "Read completed"],
+      ["final_answer", "SDK final answer"],
+    ],
+  );
+});
+
 describe("Claude Agent SDK activity commentary", () => {
+  it.effect("surfaces native CLI binary failures through response.failed", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+      const harness = providerHarness({
+        stateDir,
+        inputs,
+        diagnostics,
+        relayEvents,
+        queryFailureMessages: [nativeBinaryFailureMessage()],
+        sessionIds: [nativeBinaryFailureSessionId(), sdkSessionId()],
+      });
+
+      yield* assertNativeBinaryFailureThenRecovery({ stateDir, relayEvents }).pipe(
+        Effect.provide(harness.layer),
+      );
+
+      assert.strictEqual(inputs.length, 2);
+      assert.strictEqual(diagnostics.length, 2);
+    }),
+  );
+
   it.effect("maps SDK tool and task progress messages to commentary and relay records", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();

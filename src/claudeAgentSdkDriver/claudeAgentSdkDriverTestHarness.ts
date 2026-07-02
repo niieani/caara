@@ -32,6 +32,9 @@ export interface RecordedQueryRequest {
   readonly options: ClaudeQueryOptions;
 }
 
+/** Fake SDK query outcome queued for deterministic driver tests. */
+type FakeSdkQueryOutcome = ClaudeAgentSdkQueryRuntime | ClaudeAgentSdkClientError;
+
 /** Collects a concrete SDK user-message async iterable. */
 const collectPromptStream = (promptStream: AsyncIterable<SDKUserMessage>) =>
   Stream.fromAsyncIterable(promptStream, String).pipe(
@@ -409,34 +412,44 @@ const fakeRuntime = ({
   },
 });
 
-/** Builds an SDK client layer that records query requests and returns queued runtimes. */
+/** Converts one queued fake SDK query outcome into the client effect contract. */
+const fakeSdkQueryOutcomeEffect = Effect.fnUntraced(function* (
+  outcome: FakeSdkQueryOutcome | undefined,
+) {
+  const resolvedOutcome = yield* Option.match(Option.fromUndefinedOr(outcome), {
+    onNone: () => Effect.fail(new ClaudeAgentSdkClientError({ message: "no fake SDK outcome" })),
+    onSome: (queuedOutcome) => Effect.succeed(queuedOutcome),
+  });
+  return yield* Match.value(resolvedOutcome).pipe(
+    Match.when(
+      (candidate): candidate is ClaudeAgentSdkClientError =>
+        candidate instanceof ClaudeAgentSdkClientError,
+      (error) => Effect.fail(error),
+    ),
+    Match.orElse((runtime) => Effect.succeed(runtime)),
+  );
+});
+
+/** Builds an SDK client layer that records query requests and returns queued outcomes. */
 const fakeSdkClientLayer = ({
   recordedRequests,
-  runtimes,
+  outcomes,
 }: {
   readonly recordedRequests: RecordedQueryRequest[];
-  readonly runtimes: readonly ClaudeAgentSdkQueryRuntime[];
+  readonly outcomes: readonly FakeSdkQueryOutcome[];
 }) => {
-  let runtimeIndex = 0;
+  let outcomeIndex = 0;
   return Layer.succeed(ClaudeAgentSdkClient, {
     query: (request) =>
       Effect.sync(() => {
-        const runtime = runtimes.at(runtimeIndex);
-        runtimeIndex += 1;
+        const outcome = outcomes.at(outcomeIndex);
+        outcomeIndex += 1;
         recordedRequests.push({
           prompt: request.prompt,
           options: request.options,
         });
-        return runtime;
-      }).pipe(
-        Effect.flatMap((runtime) =>
-          Option.match(Option.fromUndefinedOr(runtime), {
-            onNone: () =>
-              Effect.fail(new ClaudeAgentSdkClientError({ message: "no fake runtime" })),
-            onSome: Effect.succeed,
-          }),
-        ),
-      ),
+        return outcome;
+      }).pipe(Effect.flatMap(fakeSdkQueryOutcomeEffect)),
   });
 };
 
@@ -460,9 +473,11 @@ const fakeSettingsLayer = Layer.succeed(ClaudeAgentSdkSettings, {
 
 /** Builds one fake SDK driver harness from session ids and runtime messages. */
 export const fakeSdkHarness = ({
+  queryFailureMessages = [],
   runtimeMessages,
   sessionIds,
 }: {
+  readonly queryFailureMessages?: readonly string[];
   readonly runtimeMessages: readonly (readonly SDKMessage[])[];
   readonly sessionIds: readonly string[];
 }) => {
@@ -473,13 +488,17 @@ export const fakeSdkHarness = ({
     closes: [],
   } satisfies FakeSdkRuntimeControls;
   const runtimes = runtimeMessages.map((messages) => fakeRuntime({ controls, messages }));
+  const outcomes = [
+    ...queryFailureMessages.map((message) => new ClaudeAgentSdkClientError({ message })),
+    ...runtimes,
+  ] satisfies readonly FakeSdkQueryOutcome[];
 
   return {
     recordedRequests,
     controls,
     layer: claudeAgentSdkAgentDriverRegistryLive.pipe(
       Layer.provideMerge(caaraSettingsDefaultLayer),
-      Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, runtimes })),
+      Layer.provideMerge(fakeSdkClientLayer({ recordedRequests, outcomes })),
       Layer.provideMerge(fakeSessionIdLayer({ sessionIds })),
       Layer.provideMerge(fakeSettingsLayer),
       Layer.provideMerge(Path.layer),
