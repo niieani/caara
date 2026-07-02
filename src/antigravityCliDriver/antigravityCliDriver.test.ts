@@ -16,7 +16,12 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
-import { assistantTextFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
+import {
+  assistantTextFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+  isAssistantMessageDoneData,
+  type ResponseFrameWithData,
+} from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
@@ -192,12 +197,30 @@ const hasResponseFailureFrame = (
 
 /** Returns driver failure messages captured by the provider relay logger. */
 const turnFailedMessages = (events: readonly RelayLogEvent[]): readonly string[] =>
-  events
-    .filter(
-      (event): event is Extract<RelayLogEvent, { readonly _tag: "TurnFailed" }> =>
-        event._tag === "TurnFailed",
-    )
-    .map((event) => event.message);
+  turnFailedEvents(events).map((event) => event.message);
+
+/** Returns driver failure relay events captured by the provider relay logger. */
+const turnFailedEvents = (
+  events: readonly RelayLogEvent[],
+): readonly Extract<RelayLogEvent, { readonly _tag: "TurnFailed" }>[] =>
+  events.filter(
+    (event): event is Extract<RelayLogEvent, { readonly _tag: "TurnFailed" }> =>
+      event._tag === "TurnFailed",
+  );
+
+/** Returns decoded SSE event names in order. */
+const frameEventNames = (
+  frames: readonly Pick<ResponseFrameWithData, "event">[],
+): readonly string[] => frames.map((frame) => frame.event);
+
+/** Returns assistant message completion frames from decoded Responses SSE frames. */
+const assistantMessageDoneFrames = (
+  frames: readonly ResponseFrameWithData[],
+): readonly ResponseFrameWithData[] =>
+  frames.filter(
+    (frame) =>
+      frame.event === "response.output_item.done" && isAssistantMessageDoneData(frame.data),
+  );
 
 /** Decoded Responses SSE frames accepted by the test assistant-text extractor. */
 type DecodedResponseFrames = Parameters<typeof assistantTextFromResponseFrames>[0];
@@ -228,6 +251,7 @@ const providerLayer = ({
   fakeHomeDir,
   invocationLogPath,
   fakeMode,
+  environment,
   relayEvents,
 }: {
   readonly stateDir: string;
@@ -235,6 +259,7 @@ const providerLayer = ({
   readonly fakeHomeDir: string;
   readonly invocationLogPath: string;
   readonly fakeMode: string;
+  readonly environment?: Readonly<Record<string, string>>;
   readonly relayEvents: Array<RelayLogEvent>;
 }) =>
   mockResponsesServerLayer.pipe(
@@ -250,7 +275,7 @@ const providerLayer = ({
       Layer.succeed(AntigravityCliSettings, {
         command: fakeAgyPath,
         homeDir: fakeHomeDir,
-        environment: {
+        environment: environment ?? {
           AGY_FAKE_INVOCATION_LOG: invocationLogPath,
           AGY_FAKE_MODE: fakeMode,
         },
@@ -273,6 +298,55 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
+/** Decodes raw Responses SSE frames without dropping failure response fields. */
+const decodeUnknownResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
+    Stream.runCollect,
+    Effect.map((frames) => [...frames]),
+  );
+
+/** Executes one Antigravity HTTP turn without owning the provider layer lifetime. */
+const executeTurnRequest = Effect.fnUntraced(function* ({
+  turnId,
+  queryString,
+  input,
+}: {
+  readonly turnId: string;
+  readonly queryString?: string;
+  readonly input?: Schema.Json;
+}) {
+  const url = `/v1/responses${queryString ?? ""}`;
+  const request = setHeaders({
+    request: yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.post(url),
+      makeBody({ turnId, input }),
+    ),
+    headers: makeHeaders({ turnId }),
+  });
+  return yield* HttpClient.execute(request);
+});
+
+/** Executes one Antigravity HTTP turn and returns raw SSE frames plus response metadata. */
+const executeTurnRawFrames = Effect.fnUntraced(function* ({
+  turnId,
+  queryString,
+  input,
+}: {
+  readonly turnId: string;
+  readonly queryString?: string;
+  readonly input?: Schema.Json;
+}) {
+  const response = yield* executeTurnRequest({ turnId, queryString, input });
+  const frames = yield* decodeUnknownResponseSseFrames(response.stream);
+  return {
+    frames,
+    status: response.status,
+    contentType: response.headers["content-type"],
+  };
+});
+
 /** Runs one HTTP turn through a provider layer configured for one fake Antigravity mode. */
 const runTurn = ({
   stateDir,
@@ -294,15 +368,7 @@ const runTurn = ({
   readonly relayEvents: Array<RelayLogEvent>;
 }) =>
   Effect.gen(function* () {
-    const url = `/v1/responses${queryString ?? ""}`;
-    const request = setHeaders({
-      request: yield* HttpClientRequest.bodyJson(
-        HttpClientRequest.post(url),
-        makeBody({ turnId: "turn-1", input }),
-      ),
-      headers: makeHeaders({ turnId: "turn-1" }),
-    });
-    const response = yield* HttpClient.execute(request);
+    const response = yield* executeTurnRequest({ turnId: "turn-1", queryString, input });
     const success = decodeResponseSseFrames(response.stream).pipe(
       Effect.map((frames) => successfulHttpTurnResult({ frames, status: response.status })),
     );
@@ -381,20 +447,33 @@ const readPersistedBinding = Effect.fnUntraced(function* ({
 }: {
   readonly stateDir: string;
 }) {
+  const bindingPath = persistedAntigravityBindingPath({ stateDir });
   const content = yield* Effect.tryPromise({
-    try: () =>
-      fs.readFile(
-        sessionBindingFilePath({
-          stateDir,
-          externalAgentKind: "agy",
-          driverInstanceId: "agy",
-          codexThreadId: "codex-thread-agy",
-        }),
-        "utf8",
-      ),
+    try: () => fs.readFile(bindingPath, "utf8"),
     catch: testError,
   });
   return yield* Schema.decodeEffect(Schema.UnknownFromJsonString)(content);
+});
+
+/** Returns the persisted Antigravity binding path for the driver test session key. */
+const persistedAntigravityBindingPath = ({ stateDir }: { readonly stateDir: string }): string =>
+  sessionBindingFilePath({
+    stateDir,
+    externalAgentKind: "agy",
+    driverInstanceId: "agy",
+    codexThreadId: "codex-thread-agy",
+  });
+
+/** Returns whether an Antigravity binding exists for the driver test session key. */
+const antigravityBindingExists = Effect.fnUntraced(function* ({
+  stateDir,
+}: {
+  readonly stateDir: string;
+}) {
+  return yield* Effect.tryPromise({
+    try: () => Bun.file(persistedAntigravityBindingPath({ stateDir })).exists(),
+    catch: testError,
+  });
 });
 
 /** Decodes a persisted Antigravity binding into the cursor assertion shape. */
@@ -407,6 +486,47 @@ const PersistedAntigravityBinding = Schema.Struct({
       }),
     ),
   }),
+});
+
+/** Exercises an accepted Antigravity process failure followed by same-provider recovery. */
+const assertAntigravityProcessFailureThenRecovery = Effect.fnUntraced(function* ({
+  stateDir,
+  environment,
+  relayEvents,
+}: {
+  readonly stateDir: string;
+  readonly environment: Record<string, string>;
+  readonly relayEvents: readonly RelayLogEvent[];
+}) {
+  const failed = yield* executeTurnRawFrames({
+    turnId: "turn-antigravity-process-failure",
+  });
+
+  assert.strictEqual(failed.status, 200);
+  assert.strictEqual(failed.contentType, "text/event-stream");
+  assert.deepStrictEqual(frameEventNames(failed.frames), ["response.created", "response.failed"]);
+  assert.strictEqual(
+    failedErrorMessageFromResponseFrames(failed.frames),
+    "Caara driver failed: Antigravity CLI exited with code 23.",
+  );
+  assert.deepStrictEqual(assistantMessageDoneFrames(failed.frames), []);
+  assert.strictEqual(frameEventNames(failed.frames).includes("response.completed"), false);
+  assert.deepStrictEqual(turnFailedEvents(relayEvents), [
+    {
+      _tag: "TurnFailed",
+      threadId: "codex-thread-agy",
+      turnId: "turn-antigravity-process-failure",
+      message: "Antigravity CLI exited with code 23.",
+    },
+  ]);
+  assert.strictEqual(yield* antigravityBindingExists({ stateDir }), false);
+
+  environment.AGY_FAKE_MODE = "success";
+  const recovered = yield* executeTurnRawFrames({
+    turnId: "turn-antigravity-after-process-failure",
+  });
+  assert.strictEqual(recovered.status, 200);
+  assert.strictEqual(assistantTextFromResponseFrames(recovered.frames), fakeAgyFixture.finalAnswer);
 });
 
 describe("Antigravity CLI driver", () => {
@@ -534,6 +654,29 @@ describe("Antigravity CLI driver", () => {
       }),
     );
   }
+
+  it.effect("surfaces accepted Antigravity process failures as response.failed", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
+      const environment = {
+        AGY_FAKE_INVOCATION_LOG: fixture.invocationLogPath,
+        AGY_FAKE_MODE: "process-failure",
+      };
+      const layer = providerLayer({
+        ...fixture,
+        environment,
+        fakeMode: "process-failure",
+        relayEvents,
+      });
+
+      yield* assertAntigravityProcessFailureThenRecovery({
+        stateDir: fixture.stateDir,
+        environment,
+        relayEvents,
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 
   for (const [fakeMode, expected] of [
     ["missing-transcript", "Antigravity transcript_full.jsonl was not created"],

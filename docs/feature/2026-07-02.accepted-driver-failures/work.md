@@ -49,3 +49,14 @@
 - Assertions cover `response.created` then `response.failed`, exact Codex-facing error message,
   no assistant final answer, no `response.completed`, `TurnFailed` logging, no completed Claude
   binding, and a follow-up successful turn in the same provider lifetime.
+
+## Antigravity Process Failure Regression
+
+- Antigravity driver tests now decode raw SSE data for one accepted `agy` process failure so
+  `response.failed.response.error.message` can be asserted without the minimal OpenAI schema
+  dropping failure fields.
+- Regression uses fake mode `process-failure`, proving the real Antigravity driver path reports:
+  `Caara driver failed: Antigravity CLI exited with code 23.`
+- Assertions cover HTTP 200 `text/event-stream`, `response.created` then `response.failed`, no
+  assistant completion item, no `response.completed`, exact `TurnFailed` logging, no completed
+  Antigravity binding, and a follow-up successful turn in the same provider lifetime.
