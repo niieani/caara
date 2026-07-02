@@ -17,7 +17,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
-import { isAssistantMessageDoneData } from "./responseFrameTestHelpers.ts";
+import {
+  failedErrorMessageFromResponseFrames,
+  isAssistantMessageDoneData,
+} from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
@@ -28,6 +31,9 @@ const projectRoot = process.cwd();
 
 /** Stable Codex turn id used by the valid transport fixture. */
 const makeTurnId = (): string => "turn-http-1";
+
+/** Stable Codex turn id used after an accepted driver start failure. */
+const makePostStartFailureTurnId = (): string => "turn-http-after-start-failure";
 
 /** Builds Codex turn metadata with optional field overrides. */
 const makeTurnMetadata = (
@@ -190,6 +196,13 @@ interface ResponseSseFrame {
   readonly data: OpenAiSchema.ResponseStreamEvent;
 }
 
+/** Raw Responses SSE frame decoded without the OpenAI schema dropping producer-extra fields. */
+interface RawResponseSseFrame {
+  readonly event: string;
+  readonly id: string | undefined;
+  readonly data: unknown;
+}
+
 /** Decodes OpenAI Responses SSE frames from the real response byte stream. */
 const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
   stream.pipe(
@@ -198,6 +211,19 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Stream.runCollect,
     Effect.map((frames) => [...frames]),
   );
+
+/** Decodes raw Responses SSE frames while preserving non-minimal response fields. */
+const decodeRawResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
+    Stream.runCollect,
+    Effect.map((frames) => [...frames]),
+  );
+
+/** Extracts ordered SSE event names from raw or schema-decoded frames. */
+const frameEventNames = (frames: readonly RawResponseSseFrame[]): readonly string[] =>
+  frames.map((frame) => frame.event);
 
 /** Returns true when a value is a non-array object record. */
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -430,6 +456,7 @@ function logsDiagnosticDriverFailures() {
   const loggedInputs: Array<Schema.Json> = [];
   const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
   const relayEvents: Array<RelayLogEvent> = [];
+  const stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`);
 
   return Effect.gen(function* () {
     const request = setCodexHeaders({
@@ -439,14 +466,25 @@ function logsDiagnosticDriverFailures() {
       }),
     });
     const response = yield* HttpClient.execute(request);
-    const responseBody = yield* response.json;
+    const frames = yield* decodeRawResponseSseFrames(response.stream);
 
-    assert.strictEqual(response.status, 500);
-    assert.strictEqual(getField(getField(responseBody, "error"), "type"), "server_error");
-    assert.match(String(getField(getField(responseBody, "error"), "message")), /diagnostic/i);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers["content-type"], "text/event-stream");
+    assert.deepStrictEqual(frameEventNames(frames), ["response.created", "response.failed"]);
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(frames),
+      "Caara driver failed: Unsupported diagnostic scenario: unknown.",
+    );
     assert.deepStrictEqual(
       relayEvents.map((event) => event._tag),
-      ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted", "TurnFailed"],
+      [
+        "TurnAccepted",
+        "TargetSelected",
+        "TurnInFlightAcquired",
+        "DriverStarted",
+        "RuntimeEventRelayed",
+        "TurnFailed",
+      ],
     );
     assert.deepStrictEqual(relayEvents.at(-1), {
       _tag: "TurnFailed",
@@ -454,9 +492,33 @@ function logsDiagnosticDriverFailures() {
       turnId: makeTurnId(),
       message: "Unsupported diagnostic scenario: unknown.",
     });
-    assert.deepStrictEqual(loggedInputs, []);
+    assert.deepStrictEqual(loggedInputs, [requestBody.input]);
     assert.strictEqual(loggedDiagnostics.length, 1);
-  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
+
+    const recoveryTurnId = makePostStartFailureTurnId();
+    const recoveryRequest = setCodexHeaders({
+      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), {
+        ...requestBody,
+        client_metadata: {
+          ...requestBody.client_metadata,
+          turn_id: recoveryTurnId,
+        },
+      }),
+      headers: makeCodexHeaders({
+        metadata: makeTurnMetadata({ turn_id: recoveryTurnId }),
+        overrides: { "x-client-request-id": recoveryTurnId },
+      }),
+    });
+    const recoveryResponse = yield* HttpClient.execute(recoveryRequest);
+    const recoveryFrames = yield* decodeResponseSseFrames(recoveryResponse.stream);
+    const lastRecoveryFrame = recoveryFrames.at(-1);
+    assert.ok(lastRecoveryFrame, "recovery response must include terminal frame");
+
+    assert.strictEqual(recoveryResponse.status, 200);
+    assert.strictEqual(decodeCompletedEvent(lastRecoveryFrame.data).type, "response.completed");
+  }).pipe(
+    Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents, stateDir)),
+  );
 }
 
 describe("mock Responses provider", () => {
@@ -523,7 +585,7 @@ describe("mock Responses provider", () => {
     }),
   );
 
-  it.effect("logs Diagnostic driver failures with an OpenAI-shaped transport error", () =>
+  it.effect("streams accepted Diagnostic driver failures as response.failed", () =>
     logsDiagnosticDriverFailures(),
   );
 });

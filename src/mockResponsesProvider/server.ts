@@ -6,7 +6,11 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 
-import { type AgentDriverError, AgentDriverRegistry } from "./agentDriver.ts";
+import {
+  type AgentDriverError,
+  AgentDriverRegistry,
+  type AgentDriverTurnResult,
+} from "./agentDriver.ts";
 import { decodeCodexTurnRequest } from "./codexTurnContext.ts";
 import { normalizeCurrentTurnInput } from "./currentTurnInput.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
@@ -21,6 +25,7 @@ import {
   completeSessionBinding,
   deleteSessionBinding,
   type DurableExternalSession,
+  EphemeralExternalSession,
   prepareSessionBinding,
   SessionDirectory,
 } from "./sessionDirectory.ts";
@@ -51,6 +56,22 @@ export const driverErrorResponse = (error: AgentDriverError) =>
     },
     { status: 500 },
   );
+
+/** Builds a failed driver turn result for accepted start/query-construction failures. */
+const failedDriverStartTurnResult = ({
+  error,
+}: {
+  readonly error: AgentDriverError;
+}): AgentDriverTurnResult => ({
+  runtimeEvents: Stream.fromIterable([
+    {
+      _tag: "TurnFailed",
+      error,
+    },
+  ]),
+  externalSession: new EphemeralExternalSession({}),
+  cancel: Effect.succeed({ _tag: "Terminated", sessionReusable: false }),
+});
 
 /** Converts an overlapping-turn conflict into an OpenAI-shaped JSON error response. */
 export const turnConcurrencyConflictResponse = (error: TurnConcurrencyConflict) =>
@@ -205,16 +226,7 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     })
     .pipe(
       Effect.catchTag("AgentDriverError", (error) =>
-        Effect.gen(function* () {
-          yield* relayLogger.log({
-            _tag: "TurnFailed",
-            threadId: responsesRequest.codex.threadId,
-            turnId: responsesRequest.codex.turnId,
-            message: error.message,
-          });
-          yield* lease.release;
-          return yield* error;
-        }),
+        Effect.succeed(failedDriverStartTurnResult({ error })),
       ),
     );
   yield* logger.logInput(responsesRequest.responses.input);

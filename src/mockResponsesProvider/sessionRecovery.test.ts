@@ -15,6 +15,7 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import { failedErrorMessageFromResponseFrames } from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "./sessionDirectoryPlatform.ts";
@@ -129,12 +130,6 @@ const setHeaders = ({
     nextRequest = nextRequest.pipe(HttpClientRequest.setHeader(name, value));
   }
   return nextRequest;
-};
-
-/** Reads an object field after asserting the parent is an object record. */
-const getField = (value: unknown, field: string): unknown => {
-  assert.ok(typeof value === "object" && value !== null && !Array.isArray(value));
-  return value[field as keyof typeof value];
 };
 
 /** Builds a fresh server layer backed by one shared recovery state directory. */
@@ -258,7 +253,7 @@ const runTurn = ({
     return { assistantText: messageText(message), messages };
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
 
-/** Runs one recovery test turn expected to fail at the transport layer. */
+/** Runs one recovery test turn expected to fail after accepted driver start. */
 const runErrorTurn = ({
   stateDir,
   turnId,
@@ -289,10 +284,10 @@ const runErrorTurn = ({
       headers: makeHeaders({ turnId, includeWorkspace }),
     });
     const response = yield* HttpClient.execute(request);
-    const responseBody = yield* response.json;
+    const frames = yield* decodeUnknownResponseSseFrames(response.stream);
     return {
       status: response.status,
-      body: responseBody,
+      frames,
     };
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
 
@@ -433,11 +428,10 @@ describe("session recovery Diagnostic integration", () => {
         diagnostics,
         relayEvents,
       });
-      assert.strictEqual(failure.status, 500);
-      assert.strictEqual(getField(getField(failure.body, "error"), "type"), "server_error");
-      assert.match(
-        String(getField(getField(failure.body, "error"), "message")),
-        /fresh external session/i,
+      assert.strictEqual(failure.status, 200);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failure.frames),
+        `Caara driver failed: ${diagnosticDriverFixture.unrecoverableSessionFailureMessage}`,
       );
       assert.deepStrictEqual(yield* readPersistedBinding({ stateDir }), originalBinding);
       assert.deepStrictEqual(
@@ -475,11 +469,10 @@ describe("session recovery Diagnostic integration", () => {
         relayEvents,
       });
 
-      assert.strictEqual(failure.status, 500);
-      assert.strictEqual(getField(getField(failure.body, "error"), "type"), "server_error");
-      assert.match(
-        String(getField(getField(failure.body, "error"), "message")),
-        /unsupported diagnostic_resume value/i,
+      assert.strictEqual(failure.status, 200);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failure.frames),
+        "Caara driver failed: Unsupported diagnostic_resume value: stale.",
       );
       assert.deepStrictEqual(
         relayEvents.filter(

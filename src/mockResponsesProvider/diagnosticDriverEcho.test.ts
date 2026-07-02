@@ -16,7 +16,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
-import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
+import {
+  assistantTextFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
@@ -205,6 +208,15 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
+/** Decodes raw Responses SSE frames while preserving non-minimal response fields. */
+const decodeRawResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
+    Stream.runCollect,
+    Effect.map((frames) => [...frames]),
+  );
+
 /** Creates a fresh state directory under project-local temp.local. */
 const makeStateDir = Effect.fnUntraced(function* () {
   const tempRoot = path.join(projectRoot, "temp.local");
@@ -248,7 +260,7 @@ const runDiagnosticEchoTurn = ({
     return { frames, assistantText: assistantTextFromResponseFrames(frames) };
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
 
-/** Runs one diagnostic/echo turn expected to fail before a Responses stream starts. */
+/** Runs one diagnostic/echo turn expected to fail after accepted driver start. */
 const runDiagnosticEchoErrorTurn = ({
   stateDir,
   turnId,
@@ -273,15 +285,9 @@ const runDiagnosticEchoErrorTurn = ({
       headers: makeHeaders(turnId),
     });
     const response = yield* HttpClient.execute(request);
-    const body = yield* response.json;
-    return { status: response.status, body };
+    const frames = yield* decodeRawResponseSseFrames(response.stream);
+    return { status: response.status, frames };
   }).pipe(Effect.provide(providerLayer({ stateDir, inputs, diagnostics, relayEvents })));
-
-/** Returns an object field after asserting the value is an object record. */
-const objectField = (value: unknown, field: string): unknown => {
-  assert.ok(typeof value === "object" && value !== null && !Array.isArray(value));
-  return (value as Readonly<Record<string, unknown>>)[field];
-};
 
 describe("diagnostic echo driver", () => {
   it.effect("echoes first-turn current user input deterministically", () =>
@@ -409,12 +415,12 @@ describe("diagnostic echo driver", () => {
         relayEvents,
       });
 
-      assert.strictEqual(failure.status, 500);
-      assert.match(
-        String(objectField(objectField(failure.body, "error"), "message")),
-        /unsupported diagnostic echo current-turn content/i,
+      assert.strictEqual(failure.status, 200);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failure.frames),
+        "Caara driver failed: Unsupported diagnostic echo current-turn content: input_audio.",
       );
-      assert.deepStrictEqual(inputs, []);
+      assert.strictEqual(inputs.length, 1);
       assert.strictEqual(diagnostics.length, 1);
       assert.strictEqual(relayEvents.at(-1)?._tag, "TurnFailed");
     }),

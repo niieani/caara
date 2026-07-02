@@ -16,7 +16,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
-import { assistantTextFromResponseFrames } from "./responseFrameTestHelpers.ts";
+import {
+  assistantTextFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
 import { turnConcurrencyLive } from "./turnConcurrency.ts";
@@ -176,11 +179,14 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
-/** Reads an object field after asserting the parent is an object record. */
-const getField = (value: unknown, field: string): unknown => {
-  assert.ok(typeof value === "object" && value !== null && !Array.isArray(value));
-  return value[field as keyof typeof value];
-};
+/** Decodes raw Responses SSE frames while preserving non-minimal response fields. */
+const decodeRawResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
+    Stream.runCollect,
+    Effect.map((frames) => [...frames]),
+  );
 
 /** Builds a capture logger layer for request inputs. */
 const inputLoggerLayer = (inputs: Array<Schema.Json>) =>
@@ -373,7 +379,7 @@ const runCancelledTurn = Effect.fnUntraced(function* ({
   return relayEvents;
 });
 
-/** Runs one turn with an unsupported Diagnostic cancellation option and returns the error body. */
+/** Runs one turn with an unsupported Diagnostic cancellation option and returns failure frames. */
 const runInvalidCancellationOptionTurn = Effect.fnUntraced(function* ({
   stateDir,
 }: {
@@ -398,9 +404,9 @@ const runInvalidCancellationOptionTurn = Effect.fnUntraced(function* ({
     includeCwd: true,
   });
   const response = yield* HttpClient.execute(request).pipe(Effect.provide(layer));
-  const body = yield* response.json;
+  const frames = yield* decodeRawResponseSseFrames(response.stream);
 
-  return { body, relayEvents, status: response.status };
+  return { frames, relayEvents, status: response.status };
 });
 
 /** Creates a fresh cancellation state directory under project-local temp.local. */
@@ -448,14 +454,21 @@ describe("turn cancellation", () => {
       const stateDir = yield* makeStateDir();
       const result = yield* runInvalidCancellationOptionTurn({ stateDir });
 
-      assert.strictEqual(result.status, 500);
-      assert.match(
-        String(getField(getField(result.body, "error"), "message")),
-        /unsupported diagnostic_cancel value/i,
+      assert.strictEqual(result.status, 200);
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(result.frames),
+        "Caara driver failed: Unsupported diagnostic_cancel value: bogus.",
       );
       assert.deepStrictEqual(
         result.relayEvents.map((event) => event._tag),
-        ["TurnAccepted", "TargetSelected", "TurnInFlightAcquired", "DriverStarted", "TurnFailed"],
+        [
+          "TurnAccepted",
+          "TargetSelected",
+          "TurnInFlightAcquired",
+          "DriverStarted",
+          "RuntimeEventRelayed",
+          "TurnFailed",
+        ],
       );
     }),
   );

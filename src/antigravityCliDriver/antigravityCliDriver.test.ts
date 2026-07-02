@@ -48,12 +48,6 @@ const FakeAgyInvocation = Schema.Struct({
   prompt: Schema.String,
 });
 
-/** Failed HTTP turn result shape returned by the test transport helper. */
-const FailureTurnResult = Schema.TaggedStruct("Failure", {
-  status: Schema.Finite,
-  body: Schema.String,
-});
-
 /** Builds Codex turn metadata for an Antigravity test turn. */
 const makeTurnMetadata = ({
   turnId,
@@ -529,11 +523,14 @@ describe("Antigravity CLI driver", () => {
     it.effect(`fails explicitly when fake agy reports ${fakeMode}`, () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        const result = yield* runTurn({ ...fixture, fakeMode, relayEvents: [] });
+        const relayEvents: Array<RelayLogEvent> = [];
+        const result = yield* runTurn({ ...fixture, fakeMode, relayEvents });
 
-        const failure = yield* Schema.decodeUnknownEffect(FailureTurnResult)(result);
-        assert.strictEqual(failure.status, 500);
-        assert.ok(failure.body.includes(expected), failure.body);
+        assert.deepStrictEqual(result, { _tag: "StreamFailure", status: 200 });
+        assert.ok(
+          turnFailedMessages(relayEvents).some((message) => message.includes(expected)),
+          String(turnFailedMessages(relayEvents)),
+        );
       }),
     );
   }
@@ -580,16 +577,21 @@ describe("Antigravity CLI driver", () => {
   it.effect("fails explicitly when the agy executable is unavailable", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
       const result = yield* runTurn({
         ...fixture,
         fakeAgyPath: path.join(fixture.fakeAgyPath, "missing"),
         fakeMode: "success",
-        relayEvents: [],
+        relayEvents,
       });
 
-      const failure = yield* Schema.decodeUnknownEffect(FailureTurnResult)(result);
-      assert.strictEqual(failure.status, 500);
-      assert.ok(failure.body.includes("Antigravity CLI failed to start"), failure.body);
+      assert.deepStrictEqual(result, { _tag: "StreamFailure", status: 200 });
+      assert.ok(
+        turnFailedMessages(relayEvents).some((message) =>
+          message.includes("Antigravity CLI failed to start"),
+        ),
+        String(turnFailedMessages(relayEvents)),
+      );
     }),
   );
 });
