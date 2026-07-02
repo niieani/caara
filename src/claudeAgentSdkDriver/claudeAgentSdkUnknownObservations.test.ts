@@ -79,7 +79,6 @@ const makeTurn = (): AgentDriverTurn => ({
 /** Builds a future SDK message type outside the installed closed union. */
 const sdkUnknownMessage = (): SDKMessage => {
   return {
-    // @ts-expect-error Future SDK drift fixture intentionally falls outside current SDKMessage.
     type: "future_observation",
     payload: "RAW_UNKNOWN_SDK_MESSAGE_SHOULD_NOT_LEAK",
     uuid: "00000000-0000-4000-8000-00000000b201",
@@ -101,7 +100,6 @@ const sdkAssistantWithUnknownContent = (): SDKMessage => ({
     model: "claude-sonnet-4-5",
     content: [
       {
-        // @ts-expect-error Future assistant content block intentionally falls outside current union.
         type: "future_content_block",
         payload: "RAW_UNKNOWN_ASSISTANT_BLOCK_SHOULD_NOT_LEAK",
       },
@@ -147,7 +145,6 @@ const sdkUnknownStreamBlock = ({ index = 0 }: { readonly index?: number } = {}):
     type: "content_block_start",
     index,
     content_block: {
-      // @ts-expect-error Future stream content block intentionally falls outside current union.
       type: "future_stream_block",
       payload: "RAW_UNKNOWN_STREAM_BLOCK_SHOULD_NOT_LEAK",
     },
@@ -164,7 +161,6 @@ const sdkUnknownStreamDelta = ({ index = 0 }: { readonly index?: number } = {}):
     type: "content_block_delta",
     index,
     delta: {
-      // @ts-expect-error Future stream delta intentionally falls outside current union.
       type: "future_stream_delta",
       payload: "RAW_UNKNOWN_STREAM_DELTA_SHOULD_NOT_LEAK",
     },

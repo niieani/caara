@@ -132,6 +132,7 @@ Codex normally builds the request. For direct tests, the important fields are:
 The model prefix selects the driver. The model suffix is driver-owned:
 
 ```text
+claude/fable
 claude/haiku
 claude/sonnet
 agy/gemini-3.5-flash
@@ -147,6 +148,11 @@ dispatch, and each driver rejects unknown option names.
 
 The driver starts SDK `query()` with a durable Caara-generated session id on the first turn. On
 follow-up turns it passes the stored Claude SDK resume cursor back to the SDK.
+
+Claude model suffixes pass through to the SDK as-is. `claude/fable` selects Claude Code's Fable
+alias; `claude/claude-fable-5` selects the full Claude API model name when the configured Claude
+Code provider supports it. Fable requires Claude Code `v2.1.170+`, and Anthropic does not make it
+available for zero-data-retention organizations.
 
 Supported provider query params:
 
@@ -245,13 +251,14 @@ Useful query params:
 
 ## Codex Agent Roles
 
-Local Codex subagent configs live in `.codex/agents/caara-claude.toml` and
-`.codex/agents/caara-antigravity.toml`.
+Local Codex subagent configs live in `.codex/agents/caara-claude.toml`,
+`.codex/agents/caara-claude-fable.toml`, and `.codex/agents/caara-antigravity.toml`.
 
-| File                                   | `agent_type`        | Model                  |
-| -------------------------------------- | ------------------- | ---------------------- |
-| `.codex/agents/caara-claude.toml`      | `caara-claude`      | `claude/haiku`         |
-| `.codex/agents/caara-antigravity.toml` | `caara-antigravity` | `agy/gemini-3.5-flash` |
+| File                                    | `agent_type`         | Model                  |
+| --------------------------------------- | -------------------- | ---------------------- |
+| `.codex/agents/caara-claude.toml`       | `caara-claude`       | `claude/haiku`         |
+| `.codex/agents/caara-claude-fable.toml` | `caara-claude-fable` | `claude/fable`         |
+| `.codex/agents/caara-antigravity.toml`  | `caara-antigravity`  | `agy/gemini-3.5-flash` |
 
 Each role embeds its own `[model_providers.caara]` block because Codex validates custom agent role
 config layers before merging project-level provider config.

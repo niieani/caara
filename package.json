@@ -21,7 +21,7 @@
     "test:types": "tstyche"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.186",
+    "@anthropic-ai/claude-agent-sdk": "0.3.198",
     "@anthropic-ai/sdk": "0.105.0",
     "@effect/platform-bun": "4.0.0-beta.85",
     "@effect/sql-sqlite-bun": "4.0.0-beta.85",

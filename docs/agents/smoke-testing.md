@@ -5,6 +5,7 @@ Use this flow to verify the local Caara provider through Codex's real subagent p
 Checked-in real-agent roles:
 
 - `agent_type = "caara-claude"`: Claude SDK driver with `model = "claude/haiku"`.
+- `agent_type = "caara-claude-fable"`: Claude SDK driver with `model = "claude/fable"`.
 - `agent_type = "caara-antigravity"`: Antigravity CLI driver with
   `model = "agy/gemini-3.5-flash"`.
 
@@ -58,6 +59,10 @@ Do not pass a `model` override. The role sets `model = "claude/haiku"` and point
 `http://127.0.0.1:8787/v1`. No provider query parameters are required for the standard subagent
 smoke.
 
+Use `agent_type = "caara-claude-fable"` only when intentionally testing Fable. That role sets
+`model = "claude/fable"`; Anthropic documents Fable as requiring Claude Code `v2.1.170+` and not
+being available under zero data retention.
+
 First-turn prompt:
 
 ```text
@@ -102,6 +107,7 @@ Expected follow-up response: the Claude-backed subagent identifies the previous 
 Relay evidence to check:
 
 - `TargetSelected` requested `claude/haiku`.
+- Fable role variant: `TargetSelected` requested `claude/fable`.
 - `DriverStarted` used external agent kind `claude`.
 - The follow-up `DriverStarted` includes an external Claude session id and `previousTarget`.
 - `RuntimeEventRelayed` includes normal runtime item lifecycle records.
@@ -212,7 +218,9 @@ To distinguish the SDK-backed path from the retired Claude CLI path:
 
 ## Troubleshooting
 
-If `agent_type = "caara-claude"` is unavailable, check `.codex/agents/caara-claude.toml` exists and includes its embedded `[model_providers.caara]` block.
+If `agent_type = "caara-claude"` or `agent_type = "caara-claude-fable"` is unavailable, check the
+matching `.codex/agents/*.toml` file exists and includes its embedded `[model_providers.caara]`
+block.
 
 If the subagent spawn succeeds but the turn fails, check the provider process is still listening on `127.0.0.1:8787`.
 

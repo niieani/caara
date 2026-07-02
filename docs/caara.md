@@ -363,6 +363,7 @@ Model specifier shape:
 Examples:
 
 ```text
+claude/fable
 claude/haiku
 claude/sonnet
 claude/opus
@@ -373,7 +374,9 @@ diagnostic/activity
 Caara core parses only the first `/`. The segment before it selects the external agent kind and its
 driver. The rest is an opaque external model specifier passed to the driver as-is; Caara core does
 not keep a model allow-list because external harnesses may add or expose arbitrary model names.
-Unknown external agent kinds or model strings without an agent-kind prefix fail explicitly.
+For Claude Code, `claude/fable` selects the Fable alias and `claude/claude-fable-5` selects the full
+model name when the configured provider supports it. Unknown external agent kinds or model strings
+without an agent-kind prefix fail explicitly.
 
 Provider query parameters become driver options. Caara parses them generically and does not reserve
 global option names or require option prefixes. The selected external agent kind scopes the option
@@ -672,9 +675,10 @@ relaying normalized runtime events onto the Responses transport.
 
 ## Codex Role Configuration
 
-The local Codex roles live at `.codex/agents/caara-claude.toml` and
-`.codex/agents/caara-antigravity.toml`. Each role file is self-contained: it includes both the
-agent config and the `[model_providers.caara]` provider block.
+The local Codex roles live at `.codex/agents/caara-claude.toml`,
+`.codex/agents/caara-claude-fable.toml`, and `.codex/agents/caara-antigravity.toml`. Each role file
+is self-contained: it includes both the agent config and the `[model_providers.caara]` provider
+block.
 
 The provider block is intentionally embedded in the role file because Codex validates role config
 layers before merging project-level provider config.
@@ -687,6 +691,25 @@ description = "Delegates to the local Caara Responses provider backed by Claude 
 developer_instructions = "Use the local Caara Responses provider. Relay the provider response as-is."
 model_provider = "caara"
 model = "claude/haiku"
+model_supports_reasoning_summaries = true
+
+[model_providers.caara]
+name = "Caara Responses"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
+```
+
+Current local Fable role:
+
+```toml
+name = "caara-claude-fable"
+description = "Delegates to the local Caara Responses provider backed by Claude Code Fable."
+developer_instructions = "Use the local Caara Responses provider with Claude Fable. Relay the provider response as-is."
+model_provider = "caara"
+model = "claude/fable"
 model_supports_reasoning_summaries = true
 
 [model_providers.caara]

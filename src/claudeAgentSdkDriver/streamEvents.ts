@@ -1,11 +1,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option } from "effect";
 
-import {
-  type AgentRuntimeContentKind,
-  type AgentRuntimeEvent,
-  createReasoningSummaryRuntimeEvents,
-} from "../mockResponsesProvider/agentDriver.ts";
+import { createReasoningSummaryRuntimeEvents } from "../mockResponsesProvider/agentDriver.ts";
 import { messagePhaseFromAssistantStopReason } from "./assistantPhase.ts";
 import {
   appendPendingStreamAssistantText,
@@ -16,11 +12,32 @@ import type {
   ClaudeAgentSdkActiveStreamBlock,
   ClaudeAgentSdkBufferedAssistantTextStreamBlock,
   ClaudeAgentSdkDisplayableStreamBlock,
-  ClaudeAgentSdkIgnoredStreamBlock,
   ClaudeAgentSdkRuntimeEventResult,
   ClaudeAgentSdkRuntimeEventState,
 } from "./claudeAgentSdkRuntimeEventState.ts";
-import { logIgnoredClaudeSdkObservation, stringField } from "./unknownObservationTelemetry.ts";
+import {
+  type DisplayableContentBlockDeltaCandidate,
+  isAssistantTextDisplayableDelta,
+  isReasoningDisplayableDelta,
+  isSdkTextContentBlock,
+  isSdkTextDelta,
+  isSdkThinkingContentBlock,
+  isSdkThinkingDelta,
+} from "./sdkStreamPayloads.ts";
+import {
+  appendBufferedAssistantText,
+  contentDeltaEventResult,
+  ignoredStreamBlockStartedEvents,
+  ignoredStreamObservationEvents,
+  type IgnoredStreamObservationContext,
+  noRuntimeEvents,
+  resetClaudeAgentSdkStreamTracking,
+  streamEventIndex,
+  textContentBlockStartedEvents,
+  thinkingContentBlockStartedEvents,
+  withoutActiveStreamBlock,
+} from "./streamEventState.ts";
+import { stringField } from "./unknownObservationTelemetry.ts";
 
 /** SDK content-block delta event emitted inside the partial assistant stream. */
 type ClaudeAgentSdkContentBlockDeltaEvent = Extract<
@@ -46,269 +63,6 @@ type ClaudeAgentSdkMessageDeltaEvent = Extract<
   { readonly type: "message_delta" }
 >;
 
-/** Returns no runtime events for SDK stream events outside the encoded subset. */
-const noRuntimeEvents = (
-  state: ClaudeAgentSdkRuntimeEventState,
-): ClaudeAgentSdkRuntimeEventResult => [state, []] as const;
-
-/** Metadata attached to safe telemetry for one ignored SDK stream observation. */
-interface IgnoredStreamObservationContext {
-  readonly sessionId: string;
-  readonly index?: number;
-}
-
-/** Logs one ignored SDK stream observation and returns no runtime events. */
-const ignoredStreamObservationEvents = ({
-  state,
-  shape,
-  payload,
-  context,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly shape: string;
-  readonly payload: unknown;
-  readonly context: IgnoredStreamObservationContext;
-}) =>
-  logIgnoredClaudeSdkObservation({
-    shape,
-    payload,
-    sessionId: context.sessionId,
-    index: context.index,
-  }).pipe(Effect.map(() => noRuntimeEvents(state)));
-
-/** Records one unknown stream block index so child deltas cannot become orphan text. */
-const withIgnoredStreamBlock = ({
-  state,
-  index,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly index: number;
-}): ClaudeAgentSdkRuntimeEventState => ({
-  ...state,
-  ...withActiveStreamBlock({
-    state,
-    index,
-    block: { _tag: "Ignored" } satisfies ClaudeAgentSdkIgnoredStreamBlock,
-    markStreamedContent: false,
-  }),
-});
-
-/** Logs and tracks one unknown stream block start. */
-const ignoredStreamBlockStartedEvents = ({
-  state,
-  event,
-  contentBlock,
-  context,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly event: ClaudeAgentSdkContentBlockStartEvent;
-  readonly contentBlock: unknown;
-  readonly context: IgnoredStreamObservationContext;
-}) =>
-  logIgnoredClaudeSdkObservation({
-    shape: `stream_event/content_block_start/${stringField(contentBlock, "type") ?? "unknown"}`,
-    payload: contentBlock,
-    sessionId: context.sessionId,
-    index: context.index,
-  }).pipe(Effect.map(() => noRuntimeEvents(withIgnoredStreamBlock({ state, index: event.index }))));
-
-/** Returns whether one SDK stream event carries a content block index. */
-const hasStreamEventIndex = (
-  event: Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
-): event is Extract<SDKMessage, { readonly type: "stream_event" }>["event"] & {
-  readonly index: number;
-} => "index" in event;
-
-/** Extracts a content block index from SDK stream events that carry one. */
-const streamEventIndex = (
-  event: Extract<SDKMessage, { readonly type: "stream_event" }>["event"],
-): number | undefined =>
-  Match.value(event).pipe(
-    Match.when(hasStreamEventIndex, (indexedEvent) => indexedEvent.index),
-    Match.orElse(() => undefined),
-  );
-
-/** Builds one typed content-delta runtime event. */
-const contentDeltaRuntimeEvent = ({
-  itemId,
-  contentKind,
-  text,
-}: {
-  readonly itemId: string;
-  readonly contentKind: AgentRuntimeContentKind;
-  readonly text: string;
-}): AgentRuntimeEvent => ({
-  _tag: "ContentDelta",
-  itemId,
-  contentIndex: 0,
-  contentKind,
-  text,
-});
-
-/** Stores an active SDK stream block by raw Anthropic content-block index. */
-const withActiveStreamBlock = ({
-  state,
-  index,
-  block,
-  markStreamedContent,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly index: number;
-  readonly block: ClaudeAgentSdkActiveStreamBlock;
-  readonly markStreamedContent: boolean;
-}): Pick<ClaudeAgentSdkRuntimeEventState, "activeStreamBlocks" | "streamedContentBlockIndexes"> => {
-  const activeStreamBlocks = new Map(state.activeStreamBlocks);
-  activeStreamBlocks.set(index, block);
-  const streamedContentBlockIndexes = Match.value(markStreamedContent).pipe(
-    Match.when(true, () => new Set(state.streamedContentBlockIndexes).add(index)),
-    Match.orElse(() => new Set(state.streamedContentBlockIndexes)),
-  );
-  return {
-    activeStreamBlocks,
-    streamedContentBlockIndexes,
-  };
-};
-
-/** Removes a completed SDK stream block from active block state. */
-const withoutActiveStreamBlock = ({
-  state,
-  index,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly index: number;
-}): ReadonlyMap<number, ClaudeAgentSdkActiveStreamBlock> => {
-  const activeStreamBlocks = new Map(state.activeStreamBlocks);
-  activeStreamBlocks.delete(index);
-  return activeStreamBlocks;
-};
-
-/** Resets raw SDK message-local stream tracking for a new assistant message stream. */
-export const resetClaudeAgentSdkStreamTracking = (
-  state: ClaudeAgentSdkRuntimeEventState,
-): ClaudeAgentSdkRuntimeEventState => ({
-  ...state,
-  activeStreamBlocks: new Map(),
-  streamedContentBlockIndexes: new Set(),
-});
-
-/** Creates an optional initial content delta when a block-start event already carries content. */
-const initialContentDeltaEvent = ({
-  itemId,
-  contentKind,
-  text,
-}: {
-  readonly itemId: string;
-  readonly contentKind: AgentRuntimeContentKind;
-  readonly text: string;
-}): readonly AgentRuntimeEvent[] =>
-  Match.value(text).pipe(
-    Match.when(
-      (value) => value.length === 0,
-      () => [],
-    ),
-    Match.orElse((value) => [contentDeltaRuntimeEvent({ itemId, contentKind, text: value })]),
-  );
-
-/** Tracks one SDK text content block until message_delta supplies phase. */
-const textContentBlockStartedEvents = ({
-  state,
-  index,
-  initialText,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly index: number;
-  readonly initialText: string;
-}): ClaudeAgentSdkRuntimeEventResult =>
-  [
-    {
-      ...state,
-      ...withActiveStreamBlock({
-        state,
-        index,
-        block: { _tag: "BufferedAssistantText", contentIndex: index, text: initialText },
-        markStreamedContent: false,
-      }),
-    },
-    [],
-  ] as const;
-
-/** Creates a runtime reasoning item for one SDK thinking content block. */
-const thinkingContentBlockStartedEvents = ({
-  state,
-  index,
-  initialThinking,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly index: number;
-  readonly initialThinking: string;
-}): ClaudeAgentSdkRuntimeEventResult => {
-  const itemId = `claude-sdk-reasoning-${state.nextReasoningIndex}`;
-  return [
-    {
-      ...state,
-      nextReasoningIndex: state.nextReasoningIndex + 1,
-      ...withActiveStreamBlock({
-        state,
-        index,
-        block: { _tag: "Displayable", itemId, contentKind: "reasoning_summary_text" },
-        markStreamedContent: true,
-      }),
-    },
-    [
-      {
-        _tag: "ItemCreated",
-        itemId,
-        itemKind: "reasoning",
-      },
-      {
-        _tag: "ContentStarted",
-        itemId,
-        contentIndex: 0,
-        contentKind: "reasoning_summary_text",
-      },
-      ...initialContentDeltaEvent({
-        itemId,
-        contentKind: "reasoning_summary_text",
-        text: initialThinking,
-      }),
-    ],
-  ] as const;
-};
-
-/** Converts one SDK content-block delta into runtime events. */
-const contentDeltaEventResult = ({
-  state,
-  itemId,
-  contentKind,
-  text,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly itemId: string;
-  readonly contentKind: AgentRuntimeContentKind;
-  readonly text: string;
-}): ClaudeAgentSdkRuntimeEventResult => [
-  state,
-  [contentDeltaRuntimeEvent({ itemId, contentKind, text })],
-];
-
-/** Appends one SDK text delta to the active assistant text buffer. */
-const appendBufferedAssistantText = ({
-  state,
-  activeBlock,
-  text,
-}: {
-  readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly activeBlock: ClaudeAgentSdkBufferedAssistantTextStreamBlock;
-  readonly text: string;
-}): ClaudeAgentSdkRuntimeEventResult => {
-  const activeStreamBlocks = new Map(state.activeStreamBlocks);
-  activeStreamBlocks.set(activeBlock.contentIndex, {
-    ...activeBlock,
-    text: `${activeBlock.text}${text}`,
-  });
-  return [{ ...state, activeStreamBlocks }, []] as const;
-};
-
 /** Converts one SDK content-block delta into a buffered assistant text state update. */
 const runtimeEventsFromBufferedAssistantTextDelta = ({
   state,
@@ -322,9 +76,13 @@ const runtimeEventsFromBufferedAssistantTextDelta = ({
   readonly context: IgnoredStreamObservationContext;
 }) =>
   Match.value(event.delta).pipe(
-    Match.when({ type: "text_delta" }, (delta) =>
+    Match.when(isSdkTextDelta, (delta) =>
       Effect.succeed(
-        appendBufferedAssistantText({ state, activeBlock: bufferedBlock, text: delta.text }),
+        appendBufferedAssistantText({
+          state,
+          activeBlock: bufferedBlock,
+          text: delta.text,
+        }),
       ),
     ),
     Match.orElse((delta) =>
@@ -349,8 +107,11 @@ const runtimeEventsFromDisplayableContentBlockDelta = ({
   readonly event: ClaudeAgentSdkContentBlockDeltaEvent;
   readonly context: IgnoredStreamObservationContext;
 }) =>
-  Match.value({ contentKind: displayableBlock.contentKind, delta: event.delta }).pipe(
-    Match.when({ contentKind: "assistant_text", delta: { type: "text_delta" } }, ({ delta }) =>
+  Match.value({
+    contentKind: displayableBlock.contentKind,
+    delta: event.delta,
+  } satisfies DisplayableContentBlockDeltaCandidate).pipe(
+    Match.when(isAssistantTextDisplayableDelta, ({ delta }) =>
       Effect.succeed(
         contentDeltaEventResult({
           state,
@@ -360,17 +121,15 @@ const runtimeEventsFromDisplayableContentBlockDelta = ({
         }),
       ),
     ),
-    Match.when(
-      { contentKind: "reasoning_summary_text", delta: { type: "thinking_delta" } },
-      ({ delta }) =>
-        Effect.succeed(
-          contentDeltaEventResult({
-            state,
-            itemId: displayableBlock.itemId,
-            contentKind: "reasoning_summary_text",
-            text: delta.thinking,
-          }),
-        ),
+    Match.when(isReasoningDisplayableDelta, ({ delta }) =>
+      Effect.succeed(
+        contentDeltaEventResult({
+          state,
+          itemId: displayableBlock.itemId,
+          contentKind: "reasoning_summary_text",
+          text: delta.thinking,
+        }),
+      ),
     ),
     Match.orElse(({ delta }) =>
       ignoredStreamObservationEvents({
@@ -466,10 +225,16 @@ const runtimeEventsFromOrphanContentBlockDelta = ({
   readonly context: IgnoredStreamObservationContext;
 }) =>
   Match.value(event.delta).pipe(
-    Match.when({ type: "text_delta" }, (delta) =>
-      Effect.succeed(orphanTextDeltaEvents({ state, contentIndex: event.index, text: delta.text })),
+    Match.when(isSdkTextDelta, (delta) =>
+      Effect.succeed(
+        orphanTextDeltaEvents({
+          state,
+          contentIndex: event.index,
+          text: delta.text,
+        }),
+      ),
     ),
-    Match.when({ type: "thinking_delta" }, (delta) =>
+    Match.when(isSdkThinkingDelta, (delta) =>
       Effect.succeed(orphanThinkingDeltaEvents({ state, thinking: delta.thinking })),
     ),
     Match.orElse((delta) =>
@@ -509,7 +274,7 @@ const runtimeEventsFromContentBlockStart = ({
   readonly context: IgnoredStreamObservationContext;
 }) =>
   Match.value(event.content_block).pipe(
-    Match.when({ type: "text" }, (contentBlock) =>
+    Match.when(isSdkTextContentBlock, (contentBlock) =>
       Effect.succeed(
         textContentBlockStartedEvents({
           state,
@@ -518,7 +283,7 @@ const runtimeEventsFromContentBlockStart = ({
         }),
       ),
     ),
-    Match.when({ type: "thinking" }, (contentBlock) =>
+    Match.when(isSdkThinkingContentBlock, (contentBlock) =>
       Effect.succeed(
         thinkingContentBlockStartedEvents({
           state,
@@ -530,7 +295,7 @@ const runtimeEventsFromContentBlockStart = ({
     Match.orElse((contentBlock) =>
       ignoredStreamBlockStartedEvents({
         state,
-        event,
+        index: event.index,
         contentBlock,
         context,
       }),

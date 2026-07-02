@@ -1,5 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option, Schema, Stream } from "effect";
+import type { Effect as EffectContract } from "effect/Effect";
 
 import { formatShellCommandActivityText } from "../agentActivityMarkdown.ts";
 import {
@@ -23,14 +24,19 @@ import {
   type ClaudeAgentSdkRuntimeEventResult,
   type ClaudeAgentSdkRuntimeEventState,
 } from "./claudeAgentSdkRuntimeEventState.ts";
-import { resetClaudeAgentSdkStreamTracking, runtimeEventsFromStreamEvent } from "./streamEvents.ts";
+import {
+  type ClaudeAgentSdkPermissionDeniedMessage,
+  isSdkAssistantTextContent,
+  isSdkAssistantThinkingContent,
+  isSdkAssistantToolUseContent,
+  type SdkAssistantToolUseContent,
+  sdkMessageRoute,
+  type SdkMessageRoute,
+  sdkResultErrorMessage,
+} from "./sdkMessagePayloads.ts";
+import { runtimeEventsFromStreamEvent } from "./streamEvents.ts";
+import { resetClaudeAgentSdkStreamTracking } from "./streamEventState.ts";
 import { logIgnoredClaudeSdkObservation, stringField } from "./unknownObservationTelemetry.ts";
-
-/** SDK permission-denied message emitted after noninteractive permission rejection. */
-type ClaudeAgentSdkPermissionDeniedMessage = Extract<
-  SDKMessage,
-  { readonly type: "system"; readonly subtype: "permission_denied" }
->;
 
 /** Safe subset of SDK tool input fields used for terse activity summaries. */
 const sdkToolInputSummarySchema = Schema.Struct({
@@ -187,7 +193,7 @@ const runtimeEventsFromToolUse = ({
   transportVisibility,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly content: { readonly id: string; readonly name: string; readonly input: unknown };
+  readonly content: SdkAssistantToolUseContent;
   readonly transportVisibility: AgentRuntimeTransportVisibility;
 }): ClaudeAgentSdkRuntimeEventResult => {
   const [nextState, events] = activityTextEvents({
@@ -257,15 +263,11 @@ const isAlreadyStreamedAssistantContent = ({
   >["message"]["content"][number];
 }): boolean =>
   state.streamedContentBlockIndexes.has(contentIndex) &&
-  Match.value(content).pipe(
-    Match.when({ type: "text" }, () => true),
-    Match.when({ type: "thinking" }, () => true),
-    Match.orElse(() => false),
-  );
+  (isSdkAssistantTextContent(content) || isSdkAssistantThinkingContent(content));
 
 /** Returns true when a completed assistant message asks Claude Code to use a tool. */
 const hasToolUseContent = (message: Extract<SDKMessage, { readonly type: "assistant" }>): boolean =>
-  message.message.content.some((content) => content.type === "tool_use");
+  message.message.content.some((content: unknown) => isSdkAssistantToolUseContent(content));
 
 /** Returns true when a completed assistant message has a terminal stop reason. */
 const hasAssistantStopReason = (
@@ -346,7 +348,7 @@ const runtimeEventsFromAssistantMessage = Effect.fnUntraced(function* ({
         () => isAlreadyStreamedAssistantContent({ state: nextState, contentIndex, content }),
         () => Effect.succeed(noRuntimeEvents(nextState)),
       ),
-      Match.when({ type: "text" }, (textContent) =>
+      Match.when(isSdkAssistantTextContent, (textContent) =>
         Effect.succeed(
           runtimeEventsFromAssistantTextContent({
             state: nextState,
@@ -356,10 +358,10 @@ const runtimeEventsFromAssistantMessage = Effect.fnUntraced(function* ({
           }),
         ),
       ),
-      Match.when({ type: "thinking" }, (thinkingContent) =>
+      Match.when(isSdkAssistantThinkingContent, (thinkingContent) =>
         Effect.succeed(reasoningTextEvents({ state: nextState, text: thinkingContent.thinking })),
       ),
-      Match.when({ type: "tool_use" }, (toolUseContent) =>
+      Match.when(isSdkAssistantToolUseContent, (toolUseContent) =>
         Effect.succeed(
           runtimeEventsFromToolUse({
             state: nextState,
@@ -463,72 +465,74 @@ const ignoredSdkMessageEvents = ({
     sessionId: stringField(message, "session_id"),
   }).pipe(Effect.map(() => noRuntimeEvents(state)));
 
+/** Converts one classified SDK message route into zero or more Caara runtime lifecycle events. */
+function runtimeEventsFromSdkMessageRoute({
+  state,
+  route,
+  transportVisibility,
+}: {
+  readonly state: ClaudeAgentSdkRuntimeEventState;
+  readonly route: SdkMessageRoute;
+  readonly transportVisibility: AgentRuntimeTransportVisibility;
+}): EffectContract<ClaudeAgentSdkRuntimeEventResult, AgentDriverError> {
+  return Match.valueTags(route, {
+    StreamEvent: ({ message }) => runtimeEventsFromStreamEvent({ state, message }),
+    Assistant: ({ message }) =>
+      runtimeEventsFromAssistantMessage({
+        state,
+        message,
+        transportVisibility,
+      }),
+    User: ({ message }) =>
+      Effect.succeed(
+        runtimeEventsFromUserMessage({
+          state,
+          message,
+          transportVisibility,
+        }),
+      ),
+    TaskStarted: ({ message }) =>
+      Effect.succeed(
+        runtimeEventsFromTaskStarted({
+          state,
+          message,
+          transportVisibility,
+        }),
+      ),
+    TaskProgress: ({ message }) =>
+      Effect.succeed(
+        runtimeEventsFromTaskProgress({
+          state,
+          message,
+          transportVisibility,
+        }),
+      ),
+    ResultSuccess: () =>
+      Effect.succeed(flushPendingAssistantTexts({ state, messagePhase: "final_answer" })),
+    ResultError: ({ message }) =>
+      Effect.fail(new AgentDriverError({ message: sdkResultErrorMessage(message) })),
+    PermissionDenied: ({ message }) =>
+      Effect.succeed(runtimeEventsFromPermissionDenied({ state, message })),
+    Ignored: ({ message }) => ignoredSdkMessageEvents({ state, message }),
+  });
+}
+
 /** Converts one SDK message into zero or more Caara runtime lifecycle events. */
-const runtimeEventsFromSdkMessage = Effect.fnUntraced(function* ({
+function runtimeEventsFromSdkMessage({
   state,
   message,
   transportVisibility,
 }: {
   readonly state: ClaudeAgentSdkRuntimeEventState;
-  readonly message: SDKMessage;
+  readonly message: unknown;
   readonly transportVisibility: AgentRuntimeTransportVisibility;
-}) {
-  return yield* Match.value(message).pipe(
-    Match.when({ type: "stream_event" }, (sdkMessage) =>
-      runtimeEventsFromStreamEvent({ state, message: sdkMessage }),
-    ),
-    Match.when({ type: "assistant" }, (sdkMessage) =>
-      runtimeEventsFromAssistantMessage({
-        state,
-        message: sdkMessage,
-        transportVisibility,
-      }),
-    ),
-    Match.when({ type: "user" }, (sdkMessage) =>
-      Effect.succeed(
-        runtimeEventsFromUserMessage({
-          state,
-          message: sdkMessage,
-          transportVisibility,
-        }),
-      ),
-    ),
-    Match.when({ type: "system", subtype: "task_started" }, (sdkMessage) =>
-      Effect.succeed(
-        runtimeEventsFromTaskStarted({
-          state,
-          message: sdkMessage,
-          transportVisibility,
-        }),
-      ),
-    ),
-    Match.when({ type: "system", subtype: "task_progress" }, (sdkMessage) =>
-      Effect.succeed(
-        runtimeEventsFromTaskProgress({
-          state,
-          message: sdkMessage,
-          transportVisibility,
-        }),
-      ),
-    ),
-    Match.when({ type: "result", subtype: "success" }, () =>
-      Effect.succeed(flushPendingAssistantTexts({ state, messagePhase: "final_answer" })),
-    ),
-    Match.when({ type: "result" }, (sdkMessage) =>
-      Effect.fail(
-        new AgentDriverError({
-          message:
-            sdkMessage.errors.at(0) ??
-            `Claude Agent SDK failed with subtype ${sdkMessage.subtype}.`,
-        }),
-      ),
-    ),
-    Match.when({ type: "system", subtype: "permission_denied" }, (sdkMessage) =>
-      Effect.succeed(runtimeEventsFromPermissionDenied({ state, message: sdkMessage })),
-    ),
-    Match.orElse((sdkMessage) => ignoredSdkMessageEvents({ state, message: sdkMessage })),
-  );
-});
+}): EffectContract<ClaudeAgentSdkRuntimeEventResult, AgentDriverError> {
+  return runtimeEventsFromSdkMessageRoute({
+    state,
+    route: sdkMessageRoute(message),
+    transportVisibility,
+  });
+}
 
 /** Streams driver-neutral Caara runtime events from one Claude Agent SDK query runtime. */
 export const runtimeEventsFromClaudeAgentSdkQuery = ({
