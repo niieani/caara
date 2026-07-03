@@ -8,7 +8,7 @@ import { Schema } from "effect";
 const PublicReleasePackageMetadata = Schema.Struct({
   name: Schema.Literal("caara"),
   private: Schema.Literal(true),
-  version: Schema.Literal("1.0.0"),
+  version: Schema.String,
   license: Schema.Literal("MIT"),
 });
 
@@ -28,9 +28,9 @@ const ReleasePleaseConfig = Schema.Struct({
   }),
 });
 
-/** Release Please version manifest bootstrapped to the public 1.0.0 baseline. */
+/** Release Please version manifest that records the current released package version. */
 const ReleasePleaseManifest = Schema.Struct({
-  ".": Schema.Literal("1.0.0"),
+  ".": Schema.String,
 });
 
 /** Reads one repository file as UTF-8 text for static metadata checks. */
@@ -44,7 +44,7 @@ describe("public release metadata", () => {
     )(readWorkspaceFile({ filePath: "package.json" }));
 
     assert.strictEqual(packageMetadata.private, true);
-    assert.strictEqual(packageMetadata.version, "1.0.0");
+    assert.match(packageMetadata.version, /^\d+\.\d+\.\d+$/u);
     assert.strictEqual(packageMetadata.license, "MIT");
   });
 
@@ -63,6 +63,9 @@ describe("public release metadata", () => {
     const releasePleaseManifest = Schema.decodeUnknownSync(
       Schema.fromJsonString(ReleasePleaseManifest),
     )(readWorkspaceFile({ filePath: ".release-please-manifest.json" }));
+    const packageMetadata = Schema.decodeUnknownSync(
+      Schema.fromJsonString(PublicReleasePackageMetadata),
+    )(readWorkspaceFile({ filePath: "package.json" }));
     const releaseWorkflow = readWorkspaceFile({
       filePath: ".github/workflows/release-please.yml",
     });
@@ -72,7 +75,7 @@ describe("public release metadata", () => {
       "package-name": "caara",
       "changelog-path": "CHANGELOG.md",
     });
-    assert.strictEqual(releasePleaseManifest["."], "1.0.0");
+    assert.strictEqual(releasePleaseManifest["."], packageMetadata.version);
     assert.match(releaseWorkflow, /googleapis\/release-please-action@v4/u);
     assert.strictEqual(/npm publish|NPM_TOKEN|NODE_AUTH_TOKEN/u.test(releaseWorkflow), false);
   });
