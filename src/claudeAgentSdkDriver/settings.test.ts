@@ -45,4 +45,26 @@ describe("Claude Agent SDK settings", () => {
       assert.strictEqual(resolvedPath, executablePath);
     }).pipe(Effect.provide(settingsLayer));
   });
+
+  it.effect("classifies missing Claude executable as invalid_prompt", () => {
+    const settingsLayer = claudeAgentSdkSettingsFromEnvironment({
+      env: {
+        PATH: "",
+      },
+    }).pipe(
+      Layer.provideMerge(Layer.succeed(CaaraSettings, caaraSettings({ searchPath: [] }))),
+      Layer.provideMerge(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const settings = yield* ClaudeAgentSdkSettings;
+      const error = yield* Effect.flip(settings.pathToClaudeCodeExecutable);
+
+      assert.strictEqual(
+        error.message,
+        "Claude Agent SDK failed to start: command claude is not available on Caara's execution path.",
+      );
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
+    }).pipe(Effect.provide(settingsLayer));
+  });
 });

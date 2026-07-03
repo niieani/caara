@@ -73,11 +73,25 @@ const fakeRuntime = (messages: readonly SDKMessage[]): ClaudeAgentSdkQueryRuntim
 });
 
 /** Extracts the driver error from an expected SDK option failure result. */
-const driverErrorMessage = (result: Result.Result<unknown, { readonly message: string }>): string =>
+const driverError = <A>(
+  result: Result.Result<A, { readonly message: string; readonly responseErrorCode: string }>,
+) =>
   Result.match(result, {
-    onFailure: (error) => error.message,
+    onFailure: (error) => error,
     onSuccess: () => assert.fail("expected SDK option validation failure"),
   });
+
+/** Extracts the driver error message from an expected SDK option failure result. */
+const driverErrorMessage = <A>(
+  result: Result.Result<A, { readonly message: string; readonly responseErrorCode: string }>,
+): string => driverError(result).message;
+
+/** Asserts one SDK option validation failure uses Codex-fatal invalid_prompt. */
+const assertInvalidPromptDriverError = <A>(
+  result: Result.Result<A, { readonly message: string; readonly responseErrorCode: string }>,
+) => {
+  assert.strictEqual(driverError(result).responseErrorCode, "invalid_prompt");
+};
 
 describe("Claude Agent SDK permission policy", () => {
   it.effect("builds non-interactive permission options without shadowing allow rules", () =>
@@ -234,6 +248,31 @@ describe("Claude Agent SDK permission policy", () => {
         );
 
         assert.match(driverErrorMessage(result), new RegExp(`TMPDIR.*${testCase.label}`, "u"));
+        assertInvalidPromptDriverError(result);
+      }
+    }),
+  );
+
+  it.effect("rejects scoped permission rules when TMPDIR is unavailable", () =>
+    Effect.gen(function* () {
+      const scopedPermissionOptions = [
+        { allowed_tools: "Edit($TMPDIR/caara/**)" },
+        { disallowed_tools: "Read($TMPDIR/secret/**)" },
+      ] as const satisfies readonly Readonly<Record<string, string>>[];
+      for (const rawDriverOptions of scopedPermissionOptions) {
+        const result = yield* Effect.result(
+          buildClaudeAgentSdkQueryOptions({
+            caaraSettings: caaraSettings(),
+            cwd: projectRoot,
+            model: "sonnet",
+            processEnvironment: { PATH: "/usr/bin:/bin" },
+            rawDriverOptions,
+            startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p123" },
+          }),
+        );
+
+        assert.match(driverErrorMessage(result), /requires TMPDIR, but TMPDIR is missing/u);
+        assertInvalidPromptDriverError(result);
       }
     }),
   );
@@ -264,6 +303,7 @@ describe("Claude Agent SDK permission policy", () => {
           );
 
           assert.match(driverErrorMessage(result), /Unsupported.*environment.*placeholder/u);
+          assertInvalidPromptDriverError(result);
         }
       }),
   );
@@ -281,6 +321,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
 
       assert.match(driverErrorMessage(deniedResult), /--allow-dangerous-skip-permissions/u);
+      assertInvalidPromptDriverError(deniedResult);
     }),
   );
 
@@ -318,14 +359,17 @@ describe("Claude Agent SDK permission policy", () => {
         driverErrorMessage(defaultResult),
         /permission_mode.*auto.*dontAsk.*bypassPermissions/u,
       );
+      assertInvalidPromptDriverError(defaultResult);
       assert.match(
         driverErrorMessage(planResult),
         /permission_mode.*auto.*dontAsk.*bypassPermissions/u,
       );
+      assertInvalidPromptDriverError(planResult);
       assert.match(
         driverErrorMessage(hyphenatedOptionResult),
         /Unsupported Claude Agent SDK driver option: permission-mode/u,
       );
+      assertInvalidPromptDriverError(hyphenatedOptionResult);
     }),
   );
 
@@ -351,7 +395,9 @@ describe("Claude Agent SDK permission policy", () => {
       );
 
       assert.match(driverErrorMessage(allowedToolsResult), /AskUserQuestion.*reserved/i);
+      assertInvalidPromptDriverError(allowedToolsResult);
       assert.match(driverErrorMessage(toolsResult), /AskUserQuestion.*reserved/i);
+      assertInvalidPromptDriverError(toolsResult);
     }),
   );
 

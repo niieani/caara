@@ -15,7 +15,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
-import { failedErrorMessageFromResponseFrames } from "../mockResponsesProvider/responseFrameTestHelpers.ts";
+import {
+  failedErrorCodeFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "../mockResponsesProvider/responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "../mockResponsesProvider/server.ts";
 import { sessionDirectoryBunTestLayer } from "../mockResponsesProvider/sessionDirectoryBunTestLayer.ts";
 import { sessionBindingFilePath } from "../mockResponsesProvider/sessionDirectoryPlatform.ts";
@@ -503,6 +506,22 @@ const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =
     .filter((event) => event._tag === "RuntimeEventRelayed")
     .map((event) => event.runtimeEventTag);
 
+/** Asserts one Claude provider failure uses Codex-fatal invalid_prompt with an exact message. */
+const assertInvalidPromptFailure = ({
+  frames,
+  message,
+}: {
+  readonly frames: readonly { readonly event: string; readonly data: unknown }[];
+  readonly message: string;
+}) => {
+  assert.deepStrictEqual(eventNames(frames), ["response.created", "response.failed"]);
+  assert.strictEqual(failedErrorCodeFromResponseFrames(frames), "invalid_prompt");
+  assert.strictEqual(
+    failedErrorMessageFromResponseFrames(frames),
+    `Caara driver failed: ${message}`,
+  );
+};
+
 /** Exercises a Claude native-binary failure and a follow-up success in one provider lifetime. */
 const assertNativeBinaryFailureThenRecovery = Effect.fnUntraced(function* ({
   stateDir,
@@ -516,11 +535,7 @@ const assertNativeBinaryFailureThenRecovery = Effect.fnUntraced(function* ({
     url: "/v1/responses",
   });
 
-  assert.deepStrictEqual(eventNames(failedFrames), ["response.created", "response.failed"]);
-  assert.strictEqual(
-    failedErrorMessageFromResponseFrames(failedFrames),
-    `Caara driver failed: ${nativeBinaryFailureMessage()}`,
-  );
+  assertInvalidPromptFailure({ frames: failedFrames, message: nativeBinaryFailureMessage() });
   assert.deepStrictEqual(assistantMessageDoneData(failedFrames), []);
   assert.strictEqual(eventNames(failedFrames).includes("response.completed"), false);
   assert.deepStrictEqual(
@@ -561,6 +576,77 @@ const assertNativeBinaryFailureThenRecovery = Effect.fnUntraced(function* ({
 });
 
 describe("Claude Agent SDK activity commentary", () => {
+  it.effect("surfaces invalid Claude driver options as invalid_prompt response failures", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+      const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents });
+
+      const frames = yield* executeClaudeSdkActivityRequest({
+        turnId: "turn-claude-sdk-invalid-option",
+        url: "/v1/responses?permission-mode=auto",
+      }).pipe(Effect.provide(harness.layer));
+
+      assertInvalidPromptFailure({
+        frames,
+        message: "Unsupported Claude Agent SDK driver option: permission-mode.",
+      });
+      assert.strictEqual(harness.recordedRequests.length, 0);
+    }),
+  );
+
+  it.effect("surfaces scoped Claude TMPDIR validation as invalid_prompt response failures", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+      const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents });
+
+      const frames = yield* executeClaudeSdkActivityRequest({
+        turnId: "turn-claude-sdk-invalid-tmpdir-placeholder",
+        url: "/v1/responses?additional_directories=%24HOME%2Fcaara",
+      }).pipe(Effect.provide(harness.layer));
+
+      assertInvalidPromptFailure({
+        frames,
+        message:
+          "Unsupported environment placeholder in Claude Agent SDK additional_directories: $HOME. Only $TMPDIR and ${TMPDIR} are supported.",
+      });
+      assert.strictEqual(harness.recordedRequests.length, 0);
+    }),
+  );
+
+  it.effect("surfaces unsupported Claude current-turn content as invalid_prompt", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+      const harness = providerHarness({ stateDir, inputs, diagnostics, relayEvents });
+
+      const frames = yield* executeClaudeSdkActivityRequest({
+        turnId: "turn-claude-sdk-unsupported-content",
+        url: "/v1/responses",
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_audio", audio_url: "data:audio/wav;base64,AA==" }],
+          },
+        ],
+      }).pipe(Effect.provide(harness.layer));
+
+      assertInvalidPromptFailure({
+        frames,
+        message: "Unsupported Claude Agent SDK current-turn content: input_audio.",
+      });
+      assert.strictEqual(harness.recordedRequests.length, 0);
+    }),
+  );
+
   it.effect("surfaces native CLI binary failures through response.failed", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
