@@ -11,7 +11,7 @@ import {
   AgentDriverRegistry,
   type AgentDriverTurnResult,
 } from "./agentDriver.ts";
-import { decodeCodexTurnRequest } from "./codexTurnContext.ts";
+import { decodeCodexTurnRequest, type DecodedCodexTurnRequest } from "./codexTurnContext.ts";
 import { normalizeCurrentTurnInput } from "./currentTurnInput.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 import { InputLogger } from "./inputLogger.ts";
@@ -45,18 +45,6 @@ export const invalidResponsesRequestResponse = (error: InvalidResponsesRequest) 
     { status: 400 },
   );
 
-/** Converts a driver failure into an OpenAI-shaped JSON transport error response. */
-export const driverErrorResponse = (error: AgentDriverError) =>
-  HttpServerResponse.jsonUnsafe(
-    {
-      error: {
-        type: "server_error",
-        message: error.message,
-      },
-    },
-    { status: 500 },
-  );
-
 /** Builds a failed driver turn result for accepted start/query-construction failures. */
 const failedDriverStartTurnResult = ({
   error,
@@ -71,6 +59,59 @@ const failedDriverStartTurnResult = ({
   ]),
   externalSession: new EphemeralExternalSession({}),
   cancel: Effect.succeed({ _tag: "Terminated", sessionReusable: false }),
+});
+
+/** Failure raised after transport acceptance but before a driver turn can start. */
+interface AcceptedPreDriverFailure {
+  readonly _tag: "AcceptedPreDriverFailure";
+  readonly responsesRequest: DecodedCodexTurnRequest;
+  readonly error: AgentDriverError;
+}
+
+/** Builds the internal failure used to escape into the accepted SSE failure path. */
+const acceptedPreDriverFailure = ({
+  responsesRequest,
+  error,
+}: {
+  readonly responsesRequest: DecodedCodexTurnRequest;
+  readonly error: AgentDriverError;
+}): AcceptedPreDriverFailure => ({
+  _tag: "AcceptedPreDriverFailure",
+  responsesRequest,
+  error,
+});
+
+/** Streams an accepted pre-driver failure as a Codex-visible nonretryable Responses failure. */
+const acceptedPreDriverFailureResponse = Effect.fnUntraced(function* ({
+  responsesRequest,
+  error,
+}: AcceptedPreDriverFailure) {
+  const relayLogger = yield* RelayLogger;
+  yield* relayLogger.log({
+    _tag: "TurnFailed",
+    threadId: responsesRequest.codex.threadId,
+    turnId: responsesRequest.codex.turnId,
+    message: error.message,
+  });
+  const responseEventStream = createResponseEventStreamFromRuntimeEvents({
+    request: responsesRequest.responses,
+    runtimeEvents: failedDriverStartTurnResult({ error }).runtimeEvents,
+    onRuntimeFailure: (runtimeError) =>
+      relayLogger.log({
+        _tag: "TurnFailed",
+        threadId: responsesRequest.codex.threadId,
+        turnId: responsesRequest.codex.turnId,
+        message: runtimeError.message,
+      }),
+  });
+
+  return HttpServerResponse.stream(encodeSseEventStream(responseEventStream), {
+    contentType: "text/event-stream",
+    headers: {
+      "cache-control": "no-cache",
+      "x-accel-buffering": "no",
+    },
+  });
 });
 
 /** Converts an overlapping-turn conflict into an OpenAI-shaped JSON error response. */
@@ -139,7 +180,20 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     codex: responsesRequest.codex,
     target: responsesRequest.target,
   });
-  const driver = yield* driverRegistry.resolve(responsesRequest.target);
+  const driver = yield* driverRegistry
+    .resolve(responsesRequest.target)
+    .pipe(
+      Effect.catchTag("AgentDriverError", (error) =>
+        Effect.fail(acceptedPreDriverFailure({ responsesRequest, error })),
+      ),
+    );
+  const normalizedPrompt = yield* normalizeCurrentTurnInput({
+    input: responsesRequest.responses.input,
+  }).pipe(
+    Effect.catchTag("AgentDriverError", (error) =>
+      Effect.fail(acceptedPreDriverFailure({ responsesRequest, error })),
+    ),
+  );
   const lease = yield* turnConcurrency
     .acquire({
       key: {
@@ -168,22 +222,6 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     codexThreadId: responsesRequest.codex.threadId,
     turnId: responsesRequest.codex.turnId,
   });
-  const normalizedPrompt = yield* normalizeCurrentTurnInput({
-    input: responsesRequest.responses.input,
-  }).pipe(
-    Effect.catchTag("AgentDriverError", (error) =>
-      Effect.gen(function* () {
-        yield* relayLogger.log({
-          _tag: "TurnFailed",
-          threadId: responsesRequest.codex.threadId,
-          turnId: responsesRequest.codex.turnId,
-          message: error.message,
-        });
-        yield* lease.release;
-        return yield* error;
-      }),
-    ),
-  );
 
   const previousTarget = Option.match(Option.fromUndefinedOr(preparedSession.previousTarget), {
     onNone: () => undefined,
@@ -407,7 +445,7 @@ export const responsesCreateRouteLayer = HttpRouter.add("POST", "/v1/responses",
     Effect.catchTags({
       InvalidResponsesRequest: (error: InvalidResponsesRequest) =>
         Effect.succeed(invalidResponsesRequestResponse(error)),
-      AgentDriverError: (error: AgentDriverError) => Effect.succeed(driverErrorResponse(error)),
+      AcceptedPreDriverFailure: acceptedPreDriverFailureResponse,
       TurnConcurrencyConflict: (error: TurnConcurrencyConflict) =>
         Effect.succeed(turnConcurrencyConflictResponse(error)),
     }),

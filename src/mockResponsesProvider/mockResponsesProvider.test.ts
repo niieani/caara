@@ -564,6 +564,46 @@ function streamsDiagnosticInvalidRequestFailure() {
   );
 }
 
+/** Test program proving accepted current-turn normalization failures stream invalid_prompt. */
+function streamsCurrentTurnNormalizationFailure() {
+  const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
+
+  return Effect.gen(function* () {
+    const request = setCodexHeaders({
+      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), {
+        ...requestBody,
+        input: [
+          {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: "Use the local Caara driver." }],
+          },
+        ],
+      }),
+    });
+    const response = yield* HttpClient.execute(request);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers["content-type"], "text/event-stream");
+    const frames = yield* decodeRawResponseSseFrames(response.stream);
+    assert.deepStrictEqual(frameEventNames(frames), ["response.created", "response.failed"]);
+    assert.strictEqual(failedErrorCodeFromResponseFrames(frames), "invalid_prompt");
+    assert.notStrictEqual(failedErrorCodeFromResponseFrames(frames), "server_error");
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(frames),
+      "Caara driver failed: Caara requires a current user request.",
+    );
+    assert.deepStrictEqual(loggedInputs, []);
+    assert.strictEqual(loggedDiagnostics.length, 1);
+    assert.deepStrictEqual(
+      relayEvents.map((event) => event._tag),
+      ["TurnAccepted", "TargetSelected", "TurnFailed"],
+    );
+  }).pipe(Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents)));
+}
+
 describe("mock Responses provider", () => {
   it.effect(
     "streams fake reasoning and final answer while logging input",
@@ -634,5 +674,9 @@ describe("mock Responses provider", () => {
 
   it.effect("streams Diagnostic invalid-request failures with a fatal response code", () =>
     streamsDiagnosticInvalidRequestFailure(),
+  );
+
+  it.effect("streams accepted current-turn normalization failures as invalid_prompt", () =>
+    streamsCurrentTurnNormalizationFailure(),
   );
 });

@@ -23,6 +23,10 @@ import {
   RequestDiagnosticsLogger,
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
+import {
+  failedErrorCodeFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "./responseFrameTestHelpers.ts";
 import { mockResponsesServerLayer } from "./server.ts";
 import { EphemeralExternalSession } from "./sessionDirectory.ts";
 import { sessionDirectoryBunTestLayer } from "./sessionDirectoryBunTestLayer.ts";
@@ -186,15 +190,18 @@ const decodeResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Effect.map((frames) => [...frames]),
   );
 
-/** Returns true when a value is a non-array object record. */
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+/** Decodes raw Responses SSE frames while preserving non-minimal response fields. */
+const decodeRawResponseSseFrames = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(Schema.Unknown)),
+    Stream.runCollect,
+    Effect.map((frames) => [...frames]),
+  );
 
-/** Reads an object field after asserting that the parent is a record. */
-const getField = (value: unknown, field: string): unknown => {
-  assert.ok(isRecord(value), "value must be an object record");
-  return value[field];
-};
+/** Extracts ordered SSE event names from raw or schema-decoded frames. */
+const frameEventNames = (frames: readonly { readonly event: string }[]): readonly string[] =>
+  frames.map((frame) => frame.event);
 
 /** Extracts normalized runtime lifecycle tags from captured relay events. */
 const runtimeEventTags = (events: readonly RelayLogEvent[]): readonly string[] =>
@@ -351,19 +358,22 @@ function rejectsUnsupportedAgentKindThroughDriverRegistry() {
       yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), geminiRequestBody),
     );
     const response = yield* HttpClient.execute(request);
-    const responseBody = yield* response.json;
+    const frames = yield* decodeRawResponseSseFrames(response.stream);
 
-    assert.strictEqual(response.status, 500);
-    assert.deepStrictEqual(loggedInputs, []);
-    assert.strictEqual(getField(getField(responseBody, "error"), "type"), "server_error");
-    assert.match(
-      String(getField(getField(responseBody, "error"), "message")),
-      /unsupported external agent kind/i,
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers["content-type"], "text/event-stream");
+    assert.deepStrictEqual(frameEventNames(frames), ["response.created", "response.failed"]);
+    assert.strictEqual(failedErrorCodeFromResponseFrames(frames), "invalid_prompt");
+    assert.notStrictEqual(failedErrorCodeFromResponseFrames(frames), "server_error");
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(frames),
+      "Caara driver failed: Unsupported external agent kind: gemini.",
     );
+    assert.deepStrictEqual(loggedInputs, []);
     assert.strictEqual(loggedDiagnostics.length, 1);
     assert.deepStrictEqual(
       relayEvents.map((event) => event._tag),
-      ["TurnAccepted", "TargetSelected"],
+      ["TurnAccepted", "TargetSelected", "TurnFailed"],
     );
   }).pipe(
     Effect.provide(makeRegistryRoutingTestLayer({ loggedInputs, loggedDiagnostics, relayEvents })),
