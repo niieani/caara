@@ -701,6 +701,7 @@ wire_api = "responses"
 requires_openai_auth = false
 request_max_retries = 0
 stream_max_retries = 0
+query_params = { additional_directories = "$TMPDIR", allowed_tools = "Write($TMPDIR/caara-panel/smoke/**),Edit($TMPDIR/caara-panel/smoke/**)", permission_mode = "dontAsk" }
 ```
 
 Current local Fable role:
@@ -771,6 +772,10 @@ explicitly, and other shell-style placeholders such as `$HOME` fail explicitly. 
 permission rules, Caara expands TMPDIR only inside `Tool(...)` rule specifiers and converts absolute
 filesystem rules to Claude's double-slash form, for example
 `Edit($TMPDIR/caara-panel/smoke/**)` becomes `Edit(//var/.../T/caara-panel/smoke/**)`.
+The checked-in `caara-claude` role uses this to allow only `Write` and `Edit` under
+`$TMPDIR/caara-panel/smoke/**` while keeping `permission_mode = "dontAsk"`. It does not pre-approve
+Bash; the documented smoke prompt passes an expanded absolute TMPDIR path so Claude Code can create
+the file through `Write`.
 
 Example with Antigravity options:
 

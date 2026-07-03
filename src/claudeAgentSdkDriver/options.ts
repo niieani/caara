@@ -1,5 +1,4 @@
 import type {
-  CanUseTool,
   EffortLevel,
   OnUserDialog,
   Options as ClaudeQueryOptions,
@@ -14,7 +13,6 @@ import {
 import type { CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   claudeAskUserQuestionToolName,
-  claudeNonInteractivePermissionDeniedMessage,
   claudeNonInteractivePermissionMode,
   includesReservedInteractiveTool,
   parseClaudeToolList,
@@ -25,6 +23,7 @@ import type { CodexAdvisoryEffort } from "../mockResponsesProvider/codexTurnCont
 import {
   expandClaudePermissionToolRule,
   parseClaudeAdditionalDirectoriesOption,
+  permissionRuleSettingsQueryOptions,
 } from "./scopedTmpdirPermissionOptions.ts";
 
 /** Effort values accepted by the installed Claude Agent SDK. */
@@ -195,15 +194,6 @@ const parseToolListOption = Effect.fnUntraced(function* ({
   return tools;
 });
 
-/** Denies SDK permission prompts because Caara has no interactive approval path. */
-const denyPermissionRequest: CanUseTool = (_toolName, _input, { toolUseID }) =>
-  Promise.resolve({
-    behavior: "deny",
-    message: claudeNonInteractivePermissionDeniedMessage(),
-    toolUseID,
-    decisionClassification: "user_reject",
-  });
-
 /** Cancels unsupported SDK user dialogs explicitly instead of leaving them parked. */
 const cancelUserDialog: OnUserDialog = () => Promise.resolve({ behavior: "cancelled" });
 
@@ -318,15 +308,6 @@ const toolsQueryOptions = (
     onSome: (nextTools) => ({ tools: nextTools }),
   });
 
-/** Builds the optional SDK allowed-tools options object. */
-const allowedToolsQueryOptions = (
-  allowedTools: readonly string[] | undefined,
-): Readonly<Partial<Pick<ClaudeQueryOptions, "allowedTools">>> =>
-  Option.match(Option.fromUndefinedOr(allowedTools), {
-    onNone: () => ({}),
-    onSome: (nextAllowedTools) => ({ allowedTools: [...nextAllowedTools] }),
-  });
-
 /** Builds the optional SDK additional-directories options object. */
 const additionalDirectoriesQueryOptions = (
   additionalDirectories: readonly string[] | undefined,
@@ -338,11 +319,12 @@ const additionalDirectoriesQueryOptions = (
     }),
   });
 
-/** Builds the required SDK disallowed-tools options object with AskUserQuestion reserved. */
-const disallowedToolsQueryOptions = (
-  disallowedTools: readonly string[] | undefined,
-): Pick<ClaudeQueryOptions, "disallowedTools"> => ({
-  disallowedTools: [...withReservedInteractiveToolDisallowed(disallowedTools)],
+/** Builds the required SDK disallowed-tools options object for reserved interactive tools. */
+const reservedInteractiveToolDisallowedOptions = (): Pick<
+  ClaudeQueryOptions,
+  "disallowedTools"
+> => ({
+  disallowedTools: [...withReservedInteractiveToolDisallowed(undefined)],
 });
 
 /** Builds the SDK opt-in required when bypassing Claude permission checks. */
@@ -467,12 +449,14 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     ...maxBudgetUsdQueryOptions(driverOptions.maxBudgetUsd),
     ...toolsQueryOptions(driverOptions.tools),
     ...additionalDirectoriesQueryOptions(driverOptions.additionalDirectories),
-    ...allowedToolsQueryOptions(driverOptions.allowedTools),
-    ...disallowedToolsQueryOptions(driverOptions.disallowedTools),
+    ...permissionRuleSettingsQueryOptions({
+      allowedPermissionRules: driverOptions.allowedTools,
+      deniedPermissionRules: driverOptions.disallowedTools,
+    }),
+    ...reservedInteractiveToolDisallowedOptions(),
     ...pathToClaudeCodeExecutableQueryOptions(pathToClaudeCodeExecutable),
     permissionMode: driverOptions.permissionMode,
     ...dangerousPermissionBypassQueryOptions(driverOptions.permissionMode),
-    canUseTool: denyPermissionRequest,
     onUserDialog: cancelUserDialog,
     supportedDialogKinds: [],
   } satisfies ClaudeQueryOptions;

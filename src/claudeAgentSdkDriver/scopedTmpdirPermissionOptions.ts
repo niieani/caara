@@ -1,10 +1,14 @@
 import path from "node:path";
 
+import type { Options as ClaudeQueryOptions, Settings } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Match, Option } from "effect";
 
 import type { CaaraExecutionPathEnvironment } from "../caaraExecutionPath.ts";
 import { parseClaudeToolList } from "../claudeInteractionPolicy.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+
+/** Permission settings shape accepted by Claude Code settings. */
+type ClaudePermissionSettings = NonNullable<Settings["permissions"]>;
 
 /** Builds an explicit Claude SDK driver option validation failure. */
 const optionError = (message: string): AgentDriverError => new AgentDriverError({ message });
@@ -239,9 +243,35 @@ export const expandClaudePermissionToolRule = Effect.fnUntraced(function* ({
             value: parts.specifier,
           }),
         ),
-        Effect.map(
-          (specifier) => `${parts.toolName}(${claudeAbsolutePermissionRuleSpecifier(specifier)})`,
-        ),
+        Effect.map(claudeAbsolutePermissionRuleSpecifier),
+        Effect.map((specifier) => `${parts.toolName}(${specifier})`),
       ),
   });
 });
+
+/** Builds Claude SDK settings for permission rule allow/deny lists. */
+export const permissionRuleSettingsQueryOptions = ({
+  allowedPermissionRules,
+  deniedPermissionRules,
+}: {
+  readonly allowedPermissionRules: readonly string[] | undefined;
+  readonly deniedPermissionRules: readonly string[] | undefined;
+}): Readonly<Partial<Pick<ClaudeQueryOptions, "settings">>> => {
+  const allow = Option.match(Option.fromUndefinedOr(allowedPermissionRules), {
+    onNone: () => ({}),
+    onSome: (rules) => ({ allow: [...rules] }),
+  });
+  const deny = Option.match(Option.fromUndefinedOr(deniedPermissionRules), {
+    onNone: () => ({}),
+    onSome: (rules) => ({ deny: [...rules] }),
+  });
+  const permissions = {
+    ...allow,
+    ...deny,
+  } satisfies ClaudePermissionSettings;
+
+  return Match.value(Object.keys(permissions).length).pipe(
+    Match.when(0, () => ({})),
+    Match.orElse(() => ({ settings: { permissions } satisfies Settings })),
+  );
+};

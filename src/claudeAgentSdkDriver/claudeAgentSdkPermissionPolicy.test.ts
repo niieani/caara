@@ -80,7 +80,7 @@ const driverErrorMessage = (result: Result.Result<unknown, { readonly message: s
   });
 
 describe("Claude Agent SDK permission policy", () => {
-  it.effect("builds non-interactive permission options that deny prompts explicitly", () =>
+  it.effect("builds non-interactive permission options without shadowing allow rules", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
         caaraSettings: caaraSettings(),
@@ -89,21 +89,9 @@ describe("Claude Agent SDK permission policy", () => {
         rawDriverOptions: {},
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p101" },
       });
-      assert.ok(options.canUseTool, "SDK options must install canUseTool");
       assert.ok(options.onUserDialog, "SDK options must install onUserDialog");
 
       const controller = new AbortController();
-      const permission = yield* Effect.promise(
-        () =>
-          options.canUseTool?.(
-            "Bash",
-            { command: "rm -rf ." },
-            {
-              signal: controller.signal,
-              toolUseID: "toolu_request",
-            },
-          ) ?? Promise.reject(new Error("missing canUseTool")),
-      );
       const dialog = yield* Effect.promise(
         () =>
           options.onUserDialog?.(
@@ -115,12 +103,7 @@ describe("Claude Agent SDK permission policy", () => {
       assert.strictEqual(options.permissionMode, "dontAsk");
       assert.deepStrictEqual(options.disallowedTools, ["AskUserQuestion"]);
       assert.deepStrictEqual(options.supportedDialogKinds, []);
-      assert.deepStrictEqual(permission, {
-        behavior: "deny",
-        message: "Caara subagents cannot approve interactive tool permissions during a Codex turn.",
-        toolUseID: "toolu_request",
-        decisionClassification: "user_reject",
-      });
+      assert.ok(!("canUseTool" in options));
       assert.deepStrictEqual(dialog, { behavior: "cancelled" });
     }),
   );
@@ -218,14 +201,17 @@ describe("Claude Agent SDK permission policy", () => {
         "/var/folders/test/T",
         "/var/folders/test/T/caara-panel",
       ]);
-      assert.deepStrictEqual(options.allowedTools, [
-        "Edit(//var/folders/test/T/caara-panel/smoke/**)",
-        "Write(//var/folders/test/T/caara-panel/smoke/**)",
-      ]);
-      assert.deepStrictEqual(options.disallowedTools, [
-        "Read(//var/folders/test/T/secret/**)",
-        "AskUserQuestion",
-      ]);
+      assert.ok(!("allowedTools" in options));
+      assert.deepStrictEqual(options.settings, {
+        permissions: {
+          allow: [
+            "Edit(//var/folders/test/T/caara-panel/smoke/**)",
+            "Write(//var/folders/test/T/caara-panel/smoke/**)",
+          ],
+          deny: ["Read(//var/folders/test/T/secret/**)"],
+        },
+      });
+      assert.deepStrictEqual(options.disallowedTools, ["AskUserQuestion"]);
     }),
   );
 

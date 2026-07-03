@@ -56,8 +56,17 @@ bun run start > "$RUN_DIR/provider.log" 2>&1
 2. Spawn a Codex subagent with `agent_type = "caara-claude"`.
 
 Do not pass a `model` override. The role sets `model = "claude/haiku"` and points at
-`http://127.0.0.1:8787/v1`. No provider query parameters are required for the standard subagent
-smoke.
+`http://127.0.0.1:8787/v1`. The checked-in role also carries scoped provider query parameters for
+the TMPDIR write smoke:
+
+```toml
+query_params = { additional_directories = "$TMPDIR", allowed_tools = "Write($TMPDIR/caara-panel/smoke/**),Edit($TMPDIR/caara-panel/smoke/**)", permission_mode = "dontAsk" }
+```
+
+These params keep Claude Code in noninteractive `dontAsk` mode, add only process TMPDIR as an
+additional directory, and pre-approve writes only under `$TMPDIR/caara-panel/smoke/**`. The role
+does not pre-approve Bash; pass the expanded absolute TMPDIR path in the prompt so Claude can use
+`Write` directly.
 
 Use `agent_type = "caara-claude-fable"` only when intentionally testing Fable. That role sets
 `model = "claude/fable"`; Anthropic documents Fable as requiring Claude Code `v2.1.170+` and not
@@ -74,6 +83,23 @@ Please verify your working directory and read one specific source line.
 4. Do not edit files.
 ```
 
+Scoped TMPDIR write prompt:
+
+```text
+Create an empty file at <absolute SMOKE_FILE> using the Write tool only.
+Do not use Bash. Do not write anywhere else.
+Reply only with the absolute path you created.
+```
+
+Create the parent directory and print the path before spawning the agent:
+
+```bash
+SMOKE_FILE="${TMPDIR%/}/caara-panel/smoke/caara-claude.md"
+mkdir -p "$(dirname "$SMOKE_FILE")"
+if test -e "$SMOKE_FILE"; then mv "$SMOKE_FILE" "$SMOKE_FILE.before-smoke.$(date +%H%M%S)"; fi
+printf '%s\n' "$SMOKE_FILE"
+```
+
 3. Wait for completion.
 
 Expected first-turn response includes:
@@ -82,6 +108,17 @@ Expected first-turn response includes:
 cwd=/Volumes/Projects/Software/code-agents-as-responses-api
 readme_line_5=Current implementation routes `claude/<model>` targets to Claude Code and `agy/<model>` targets to Antigravity, persists session bindings, resumes follow-up turns, and cancels in-flight work when Codex disconnects.
 ```
+
+Expected scoped write evidence:
+
+```bash
+test -f "$SMOKE_FILE"
+test ! -s "$SMOKE_FILE"
+rg '"_tag":"PermissionDenied".*caara-claude.md|PermissionDenied.*caara-claude.md' "$RUN_DIR/provider.log"
+```
+
+Expected: both `test` commands exit 0 and the `rg` command finds no permission denial for the
+required file write.
 
 Effort serialization check: change Codex's effort selector, run another first turn through the same
 role, and inspect the retained provider log:

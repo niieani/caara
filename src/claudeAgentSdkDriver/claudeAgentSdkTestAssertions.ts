@@ -51,7 +51,7 @@ export const assertNonInteractivePermissionPolicy = (options: ClaudeQueryOptions
   assert.strictEqual(options.permissionMode, "dontAsk");
   assert.deepStrictEqual(options.disallowedTools, ["AskUserQuestion"]);
   assert.deepStrictEqual(options.supportedDialogKinds, []);
-  assert.strictEqual(typeof options.canUseTool, "function");
+  assert.strictEqual(options.canUseTool, undefined);
   assert.strictEqual(typeof options.onUserDialog, "function");
 };
 
