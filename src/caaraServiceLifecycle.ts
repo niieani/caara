@@ -11,9 +11,16 @@ import {
   resolveServicePaths,
 } from "./caaraServiceArtifacts.ts";
 import {
+  installServiceCodexRoles,
+  liveCaaraServiceCodexRoles,
+  serviceResultWithCodexRoleMessage,
+  type CaaraServiceCodexRoles,
+  uninstallServiceCodexRoles,
+} from "./caaraServiceCodexRoles.ts";
+import {
   type CaaraServiceLifecycleResult,
+  installServiceNoStartArtifacts,
   parseInstallServiceOptions,
-  runCaaraInstallServiceNoStart,
 } from "./caaraServiceInstallNoStart.ts";
 import { liveCaaraServiceManager, type CaaraServiceManager } from "./caaraServiceManager.ts";
 import { readInstallReceipt } from "./caaraServiceReceipt.ts";
@@ -33,6 +40,7 @@ export type {
   CaaraServicePlatform,
   CaaraServiceRuntime,
 } from "./caaraServiceArtifacts.ts";
+export type { CaaraServiceCodexRoles } from "./caaraServiceCodexRoles.ts";
 export type { CaaraServiceLifecycleResult } from "./caaraServiceInstallNoStart.ts";
 export type { CaaraServiceManager, CaaraServiceManagerRequest } from "./caaraServiceManager.ts";
 export type { CaaraServiceDoctor } from "./caaraServiceStart.ts";
@@ -40,6 +48,7 @@ export type { CaaraServiceDoctor } from "./caaraServiceStart.ts";
 /** Options accepted by `install-service`. */
 export interface RunCaaraInstallServiceOptions {
   readonly args: readonly string[];
+  readonly codexRoles?: CaaraServiceCodexRoles;
   readonly configLoader?: CaaraConfigLoader;
   readonly doctor?: CaaraServiceDoctor;
   readonly env?: CaaraServiceLifecycleEnvironment;
@@ -52,6 +61,7 @@ export interface RunCaaraInstallServiceOptions {
 /** Options accepted by `uninstall-service`. */
 export interface RunCaaraUninstallServiceOptions {
   readonly args: readonly string[];
+  readonly codexRoles?: CaaraServiceCodexRoles;
   readonly env?: CaaraServiceLifecycleEnvironment;
   readonly serviceManager?: CaaraServiceManager;
 }
@@ -133,9 +143,42 @@ const selectInstallServiceExecution = ({
     Match.orElse(() => ({ _tag: "Start" }) as const),
   );
 
+/** Runs install-service --no-start plus default generated Codex role installation. */
+const runCaaraInstallServiceNoStartWithRoles = Effect.fnUntraced(function* ({
+  codexRoles,
+  configLoader,
+  env,
+  options,
+  platform,
+  runtime,
+}: {
+  readonly codexRoles: CaaraServiceCodexRoles;
+  readonly configLoader: CaaraConfigLoader | undefined;
+  readonly env: CaaraServiceLifecycleEnvironment;
+  readonly options: ReturnType<typeof parseInstallServiceOptions>;
+  readonly platform: CaaraServicePlatform | undefined;
+  readonly runtime: CaaraServiceRuntime;
+}) {
+  const outcome = yield* installServiceNoStartArtifacts({
+    configLoader,
+    env,
+    options,
+    platform,
+    runtime,
+  });
+  const roleMessage = yield* installServiceCodexRoles({
+    codexRoles,
+    env,
+    settings: outcome.resolution.settings,
+    skip: options.noInstallCodexRoles,
+  });
+  return serviceResultWithCodexRoleMessage({ result: outcome.result, roleMessage });
+});
+
 /** Runs `install-service` without terminating the host process. */
 export const runCaaraInstallService = Effect.fnUntraced(function* ({
   args,
+  codexRoles = liveCaaraServiceCodexRoles,
   configLoader,
   doctor = liveCaaraServiceDoctor,
   env = process.env,
@@ -149,10 +192,18 @@ export const runCaaraInstallService = Effect.fnUntraced(function* ({
     selectInstallServiceExecution({ noStart: options.noStart, platform, runtime }),
     {
       NoStart: () =>
-        runCaaraInstallServiceNoStart({ configLoader, env, options, platform, runtime }),
+        runCaaraInstallServiceNoStartWithRoles({
+          codexRoles,
+          configLoader,
+          env,
+          options,
+          platform,
+          runtime,
+        }),
       SourceMode: () => Effect.succeed(sourceModeInstallFailure()),
       Start: () =>
         runCaaraInstallServiceStarted({
+          codexRoles,
           configLoader,
           doctor,
           env,
@@ -197,6 +248,7 @@ const uninstallSuccessResult = ({
 /** Runs `uninstall-service` without terminating the host process. */
 export const runCaaraUninstallService = Effect.fnUntraced(function* ({
   args,
+  codexRoles = liveCaaraServiceCodexRoles,
   env = process.env,
   serviceManager = liveCaaraServiceManager,
 }: RunCaaraUninstallServiceOptions) {
@@ -216,7 +268,11 @@ export const runCaaraUninstallService = Effect.fnUntraced(function* ({
     Match.orElse(() => [] as readonly string[]),
   );
   yield* Effect.forEach(purgePaths, (filePath) => removePath({ filePath }), { discard: true });
-  return uninstallSuccessResult({ purge: options.purge });
+  const roleMessage = yield* uninstallServiceCodexRoles({ codexRoles, env });
+  return serviceResultWithCodexRoleMessage({
+    result: uninstallSuccessResult({ purge: options.purge }),
+    roleMessage,
+  });
 });
 
 /** Runs live `install-service` and fails for nonzero status. */

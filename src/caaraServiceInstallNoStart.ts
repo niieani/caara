@@ -29,6 +29,7 @@ export interface CaaraServiceLifecycleResult {
 
 /** Parsed install-service options. */
 export interface InstallServiceOptions {
+  readonly noInstallCodexRoles: boolean;
   readonly noStart: boolean;
   readonly settingsArgs: readonly string[];
   readonly updatesConfig: boolean;
@@ -63,14 +64,19 @@ const isConfigUpdateArg = (arg: string): boolean =>
     "--port",
   ]).has(rawFlagName(arg));
 
+/** Returns true when one arg is consumed by service lifecycle rather than settings. */
+const isInstallLifecycleArg = (arg: string): boolean =>
+  new Set(["--no-install-codex-roles", "--no-start"]).has(arg);
+
 /** Parses install-service args and strips lifecycle-only flags from settings args. */
 export const parseInstallServiceOptions = ({
   args,
 }: {
   readonly args: readonly string[];
 }): InstallServiceOptions => {
-  const settingsArgs = args.filter((arg) => arg !== "--no-start");
+  const settingsArgs = args.filter((arg) => !isInstallLifecycleArg(arg));
   return {
+    noInstallCodexRoles: args.includes("--no-install-codex-roles"),
     noStart: args.includes("--no-start"),
     settingsArgs,
     updatesConfig: settingsArgs.some(isConfigUpdateArg),

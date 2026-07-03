@@ -12,6 +12,12 @@ import type {
   CaaraServiceRuntime,
 } from "./caaraServiceArtifacts.ts";
 import {
+  installServiceCodexRoles,
+  serviceResultWithCodexRoleMessage,
+  serviceSettingsWithPathEntries,
+  type CaaraServiceCodexRoles,
+} from "./caaraServiceCodexRoles.ts";
+import {
   installServiceNoStartArtifacts,
   type CaaraServiceLifecycleResult,
   type InstallServiceOptions,
@@ -27,6 +33,7 @@ export interface CaaraServiceDoctor {
 
 /** Options accepted by default started service installation. */
 export interface RunCaaraInstallServiceStartedOptions {
+  readonly codexRoles: CaaraServiceCodexRoles;
   readonly configLoader: CaaraConfigLoader | undefined;
   readonly doctor: CaaraServiceDoctor;
   readonly env: CaaraServiceLifecycleEnvironment;
@@ -162,6 +169,7 @@ const serviceHealthFailureResult = ({
 
 /** Runs default install-service: install artifacts, doctor repair, service start, then health probe. */
 export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
+  codexRoles,
   configLoader,
   doctor,
   env,
@@ -179,12 +187,25 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
     runtime,
   });
   const doctorResult = yield* doctor.fix(serviceDoctorOptions({ configLoader, env, options }));
+  const roleMessage = yield* installServiceCodexRoles({
+    codexRoles,
+    env,
+    settings: serviceSettingsWithPathEntries({
+      appendedPathEntries: doctorResult.appendedPathEntries,
+      settings: installOutcome.resolution.settings,
+    }),
+    skip: options.noInstallCodexRoles,
+  });
+  const installResult = serviceResultWithCodexRoleMessage({
+    result: installOutcome.result,
+    roleMessage,
+  });
   return yield* Match.value(doctorResult.exitCode).pipe(
     Match.when(1, () =>
       Effect.succeed(
         doctorFailureInstallResult({
           doctorResult,
-          installResult: installOutcome.result,
+          installResult,
         }),
       ),
     ),
@@ -201,12 +222,12 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
             serviceStartedResult({
               doctorResult,
               health: healthy,
-              installResult: installOutcome.result,
+              installResult,
             }),
           Unhealthy: (unhealthy) =>
             serviceHealthFailureResult({
               health: unhealthy,
-              installResult: installOutcome.result,
+              installResult,
               statusHint: serviceManager.statusHint(request),
             }),
         });
