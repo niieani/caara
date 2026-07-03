@@ -180,8 +180,8 @@ const checkRequirements = Effect.fnUntraced(function* ({
 
 /** Returns the process exit code for final doctor checks. */
 const doctorExitCode = (checks: readonly CaaraDoctorExecutableCheck[]): 0 | 1 =>
-  Match.value(missingChecks(checks).length).pipe(
-    Match.when(0, () => 0 as const),
+  Match.value(foundChecks(checks).length > 0).pipe(
+    Match.when(true, () => 0 as const),
     Match.orElse(() => 1 as const),
   );
 
@@ -244,6 +244,11 @@ const runNonEmptyDoctor = Effect.fnUntraced(function* ({
 const missingChecks = (
   checks: readonly CaaraDoctorExecutableCheck[],
 ): readonly CaaraDoctorExecutableCheck[] => checks.filter((check) => check.foundPath === undefined);
+
+/** Returns checks that found a real external driver executable. */
+const foundChecks = (
+  checks: readonly CaaraDoctorExecutableCheck[],
+): readonly CaaraDoctorExecutableCheck[] => checks.filter((check) => check.foundPath !== undefined);
 
 /** Searches repair paths for one missing executable and returns a config path entry to append. */
 const repairPathEntryForMissingCheck = Effect.fnUntraced(function* ({
@@ -355,18 +360,37 @@ const repairedResolution = ({
 const formatFoundCheck = (check: CaaraDoctorExecutableCheck): string =>
   `ok ${check.driverName} (${check.externalAgentKind}) requires ${check.executableName}: ${check.foundPath}`;
 
+/** Formats the missing-driver diagnostic prefix. */
+const formatMissingDriverPrefix = (optional: boolean): string =>
+  Match.value(optional).pipe(
+    Match.when(true, () => "warning optional driver missing"),
+    Match.orElse(() => "missing"),
+  );
+
 /** Formats one missing executable check line. */
-const formatMissingCheck = (check: CaaraDoctorExecutableCheck): string =>
+const formatMissingCheck = ({
+  check,
+  optional,
+}: {
+  readonly check: CaaraDoctorExecutableCheck;
+  readonly optional: boolean;
+}): string =>
   [
-    `missing ${check.driverName} (${check.externalAgentKind}) requires ${check.executableName}`,
+    `${formatMissingDriverPrefix(optional)} ${check.driverName} (${check.externalAgentKind}) requires ${check.executableName}`,
     `searched: ${check.searchedPaths.join(path.delimiter)}`,
     `hint: ${check.fixHint ?? missingExecutableFixHint({ executableName: check.executableName })}`,
   ].join("; ");
 
 /** Formats one executable check for CLI/result output. */
-const formatCheck = (check: CaaraDoctorExecutableCheck): string =>
+const formatCheck = ({
+  check,
+  optionalMissing,
+}: {
+  readonly check: CaaraDoctorExecutableCheck;
+  readonly optionalMissing: boolean;
+}): string =>
   Match.value(check.foundPath).pipe(
-    Match.when(undefined, () => formatMissingCheck(check)),
+    Match.when(undefined, () => formatMissingCheck({ check, optional: optionalMissing })),
     Match.orElse(() => formatFoundCheck(check)),
   );
 
@@ -380,23 +404,38 @@ const formatDoctorMessage = ({
   readonly appendedPathEntries: readonly string[];
   readonly configPath: string;
 }): string => {
-  const header = Match.value(missingChecks(checks).length).pipe(
-    Match.when(0, () => "Caara doctor ok"),
-    Match.orElse(() => "Caara doctor found missing executables"),
+  const hasFoundRealDriver = foundChecks(checks).length > 0;
+  const header = Match.value({
+    hasFoundRealDriver,
+    missingCount: missingChecks(checks).length,
+  }).pipe(
+    Match.when({ missingCount: 0 }, () => "Caara doctor ok"),
+    Match.when({ hasFoundRealDriver: true }, () => "Caara doctor ok with optional driver warnings"),
+    Match.orElse(() => "Caara doctor found no real external driver executables"),
   );
   const repairLine = Option.match(Option.fromUndefinedOr(appendedPathEntries.at(0)), {
     onNone: () => undefined,
     onSome: () => `updated ${configPath} path entries: ${appendedPathEntries.join(path.delimiter)}`,
   });
-  return [header, repairLine, ...checks.map(formatCheck)]
+  return [
+    header,
+    repairLine,
+    ...checks.map((check) =>
+      formatCheck({
+        check,
+        optionalMissing: hasFoundRealDriver && check.foundPath === undefined,
+      }),
+    ),
+  ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
 };
 
-/** Builds a successful empty doctor result when no registered drivers need executables. */
+/** Builds a fatal doctor result when no real external driver executable requirements exist. */
 const emptyDoctorResult = ({ configPath }: { readonly configPath: string }): CaaraDoctorResult => ({
-  exitCode: 0,
-  message: "Caara doctor ok\nno registered driver executable requirements",
+  exitCode: 1,
+  message:
+    "Caara doctor found no real external driver executables\nno registered real driver executable requirements",
   checks: [],
   appendedPathEntries: [],
   configUpdated: false,

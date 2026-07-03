@@ -346,6 +346,46 @@ describe("Caara service lifecycle", () => {
     }),
   );
 
+  it.effect(
+    "starts when doctor reports one real driver plus optional missing driver warnings",
+    () =>
+      Effect.gen(function* () {
+        const root = testRoot();
+        const env = serviceEnv({ root });
+        const events: string[] = [];
+        const sourceExecutable = path.join(root, "dist", "caara-source");
+        const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
+        const serviceFile = path.join(env.XDG_CONFIG_HOME, "systemd", "user", "caara.service");
+        yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+        const result = yield* runCaaraInstallService({
+          args: [],
+          doctor: recordingDoctor({
+            events,
+            result: {
+              ...doctorOkResult({ configPath }),
+              message:
+                "Caara doctor ok with optional driver warnings\nok Claude (claude) requires claude: /tmp/claude\nwarning optional driver missing Antigravity (agy) requires agy",
+            },
+          }),
+          env,
+          healthProbe: recordingHealthProbe({ events }),
+          platform: "linux",
+          runtime: compiledRuntime({ executablePath: sourceExecutable }),
+          serviceManager: recordingServiceManager(events),
+        });
+
+        assert.strictEqual(result.exitCode, 0);
+        assert.deepStrictEqual(events, [
+          "doctor:--fix",
+          `start:caara.service:${serviceFile}`,
+          "health:http://127.0.0.1:8787/health",
+        ]);
+        assert.match(result.message, /optional driver warnings/u);
+        assert.match(result.message, /service started/u);
+      }),
+  );
+
   it.effect("does not run doctor, start, or health verification for --no-start", () =>
     Effect.gen(function* () {
       const root = testRoot();
@@ -389,7 +429,8 @@ describe("Caara service lifecycle", () => {
           result: {
             ...doctorOkResult({ configPath }),
             exitCode: 1,
-            message: "Caara doctor found missing executables\nmissing Fake requires fake-agent",
+            message:
+              "Caara doctor found no real external driver executables\nmissing Claude requires claude\nmissing Antigravity requires agy",
           },
         }),
         env,
@@ -401,7 +442,8 @@ describe("Caara service lifecycle", () => {
 
       assert.strictEqual(result.exitCode, 1);
       assert.deepStrictEqual(events, ["doctor:--fix"]);
-      assert.match(result.message, /missing Fake/u);
+      assert.match(result.message, /no real external driver/u);
+      assert.match(result.message, /missing Claude/u);
     }),
   );
 

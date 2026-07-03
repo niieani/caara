@@ -20,6 +20,22 @@ const fakeRequirements: CaaraDoctorRequirementsRegistry = {
   ],
 };
 
+/** Stable Claude/Agy-shaped requirements that avoid depending on host-installed tools. */
+const fakeRealDriverRequirements: CaaraDoctorRequirementsRegistry = {
+  requirements: [
+    {
+      driverName: "Claude",
+      externalAgentKind: "claude",
+      executableName: "fake-claude",
+    },
+    {
+      driverName: "Antigravity",
+      externalAgentKind: "agy",
+      executableName: "fake-agy",
+    },
+  ],
+};
+
 /** Builds one isolated doctor test root under temp.local. */
 const testRoot = (): string =>
   path.join(process.cwd(), "temp.local", "2026-06-29", `caara-doctor-${randomUUID()}`);
@@ -157,6 +173,57 @@ describe("Caara doctor command", () => {
       assert.strictEqual(result.configUpdated, true);
       assert.deepStrictEqual(result.appendedPathEntries, [inheritedDir]);
       assert.deepStrictEqual(updatedConfig.path, [existingDir, inheritedDir]);
+    }),
+  );
+
+  for (const available of fakeRealDriverRequirements.requirements) {
+    it.effect(
+      `succeeds with only ${available.driverName} available and reports the missing optional driver`,
+      () =>
+        Effect.gen(function* () {
+          const root = testRoot();
+          const configPath = path.join(root, "config", "caara.yaml");
+          const inheritedDir = path.join(root, "shell-bin");
+          yield* writeExecutable({ filePath: path.join(inheritedDir, available.executableName) });
+          yield* writeFile({ filePath: configPath, content: "path: []\n" });
+
+          const result = yield* runCaaraDoctor({
+            args: ["--fix", "--config", configPath],
+            env: doctorEnv({ home: path.join(root, "home"), inheritedPath: inheritedDir }),
+            requirementsRegistry: fakeRealDriverRequirements,
+          });
+          const updatedConfig = yield* parseCaaraServiceConfigYaml({
+            yaml: yield* readFile({ filePath: configPath }),
+          });
+
+          assert.strictEqual(result.exitCode, 0);
+          assert.strictEqual(result.configUpdated, true);
+          assert.deepStrictEqual(result.appendedPathEntries, [inheritedDir]);
+          assert.deepStrictEqual(updatedConfig.path, [inheritedDir]);
+          assert.match(result.message, new RegExp(`ok ${available.driverName}`, "u"));
+          assert.match(result.message, /warning optional driver missing/u);
+          assert.match(result.message, /searched:/u);
+        }),
+    );
+  }
+
+  it.effect("fails clearly when no real external driver executable is available", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const configPath = path.join(root, "config", "caara.yaml");
+      yield* writeFile({ filePath: configPath, content: "path: []\n" });
+
+      const result = yield* runCaaraDoctor({
+        args: ["--config", configPath],
+        env: doctorEnv({ home: path.join(root, "home"), inheritedPath: "" }),
+        requirementsRegistry: fakeRealDriverRequirements,
+      });
+
+      assert.strictEqual(result.exitCode, 1);
+      assert.match(result.message, /no real external driver executables/u);
+      assert.match(result.message, /missing Claude/u);
+      assert.match(result.message, /missing Antigravity/u);
+      assert.match(result.message, /searched:/u);
     }),
   );
 });
