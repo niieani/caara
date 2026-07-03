@@ -4,7 +4,10 @@ import { mainLayerFromArgs } from "./caaraApp.ts";
 import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
 import { runCaaraStatusCli } from "./caaraStatus.ts";
-import { runCaaraInstallCodexRolesCli } from "./codexRoleInstaller.ts";
+import {
+  runCaaraInstallCodexRolesCli,
+  runCaaraUninstallCodexRolesCli,
+} from "./codexRoleInstaller.ts";
 
 /** Selected top-level Caara command after shallow root dispatch. */
 export type CaaraCommandSelection =
@@ -30,6 +33,10 @@ export type CaaraCommandSelection =
     }
   | {
       readonly _tag: "InstallCodexRoles";
+      readonly args: readonly string[];
+    }
+  | {
+      readonly _tag: "UninstallCodexRoles";
       readonly args: readonly string[];
     };
 
@@ -80,6 +87,14 @@ export const selectCaaraCommand = ({
           args: args.slice(1),
         }) satisfies CaaraCommandSelection,
     ),
+    Match.when(
+      "uninstall-codex-roles",
+      () =>
+        ({
+          _tag: "UninstallCodexRoles",
+          args: args.slice(1),
+        }) satisfies CaaraCommandSelection,
+    ),
     Match.orElse(
       () =>
         ({
@@ -105,5 +120,7 @@ export const caaraCliMain = Effect.fnUntraced(function* ({
       runCaaraUninstallServiceCli({ args: uninstallArgs }),
     InstallCodexRoles: ({ args: installRoleArgs }) =>
       runCaaraInstallCodexRolesCli({ args: installRoleArgs }),
+    UninstallCodexRoles: ({ args: uninstallRoleArgs }) =>
+      runCaaraUninstallCodexRolesCli({ args: uninstallRoleArgs }),
   });
 });
