@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
 
-import { mkdir } from "node:fs/promises";
+import { chmod, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { BunRuntime } from "@effect/platform-bun";
 import { Console, Effect, Schema } from "effect";
 
 import {
+  archiveCommandFromStep,
   createBuildServicePlan,
   formatChecksumFile,
   serviceBuildPaths,
   type BuildServiceMode,
   type BuildServicePlan,
+  type ServiceArchiveStep,
   type ServiceChecksum,
   type ServiceCommandStep,
   type ServiceCompileStep,
@@ -27,6 +29,11 @@ interface ParsedBuildServiceArgs {
 class BuildServiceError extends Schema.TaggedErrorClass<BuildServiceError>()("BuildServiceError", {
   message: Schema.String,
 }) {}
+
+/** Package metadata required to version public release artifacts. */
+const PackageBuildMetadata = Schema.Struct({
+  version: Schema.String,
+});
 
 /** Builds one service build error. */
 const buildServiceError = ({ message }: { readonly message: string }): BuildServiceError =>
@@ -89,6 +96,26 @@ const ensureOutputDirectory = Effect.fnUntraced(function* ({
   });
 });
 
+/** Reads and validates the package version used in public release artifact names. */
+const readPackageVersion = Effect.fnUntraced(function* () {
+  const json = yield* Effect.tryPromise({
+    try: () => Bun.file("package.json").json(),
+    catch: () =>
+      buildServiceError({
+        message: "Failed to read package.json for release artifact version.",
+      }),
+  });
+  const metadata = yield* Schema.decodeUnknownEffect(PackageBuildMetadata)(json).pipe(
+    Effect.mapError((cause) =>
+      buildServiceError({
+        message: `Invalid package.json release metadata: ${String(cause)}.`,
+      }),
+    ),
+  );
+
+  return metadata.version;
+});
+
 /** Runs one Bun compile step for a service artifact. */
 const runCompileStep = Effect.fnUntraced(function* (step: ServiceCompileStep) {
   yield* ensureOutputDirectory({ outputPath: step.outfile });
@@ -144,6 +171,51 @@ const runCommandStep = Effect.fnUntraced(function* (step: ServiceCommandStep) {
   }
 });
 
+/** Copies one release metadata file into a tarball staging directory. */
+const copyReleaseMetadataFile = Effect.fnUntraced(function* ({
+  sourcePath,
+  stagingDirectory,
+}: {
+  readonly sourcePath: string;
+  readonly stagingDirectory: string;
+}) {
+  const targetPath = path.join(stagingDirectory, path.basename(sourcePath));
+  yield* Effect.tryPromise({
+    try: () => copyFile(sourcePath, targetPath),
+    catch: () =>
+      buildServiceError({
+        message: `Failed to copy ${sourcePath} into release archive staging.`,
+      }),
+  });
+});
+
+/** Prepares the tarball staging directory after compilation and before archive creation. */
+const prepareArchiveStep = Effect.fnUntraced(function* (step: ServiceArchiveStep) {
+  yield* ensureOutputDirectory({ outputPath: path.join(step.stagingDirectory, "README.md") });
+  yield* copyReleaseMetadataFile({
+    sourcePath: serviceBuildPaths.releaseReadme,
+    stagingDirectory: step.stagingDirectory,
+  });
+  yield* copyReleaseMetadataFile({
+    sourcePath: serviceBuildPaths.releaseLicense,
+    stagingDirectory: step.stagingDirectory,
+  });
+  yield* Effect.tryPromise({
+    try: () => chmod(path.join(step.stagingDirectory, "caara"), 0o755),
+    catch: () =>
+      buildServiceError({
+        message: `Failed to mark release executable as executable: ${path.join(step.stagingDirectory, "caara")}.`,
+      }),
+  });
+});
+
+/** Creates one compressed release tarball from its prepared staging directory. */
+const runArchiveStep = Effect.fnUntraced(function* (step: ServiceArchiveStep) {
+  yield* prepareArchiveStep(step);
+  yield* ensureOutputDirectory({ outputPath: step.archivePath });
+  yield* runCommandStep(archiveCommandFromStep(step));
+});
+
 /** Computes one SHA-256 checksum for a generated artifact. */
 const checksumFile = Effect.fnUntraced(function* ({
   artifactPath,
@@ -194,6 +266,9 @@ const runBuildServicePlan = Effect.fnUntraced(function* (plan: BuildServicePlan)
   yield* Effect.forEach(plan.codesignSteps, runCommandStep, {
     concurrency: 1,
   });
+  yield* Effect.forEach(plan.archiveSteps, runArchiveStep, {
+    concurrency: 1,
+  });
   yield* writeChecksumFile({ checksumPaths: plan.checksumPaths });
 });
 
@@ -204,7 +279,11 @@ const runBuildServiceCli = Effect.fnUntraced(function* ({
   readonly args: readonly string[];
 }) {
   const parsed = yield* parseBuildServiceArgs({ args });
-  const plan = createBuildServicePlan(parsed);
+  const version = yield* readPackageVersion();
+  const plan = createBuildServicePlan({
+    ...parsed,
+    version,
+  });
   yield* runBuildServicePlan(plan);
 });
 
