@@ -1,12 +1,18 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { AgentDriverError, type AgentRuntimeEvent } from "./agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  createServerErrorAgentDriverError,
+  type AgentRuntimeEvent,
+} from "./agentDriver.ts";
 import type { ResponsesCreateRequest } from "./protocol.ts";
 import { createResponseEventsFromRuntimeEvents } from "./responseEvents.ts";
 import {
   failedErrorCodeFromResponseFrames,
   failedErrorMessageFromResponseFrames,
 } from "./responseFrameTestHelpers.ts";
+import { runtimeTransportEventToSseEvents } from "./runtimeResponseEncoder.ts";
+import { initialRuntimeResponseState } from "./runtimeResponseTypes.ts";
 
 /** Stable Responses request used by runtime lifecycle encoder tests. */
 const request = {
@@ -127,7 +133,7 @@ const failedAfterPartialLifecycle: readonly AgentRuntimeEvent[] = [
   },
   {
     _tag: "TurnFailed",
-    error: new AgentDriverError({ message: "runtime failed after partial output" }),
+    error: createServerErrorAgentDriverError({ message: "runtime failed after partial output" }),
   },
 ];
 
@@ -135,7 +141,7 @@ const failedAfterPartialLifecycle: readonly AgentRuntimeEvent[] = [
 const failedBeforeOutputLifecycle: readonly AgentRuntimeEvent[] = [
   {
     _tag: "TurnFailed",
-    error: new AgentDriverError({ message: "runtime failed before output" }),
+    error: createServerErrorAgentDriverError({ message: "runtime failed before output" }),
   },
 ];
 
@@ -233,10 +239,7 @@ describe("runtime lifecycle events", () => {
       runtimeEvents: [
         {
           _tag: "TurnFailed",
-          error: new AgentDriverError({
-            message: "runtime invalid request",
-            responseErrorCode: "invalid_prompt",
-          }),
+          error: createInvalidPromptAgentDriverError({ message: "runtime invalid request" }),
         },
       ],
     });
@@ -246,6 +249,25 @@ describe("runtime lifecycle events", () => {
     assert.strictEqual(
       failedErrorMessageFromResponseFrames(events),
       "Caara driver failed: runtime invalid request",
+    );
+  });
+
+  it("encodes runtime transport failures with explicit driver error code", () => {
+    const initial = initialRuntimeResponseState({ request });
+    const [_state, events] = runtimeTransportEventToSseEvents({
+      request,
+      state: initial.state,
+      transportEvent: {
+        _tag: "RuntimeFailure",
+        error: createInvalidPromptAgentDriverError({ message: "runtime stream failed" }),
+      },
+    });
+
+    assert.deepStrictEqual(eventNames(events), ["response.failed"]);
+    assert.strictEqual(failedErrorCodeFromResponseFrames(events), "invalid_prompt");
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(events),
+      "Caara driver failed: runtime stream failed",
     );
   });
 });

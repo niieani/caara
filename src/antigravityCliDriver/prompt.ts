@@ -1,6 +1,10 @@
 import { Effect, Match, Option, Schema } from "effect";
 
-import { AgentDriverError, type AgentTurnInput } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+  type AgentTurnInput,
+} from "../mockResponsesProvider/agentDriver.ts";
 
 /** Responses input text part supported by the Antigravity prompt extractor. */
 const ResponsesInputTextPart = Schema.Struct({
@@ -19,7 +23,8 @@ const ResponsesUserMessage = Schema.Struct({
 const ResponsesPromptInput = Schema.Array(ResponsesUserMessage);
 
 /** Builds an explicit Antigravity prompt extraction failure. */
-const promptError = (message: string): AgentDriverError => new AgentDriverError({ message });
+const promptError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
 
 /** Returns the single normalized user message expected at the driver boundary. */
 const singleCurrentUserMessage = Effect.fnUntraced(function* (

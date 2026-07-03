@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import { createServerErrorAgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import {
   makeDriverResumeCursor,
   type DriverResumeCursor,
@@ -35,11 +35,10 @@ export const decodeAntigravityDriverResumeCursor = Effect.fnUntraced(function* (
   return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AntigravityDriverResumeCursor))(
     cursor,
   ).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "Malformed Antigravity driver resume cursor.",
-        }),
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({
+        message: "Malformed Antigravity driver resume cursor.",
+      }),
     ),
   );
 });

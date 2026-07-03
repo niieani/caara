@@ -3,7 +3,8 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
 import {
-  AgentDriverError,
+  createServerErrorAgentDriverError,
+  type AgentDriverError,
   type AgentRuntimeEventStream,
 } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRunningProcess } from "./cliProcess.ts";
@@ -200,7 +201,7 @@ const readTranscriptSnapshot = Effect.fnUntraced(function* ({
       Match.value(requireTranscript).pipe(
         Match.when(true, () =>
           Effect.fail(
-            new AgentDriverError({
+            createServerErrorAgentDriverError({
               message: "Antigravity transcript_full.jsonl was not created.",
             }),
           ),
@@ -224,7 +225,7 @@ const processExitOption = (exitFiber: AntigravityProcessExitFiber) =>
       Exit.match(outerExit, {
         onFailure: () =>
           Result.fail(
-            new AgentDriverError({
+            createServerErrorAgentDriverError({
               message: "Antigravity CLI process observer was interrupted.",
             }),
           ),

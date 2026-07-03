@@ -2,7 +2,7 @@ import { Effect, Match, Option, Schema } from "effect";
 
 import { writeCaaraStructuredLogLine } from "../caaraLogging.ts";
 import {
-  AgentDriverError,
+  createServerErrorAgentDriverError,
   type AgentRuntimeEvent,
   type AgentRuntimeTransportVisibility,
   createAssistantTextRuntimeEvents,
@@ -182,7 +182,7 @@ const finalAnswerRuntimeEvents = (content: string): readonly AgentRuntimeEvent[]
 
 /** Fails with the legacy missing-final error for transcripts without tool activity. */
 const missingFinalTranscriptFailure = Effect.fnUntraced(function* () {
-  return yield* new AgentDriverError({
+  return yield* createServerErrorAgentDriverError({
     message: "Antigravity transcript did not contain a completed final model response.",
   });
 });

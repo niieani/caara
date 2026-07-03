@@ -1,6 +1,10 @@
 import { Effect, Option, Schema } from "effect";
 
-import { AgentDriverError, type AgentTurnInput } from "./agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+  type AgentTurnInput,
+} from "./agentDriver.ts";
 
 /** Responses input item represented as a decoded JSON object. */
 type ResponseRecord = Readonly<Record<string, Schema.Json>>;
@@ -27,7 +31,7 @@ const codexPreludeTextMarkers = [
 
 /** Builds an explicit current-turn normalization failure. */
 const currentTurnInputError = (message: string): AgentDriverError =>
-  new AgentDriverError({ message });
+  createInvalidPromptAgentDriverError({ message });
 
 /** Reads a string property from a decoded Responses record. */
 const stringProperty = ({

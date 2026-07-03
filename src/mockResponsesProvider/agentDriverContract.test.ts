@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Stream } from "effect";
 
 import {
-  AgentDriverError,
   AgentDriverRegistry,
   type AgentDriver,
   type AgentDriverCancel,
@@ -13,7 +12,9 @@ import {
   type AgentRuntimeEventStream,
   type AgentRuntimeTerminalOutcome,
   createAssistantTextRuntimeEvents,
+  createInvalidPromptAgentDriverError,
   createReasoningSummaryRuntimeEvents,
+  createServerErrorAgentDriverError,
   createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
@@ -114,6 +115,14 @@ const contractRegistryLayer = Layer.succeed(AgentDriverRegistry, {
 });
 
 describe("agent driver service contracts", () => {
+  it("builds explicit Responses error-code classifications", () => {
+    const surfaced = createInvalidPromptAgentDriverError({ message: "invalid option" });
+    const internal = createServerErrorAgentDriverError({ message: "process crashed" });
+
+    assert.strictEqual(surfaced.responseErrorCode, "invalid_prompt");
+    assert.strictEqual(internal.responseErrorCode, "server_error");
+  });
+
   it.effect("resolve and start through explicit Context service contracts", () =>
     Effect.gen(function* () {
       const registry = yield* AgentDriverRegistry;
@@ -137,7 +146,7 @@ describe("agent driver service contracts", () => {
 
   it.effect("preserves typed driver errors in explicit runtime stream contracts", () =>
     Effect.gen(function* () {
-      const failure = new AgentDriverError({ message: "contract failure" });
+      const failure = createInvalidPromptAgentDriverError({ message: "contract failure" });
       const failedStream: AgentRuntimeEventStream = Stream.fail(failure);
       const result = yield* Effect.result(Stream.runCollect(failedStream));
 

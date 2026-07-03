@@ -8,13 +8,14 @@ import { CaaraSettings, type CaaraSettingsValue } from "../caaraSettings.ts";
 import {
   type AgentDriverCancel,
   type AgentCancellationOutcome,
-  AgentDriverError,
+  type AgentDriverError,
   AgentDriverRegistry,
   type AgentDriver,
   type AgentDriverResolve,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEventStream,
+  createServerErrorAgentDriverError,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
@@ -297,11 +298,10 @@ const recoverWithFreshAntigravitySession = Effect.fnUntraced(function* ({
     options,
     logFilePath,
   }).pipe(
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Antigravity CLI could not preserve Antigravity CLI session continuity or start a fresh external session: ${error.message}`,
-        }),
+    Effect.mapError((error) =>
+      createServerErrorAgentDriverError({
+        message: `Antigravity CLI could not preserve Antigravity CLI session continuity or start a fresh external session: ${error.message}`,
+      }),
     ),
   );
   return {

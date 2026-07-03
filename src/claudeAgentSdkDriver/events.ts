@@ -4,7 +4,9 @@ import type { Effect as EffectContract } from "effect/Effect";
 
 import { formatShellCommandActivityText } from "../agentActivityMarkdown.ts";
 import {
-  AgentDriverError,
+  createInvalidPromptAgentDriverError,
+  createServerErrorAgentDriverError,
+  type AgentDriverError,
   type AgentRuntimeEvent,
   type AgentRuntimeMessagePhase,
   type AgentRuntimeTransportVisibility,
@@ -510,7 +512,7 @@ function runtimeEventsFromSdkMessageRoute({
     ResultSuccess: () =>
       Effect.succeed(flushPendingAssistantTexts({ state, messagePhase: "final_answer" })),
     ResultError: ({ message }) =>
-      Effect.fail(new AgentDriverError({ message: sdkResultErrorMessage(message) })),
+      Effect.fail(createInvalidPromptAgentDriverError({ message: sdkResultErrorMessage(message) })),
     PermissionDenied: ({ message }) =>
       Effect.succeed(runtimeEventsFromPermissionDenied({ state, message })),
     Ignored: ({ message }) => ignoredSdkMessageEvents({ state, message }),
@@ -542,9 +544,8 @@ export const runtimeEventsFromClaudeAgentSdkQuery = ({
   readonly runtime: ClaudeAgentSdkQueryRuntime;
   readonly activityTransportVisibility?: AgentRuntimeTransportVisibility;
 }): Stream.Stream<AgentRuntimeEvent, AgentDriverError> =>
-  Stream.fromAsyncIterable(
-    runtime,
-    (cause) => new AgentDriverError({ message: String(cause) }),
+  Stream.fromAsyncIterable(runtime, (cause) =>
+    createServerErrorAgentDriverError({ message: String(cause) }),
   ).pipe(
     Stream.mapAccumEffect(initialClaudeAgentSdkRuntimeEventState, (state, message) =>
       runtimeEventsFromSdkMessage({

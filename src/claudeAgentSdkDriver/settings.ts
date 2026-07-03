@@ -10,7 +10,10 @@ import {
   type CaaraProcessEnvironment,
 } from "../caaraExecutionPath.ts";
 import { CaaraSettings } from "../caaraSettings.ts";
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+} from "../mockResponsesProvider/agentDriver.ts";
 
 /** Configuration needed by the Claude Agent SDK driver to start Claude Code turns. */
 export interface ClaudeAgentSdkSettingsValue {
@@ -24,7 +27,8 @@ export class ClaudeAgentSdkSettings extends Context.Service<
 >()("@caara/ClaudeAgentSdkSettings") {}
 
 /** Converts a service configuration error into the driver-facing failure channel. */
-const settingsError = (message: string): AgentDriverError => new AgentDriverError({ message });
+const settingsError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
 
 /** Returns candidate absolute executable paths from Caara's effective PATH. */
 const claudeExecutableCandidates = ({

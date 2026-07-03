@@ -1,9 +1,10 @@
 import { Effect, Match, Option, Schema } from "effect";
 
 import {
-  AgentDriverError,
   type AgentCancellationOutcome,
   type AgentDriverTurn,
+  createInvalidPromptAgentDriverError,
+  createServerErrorAgentDriverError,
 } from "./agentDriver.ts";
 import { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
 import {
@@ -28,8 +29,8 @@ const decodeDiagnosticResumeCursor = Effect.fnUntraced(function* (driverResumeCu
   return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(DiagnosticResumeCursor))(
     driverResumeCursor,
   ).pipe(
-    Effect.mapError(
-      () => new AgentDriverError({ message: "Invalid diagnostic driver resume cursor." }),
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({ message: "Invalid diagnostic driver resume cursor." }),
     ),
   );
 });
@@ -105,7 +106,7 @@ export const validateDiagnosticCancellationOption = Effect.fnUntraced(function* 
         Match.when("terminated", () => Effect.void),
         Match.orElse(() =>
           Effect.fail(
-            new AgentDriverError({
+            createInvalidPromptAgentDriverError({
               message: `Unsupported diagnostic_cancel value: ${mode}.`,
             }),
           ),

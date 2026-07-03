@@ -18,13 +18,15 @@ import {
   type CaaraSettingsValue,
 } from "../caaraSettings.ts";
 import {
-  AgentDriverError,
   AgentDriverRegistry,
   type AgentCancellationOutcome,
   type AgentDriver,
+  type AgentDriverError,
   type AgentDriverResolve,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
+  createInvalidPromptAgentDriverError,
+  createServerErrorAgentDriverError,
   unsupportedExternalAgentKindError,
 } from "../mockResponsesProvider/agentDriver.ts";
 import { diagnosticAgentDriver } from "../mockResponsesProvider/diagnosticDriver.ts";
@@ -73,7 +75,7 @@ export const claudeAgentSdkSessionIdGeneratorLive = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     return {
       nextSessionId: crypto.randomUUIDv4.pipe(
-        Effect.mapError((error) => new AgentDriverError({ message: error.message })),
+        Effect.mapError((error) => createServerErrorAgentDriverError({ message: error.message })),
       ),
     };
   }),
@@ -81,7 +83,7 @@ export const claudeAgentSdkSessionIdGeneratorLive = Layer.effect(
 
 /** Maps SDK client construction errors into driver-facing failures. */
 const clientErrorToDriverError = (error: ClaudeAgentSdkClientError): AgentDriverError =>
-  new AgentDriverError({ message: error.message });
+  createInvalidPromptAgentDriverError({ message: error.message });
 
 /** Extracts a durable Claude SDK resume cursor from prior external session state. */
 const durableResumeCursorOption = (turn: AgentDriverTurn): Option.Option<string> =>
@@ -139,7 +141,7 @@ const readNextCancellationMessage = ({
 }): EffectContract<IteratorResult<SDKMessage>, AgentDriverError> =>
   Effect.tryPromise({
     try: () => iterator.next(),
-    catch: (cause) => new AgentDriverError({ message: String(cause) }),
+    catch: (cause) => createServerErrorAgentDriverError({ message: String(cause) }),
   });
 
 /** Returns true when one iterator result yielded a terminal SDK result message. */
@@ -213,7 +215,7 @@ const cancelRuntime = (
   Effect.catch(
     Effect.tryPromise({
       try: () => runtime.interrupt(),
-      catch: (cause) => new AgentDriverError({ message: String(cause) }),
+      catch: (cause) => createServerErrorAgentDriverError({ message: String(cause) }),
     }).pipe(
       Effect.flatMap(() => drainRuntimeCancellation(runtime)),
       Effect.flatMap((outcome) => finalizeCancellationOutcome({ runtime, outcome })),
@@ -240,7 +242,7 @@ const applyInPlaceTargetChanges = Effect.fnUntraced(function* ({
     onSome: () =>
       Effect.tryPromise({
         try: () => runtime.setModel(turn.target.externalModelSpecifier),
-        catch: (cause) => new AgentDriverError({ message: String(cause) }),
+        catch: (cause) => createServerErrorAgentDriverError({ message: String(cause) }),
       }),
   });
 });
@@ -358,11 +360,10 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
     startup: { _tag: "Start", sessionId },
   });
   yield* client.query({ prompt: lostSessionRecoveryDriverPrompt, options }).pipe(
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Claude Agent SDK could not preserve Claude SDK session continuity or start a fresh external session: ${error.message}`,
-        }),
+    Effect.mapError((error) =>
+      createServerErrorAgentDriverError({
+        message: `Claude Agent SDK could not preserve Claude SDK session continuity or start a fresh external session: ${error.message}`,
+      }),
     ),
   );
 

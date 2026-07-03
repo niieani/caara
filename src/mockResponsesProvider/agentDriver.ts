@@ -166,14 +166,36 @@ export interface AgentDriverTurnResult {
   readonly cancel: AgentDriverCancel;
 }
 
-/** Driver failure surfaced to the Responses transport as a server error. */
+/** Driver failure surfaced to the Responses transport with an explicit Responses error code. */
 export class AgentDriverError extends Schema.TaggedErrorClass<AgentDriverError>()(
   "AgentDriverError",
   {
     message: Schema.String,
-    responseErrorCode: Schema.optional(Schema.Literals(["server_error", "invalid_prompt"])),
+    responseErrorCode: Schema.Literals(["server_error", "invalid_prompt"]),
   },
 ) {}
+
+/** Builds a surfaced driver/request failure Codex should treat as nonretryable invalid prompt. */
+export const createInvalidPromptAgentDriverError = ({
+  message,
+}: {
+  readonly message: string;
+}): AgentDriverError =>
+  new AgentDriverError({
+    message,
+    responseErrorCode: "invalid_prompt",
+  });
+
+/** Builds an internal or operational driver failure reported as Responses server_error. */
+export const createServerErrorAgentDriverError = ({
+  message,
+}: {
+  readonly message: string;
+}): AgentDriverError =>
+  new AgentDriverError({
+    message,
+    responseErrorCode: "server_error",
+  });
 
 /** Builds an explicit registry failure for an unavailable external agent kind. */
 export const unsupportedExternalAgentKindError = ({
@@ -181,7 +203,9 @@ export const unsupportedExternalAgentKindError = ({
 }: {
   readonly externalAgentKind: string;
 }): AgentDriverError =>
-  new AgentDriverError({ message: `Unsupported external agent kind: ${externalAgentKind}.` });
+  createInvalidPromptAgentDriverError({
+    message: `Unsupported external agent kind: ${externalAgentKind}.`,
+  });
 
 /** Builds the optional message-phase field for an assistant runtime item. */
 const agentRuntimeMessagePhaseField = (

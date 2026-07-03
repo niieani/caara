@@ -4,7 +4,11 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
 
-import { AgentDriverError, type AgentDriverTurn } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createServerErrorAgentDriverError,
+  type AgentDriverError,
+  type AgentDriverTurn,
+} from "../mockResponsesProvider/agentDriver.ts";
 import { buildAntigravityCliArgv, type AntigravityCliOptions } from "./options.ts";
 import type { AntigravityCliSettingsValue } from "./settings.ts";
 
@@ -38,7 +42,7 @@ const conversationIdFromLog = Effect.fnUntraced(function* (content: string) {
   return yield* Match.value(conversationId).pipe(
     Match.when(undefined, () =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: "Antigravity CLI log did not contain a created conversation id.",
         }),
       ),
@@ -56,11 +60,10 @@ const readAntigravityLogFile = Effect.fnUntraced(function* ({
   readonly logFilePath: string;
 }) {
   return yield* fileSystem.readFileString(logFilePath).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "Antigravity CLI log file was not created.",
-        }),
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({
+        message: "Antigravity CLI log file was not created.",
+      }),
     ),
   );
 });
@@ -90,11 +93,10 @@ const makeAntigravityLogDirectory = Effect.fnUntraced(function* ({
   return yield* fileSystem
     .makeDirectory(pathService.dirname(logFilePath), { recursive: true })
     .pipe(
-      Effect.mapError(
-        (error) =>
-          new AgentDriverError({
-            message: `Could not create Antigravity diagnostic log directory: ${error.message}`,
-          }),
+      Effect.mapError((error) =>
+        createServerErrorAgentDriverError({
+          message: `Could not create Antigravity diagnostic log directory: ${error.message}`,
+        }),
       ),
     );
 });
@@ -150,7 +152,7 @@ const ensureAntigravityCommandAvailable = Effect.fnUntraced(function* ({
   return yield* Option.match(Option.fromUndefinedOr(executable), {
     onNone: () =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: `Antigravity CLI failed to start: command ${settings.command} is not available.`,
         }),
       ),
@@ -188,7 +190,7 @@ const validateAntigravityExitCode = (exitCode: unknown): EffectContract<void, Ag
     Match.when(0, () => Effect.void),
     Match.orElse((code) =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: `Antigravity CLI exited with code ${code}.`,
         }),
       ),
@@ -206,11 +208,10 @@ const antigravityProcessExit = ({
   readonly handle: ChildProcessSpawner.ChildProcessHandle;
 }) =>
   handle.exitCode.pipe(
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Antigravity CLI failed to start: ${error.message}`,
-        }),
+    Effect.mapError((error) =>
+      createServerErrorAgentDriverError({
+        message: `Antigravity CLI failed to start: ${error.message}`,
+      }),
     ),
     Effect.flatMap(validateAntigravityExitCode),
   );
@@ -226,11 +227,10 @@ const terminateAntigravityProcess = ({
   const ignoreExitCode = handle.exitCode.pipe(Effect.ignore);
   return handle.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }).pipe(
     Effect.flatMap(() => ignoreExitCode),
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Antigravity CLI could not be terminated: ${error.message}`,
-        }),
+    Effect.mapError((error) =>
+      createServerErrorAgentDriverError({
+        message: `Antigravity CLI could not be terminated: ${error.message}`,
+      }),
     ),
     Effect.ensuring(close),
   );
@@ -253,7 +253,7 @@ const waitForFreshConversationId = ({
       Option.match(conversationId, {
         onNone: () =>
           Effect.fail(
-            new AgentDriverError({
+            createServerErrorAgentDriverError({
               message: "Antigravity CLI log file was not created.",
             }),
           ),
@@ -300,11 +300,10 @@ export const startAntigravityTurnProcess = Effect.fnUntraced(function* ({
   const close = closeAntigravityProcessScope(scope);
   const handle = yield* spawner.spawn(command).pipe(
     Effect.provideService(Scope.Scope, scope),
-    Effect.mapError(
-      (error) =>
-        new AgentDriverError({
-          message: `Antigravity CLI failed to start: ${error.message}`,
-        }),
+    Effect.mapError((error) =>
+      createServerErrorAgentDriverError({
+        message: `Antigravity CLI failed to start: ${error.message}`,
+      }),
     ),
   );
   const processExit = antigravityProcessExit({ handle });

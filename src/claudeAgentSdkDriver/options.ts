@@ -18,7 +18,10 @@ import {
   parseClaudeToolList,
   withReservedInteractiveToolDisallowed,
 } from "../claudeInteractionPolicy.ts";
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+} from "../mockResponsesProvider/agentDriver.ts";
 import type { CodexAdvisoryEffort } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
   expandClaudePermissionToolRule,
@@ -92,7 +95,8 @@ const effortSchema = Schema.Literals(claudeAgentSdkEfforts);
 const permissionModeSchema = Schema.Literals(claudeAgentSdkNonInteractivePermissionModes);
 
 /** Builds an explicit Claude SDK driver option validation failure. */
-const optionError = (message: string): AgentDriverError => new AgentDriverError({ message });
+const optionError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
 
 /** Builds the explicit reserved interactive-tool validation failure. */
 const reservedInteractiveToolError = (optionName: string): AgentDriverError =>

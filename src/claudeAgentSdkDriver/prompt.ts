@@ -3,7 +3,10 @@ import type { ContentBlockParam, ImageBlockParam } from "@anthropic-ai/sdk/resou
 import { Effect, Match, Option, Schema } from "effect";
 import * as Path from "effect/Path";
 
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+} from "../mockResponsesProvider/agentDriver.ts";
 import type { ClaudeAgentSdkQueryPrompt } from "./claudeAgentSdkClient.ts";
 
 /** Responses content or input item represented as a decoded JSON object. */
@@ -46,7 +49,8 @@ const base64ImageBlockByMediaType: Readonly<Record<string, (data: string) => Ima
 };
 
 /** Builds an explicit prompt extraction failure. */
-const promptError = (message: string): AgentDriverError => new AgentDriverError({ message });
+const promptError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
 
 /** Reads a string property from a decoded Responses record. */
 const stringProperty = ({

@@ -1,7 +1,7 @@
 import { Effect, Match, Stream } from "effect";
 
 import {
-  AgentDriverError,
+  createInvalidPromptAgentDriverError,
   type AgentRuntimeEvent,
   createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
@@ -17,7 +17,7 @@ const diagnosticActivityVisibility = Effect.fnUntraced(function* (
     Match.when("off", () => Effect.succeed("relay_only" as const)),
     Match.orElse((value) =>
       Effect.fail(
-        new AgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Diagnostic driver option diagnostic_activity must be on or off, received ${value}.`,
         }),
       ),

@@ -2,14 +2,16 @@ import { Effect, Layer, Match, Option, Stream } from "effect";
 
 import type { AgentDriverExecutableRequirement } from "../agentDriverRequirements.ts";
 import {
-  AgentDriverError,
   AgentDriverRegistry,
   type AgentDriver,
+  type AgentDriverError,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
   type AgentRuntimeEvent,
+  createInvalidPromptAgentDriverError,
   createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
+  createServerErrorAgentDriverError,
   unsupportedExternalAgentKindError,
 } from "./agentDriver.ts";
 import { createDiagnosticActivityRuntimeEventStream } from "./diagnosticDriverActivity.ts";
@@ -77,7 +79,7 @@ const parseBoundedIntegerValue = Effect.fnUntraced(function* ({
     Match.when(true, () => Effect.succeed(parsed)),
     Match.orElse(() =>
       Effect.fail(
-        new AgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Diagnostic driver option ${optionName} must be an integer from ${min} to ${max}.`,
         }),
       ),
@@ -117,7 +119,7 @@ const validateDiagnosticResumeOption = Effect.fnUntraced(function* (
         Match.when("unresumable", () => Effect.void),
         Match.orElse(() =>
           Effect.fail(
-            new AgentDriverError({
+            createInvalidPromptAgentDriverError({
               message: `Unsupported diagnostic_resume value: ${mode}.`,
             }),
           ),
@@ -137,7 +139,7 @@ const validateDiagnosticFreshStartOption = Effect.fnUntraced(function* (
         Match.when("failure", () => Effect.void),
         Match.orElse(() =>
           Effect.fail(
-            new AgentDriverError({
+            createInvalidPromptAgentDriverError({
               message: `Unsupported diagnostic_fresh_start value: ${mode}.`,
             }),
           ),
@@ -163,7 +165,7 @@ const parseDiagnosticBasicOptions = Effect.fnUntraced(function* (
     onNone: () => Effect.void,
     onSome: (optionName) =>
       Effect.fail(
-        new AgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Unsupported diagnostic driver option: ${optionName}.`,
         }),
       ),
@@ -200,7 +202,7 @@ const validateDiagnosticOptions = Effect.fnUntraced(function* (
     onNone: () => Effect.void,
     onSome: (optionName) =>
       Effect.fail(
-        new AgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Unsupported diagnostic driver option: ${optionName}.`,
         }),
       ),
@@ -274,7 +276,7 @@ const diagnosticRuntimeFailureError = (scenario: string): AgentDriverError => {
     ),
     Match.orElse(() => diagnosticDriverFixture.runtimeFailureBeforeOutputMessage),
   );
-  return new AgentDriverError({ message });
+  return createServerErrorAgentDriverError({ message });
 };
 
 /** Builds a stream that emits one partial reasoning event before failing. */
@@ -314,9 +316,8 @@ const diagnosticInvalidRequestFailureStream = (): Stream.Stream<
   Stream.fromIterable([
     {
       _tag: "TurnFailed",
-      error: new AgentDriverError({
+      error: createInvalidPromptAgentDriverError({
         message: diagnosticDriverFixture.invalidRequestFailureMessage,
-        responseErrorCode: "invalid_prompt",
       }),
     },
   ]);
@@ -383,7 +384,7 @@ const recoverUnresumableDiagnosticSession = Effect.fnUntraced(function* (turn: A
   return yield* Match.value(turn.target.rawDriverOptions.diagnostic_fresh_start).pipe(
     Match.when("failure", () =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: diagnosticDriverFixture.unrecoverableSessionFailureMessage,
         }),
       ),
@@ -435,7 +436,7 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
     Match.when("recovery", () => recoverUnresumableDiagnosticSession(turn)),
     Match.orElse((scenario) =>
       Effect.fail(
-        new AgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Unsupported diagnostic scenario: ${scenario}.`,
         }),
       ),

@@ -2,10 +2,11 @@ import { Effect, Match, Option, Schema, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
 import {
-  AgentDriverError,
+  createInvalidPromptAgentDriverError,
   type AgentCancellationOutcome,
   type AgentDriverTurn,
   type AgentDriverTurnResult,
+  type AgentDriverError,
   type AgentRuntimeEvent,
   createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
@@ -46,7 +47,7 @@ const responseInputSchema = Schema.Array(responseInputMessageSchema);
 
 /** Builds an explicit Diagnostic echo extraction failure. */
 const diagnosticEchoError = (message: string): AgentDriverError =>
-  new AgentDriverError({ message });
+  createInvalidPromptAgentDriverError({ message });
 
 /** Reads a string property from a decoded Responses record. */
 const stringProperty = ({

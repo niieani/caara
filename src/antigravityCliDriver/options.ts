@@ -2,7 +2,10 @@ import { Effect, Match, Option, Schema } from "effect";
 import type * as Path from "effect/Path";
 
 import type { CaaraSettingsValue } from "../caaraSettings.ts";
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+} from "../mockResponsesProvider/agentDriver.ts";
 import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
 
 /** Parsed Antigravity reasoning relay mode. */
@@ -38,6 +41,10 @@ const defaultPrintTimeoutSeconds = 7200;
 /** Maximum Antigravity print-mode wait timeout accepted as driver passthrough. */
 const maxPrintTimeoutSeconds = 86400;
 
+/** Builds an explicit Antigravity driver option validation failure. */
+const optionError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
+
 /** JSON encoded `add_dirs` option schema. */
 const AddDirsOption = Schema.fromJsonString(Schema.Array(Schema.NonEmptyString));
 
@@ -61,11 +68,7 @@ const validateSupportedOptions = Effect.fnUntraced(function* (
     {
       onNone: () => Effect.void,
       onSome: (optionName) =>
-        Effect.fail(
-          new AgentDriverError({
-            message: `Unsupported Antigravity driver option: ${optionName}.`,
-          }),
-        ),
+        Effect.fail(optionError(`Unsupported Antigravity driver option: ${optionName}.`)),
     },
   );
 });
@@ -86,13 +89,7 @@ const parseBooleanOption = Effect.fnUntraced(function* ({
       Match.value(value).pipe(
         Match.when("true", () => Effect.succeed(true)),
         Match.when("false", () => Effect.succeed(false)),
-        Match.orElse(() =>
-          Effect.fail(
-            new AgentDriverError({
-              message: `${optionName} must be true or false.`,
-            }),
-          ),
-        ),
+        Match.orElse(() => Effect.fail(optionError(`${optionName} must be true or false.`))),
       ),
   });
 });
@@ -107,14 +104,7 @@ const parseModelOption = Effect.fnUntraced(function* ({
 }) {
   return yield* Schema.decodeUnknownEffect(ModelOption)(
     rawDriverOptions.model ?? externalModelSpecifier,
-  ).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "model must be non-empty.",
-        }),
-    ),
-  );
+  ).pipe(Effect.mapError(() => optionError("model must be non-empty.")));
 });
 
 /** Maps Codex sandbox posture into Antigravity's default sandbox behavior. */
@@ -146,11 +136,7 @@ const parseBoundedIntegerValue = ({
   return Match.value(valid).pipe(
     Match.when(true, () => Effect.succeed(parsed)),
     Match.orElse(() =>
-      Effect.fail(
-        new AgentDriverError({
-          message: `${optionName} must be an integer from ${min} to ${max}.`,
-        }),
-      ),
+      Effect.fail(optionError(`${optionName} must be an integer from ${min} to ${max}.`)),
     ),
   );
 };
@@ -187,13 +173,7 @@ const parseRelayModeOption = Effect.fnUntraced(function* ({
       Match.value(value).pipe(
         Match.when("on", () => Effect.succeed("on" as const)),
         Match.when("off", () => Effect.succeed("off" as const)),
-        Match.orElse(() =>
-          Effect.fail(
-            new AgentDriverError({
-              message: `${optionName} must be on or off.`,
-            }),
-          ),
-        ),
+        Match.orElse(() => Effect.fail(optionError(`${optionName} must be on or off.`))),
       ),
   });
 });
@@ -210,13 +190,7 @@ const validateAbsolutePath = Effect.fnUntraced(function* ({
 }) {
   return yield* Match.value(pathService.isAbsolute(value)).pipe(
     Match.when(true, () => Effect.succeed(value)),
-    Match.orElse(() =>
-      Effect.fail(
-        new AgentDriverError({
-          message: `${optionName} must be an absolute path.`,
-        }),
-      ),
-    ),
+    Match.orElse(() => Effect.fail(optionError(`${optionName} must be an absolute path.`))),
   );
 });
 
@@ -233,11 +207,8 @@ const parseAddDirsOption = Effect.fnUntraced(function* ({
     onNone: () => Effect.succeed([] as readonly string[]),
     onSome: (value) =>
       Schema.decodeUnknownEffect(AddDirsOption)(value).pipe(
-        Effect.mapError(
-          () =>
-            new AgentDriverError({
-              message: "add_dirs must be a JSON array of non-empty absolute paths.",
-            }),
+        Effect.mapError(() =>
+          optionError("add_dirs must be a JSON array of non-empty absolute paths."),
         ),
       ),
   });
@@ -272,10 +243,9 @@ const validateDangerousSkipPermissions = Effect.fnUntraced(function* ({
   return yield* Option.match(Option.fromUndefinedOr([allowed].filter(Boolean).at(0)), {
     onNone: () =>
       Effect.fail(
-        new AgentDriverError({
-          message:
-            "Antigravity --dangerously-skip-permissions requires --allow-dangerous-skip-permissions.",
-        }),
+        optionError(
+          "Antigravity --dangerously-skip-permissions requires --allow-dangerous-skip-permissions.",
+        ),
       ),
     onSome: () => Effect.void,
   });

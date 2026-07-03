@@ -439,14 +439,14 @@ const turnFailedToSseEvents = ({
       sequenceNumber: state.sequenceNumber + 1,
       terminal: "failed",
       failureMessage: error.message,
-      failureResponseErrorCode: error.responseErrorCode ?? "server_error",
+      failureResponseErrorCode: error.responseErrorCode,
     },
     [
       failedEventFromState({
         request,
         state,
         failureMessage: error.message,
-        failureResponseErrorCode: error.responseErrorCode ?? "server_error",
+        failureResponseErrorCode: error.responseErrorCode,
       }),
     ],
   ] as const;
@@ -496,14 +496,14 @@ export const runtimeTransportEventToSseEvents = ({
           sequenceNumber: state.sequenceNumber + 1,
           terminal: "failed",
           failureMessage: transportEvent.error.message,
-          failureResponseErrorCode: transportEvent.error.responseErrorCode ?? "server_error",
+          failureResponseErrorCode: transportEvent.error.responseErrorCode,
         },
         [
           failedEventFromState({
             request,
             state,
             failureMessage: transportEvent.error.message,
-            failureResponseErrorCode: transportEvent.error.responseErrorCode ?? "server_error",
+            failureResponseErrorCode: transportEvent.error.responseErrorCode,
           }),
         ],
       ] as const,

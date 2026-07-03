@@ -5,7 +5,7 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
 import { writeCaaraStructuredLogLine } from "../caaraLogging.ts";
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import { createServerErrorAgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import type { AntigravityRelayMode } from "./options.ts";
 import { runtimeEventsFromAntigravityTranscript } from "./transcriptRuntimeEvents.ts";
 
@@ -140,11 +140,10 @@ const readTranscriptContent = Effect.fnUntraced(function* ({
   readonly transcriptPath: string;
 }) {
   return yield* fileSystem.readFileString(transcriptPath).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "Antigravity transcript_full.jsonl was not created.",
-        }),
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({
+        message: "Antigravity transcript_full.jsonl was not created.",
+      }),
     ),
   );
 });
@@ -154,11 +153,10 @@ const decodeTranscriptLine = Effect.fnUntraced(function* (line: string) {
   const record = yield* Schema.decodeUnknownEffect(
     Schema.fromJsonString(AntigravityTranscriptRecord),
   )(line).pipe(
-    Effect.mapError(
-      () =>
-        new AgentDriverError({
-          message: "Malformed Antigravity transcript_full.jsonl record.",
-        }),
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({
+        message: "Malformed Antigravity transcript_full.jsonl record.",
+      }),
     ),
   );
   return yield* validateSupportedTranscriptRecord(record);
@@ -255,7 +253,7 @@ const validateSupportedTranscriptRecord = Effect.fnUntraced(function* (
     ),
     Match.orElse(() =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: `Unsupported Antigravity transcript record: ${record.source}/${record.type}/${record.status}.`,
         }),
       ),
@@ -276,7 +274,7 @@ const validateAppendOnlySnapshot = Effect.fnUntraced(function* ({
   return yield* Option.match(Option.fromUndefinedOr([appendOnly].filter(Boolean).at(0)), {
     onNone: () =>
       Effect.fail(
-        new AgentDriverError({
+        createServerErrorAgentDriverError({
           message: "Antigravity transcript_full.jsonl was rewritten or truncated.",
         }),
       ),

@@ -5,13 +5,17 @@ import { Effect, Match, Option } from "effect";
 
 import type { CaaraExecutionPathEnvironment } from "../caaraExecutionPath.ts";
 import { parseClaudeToolList } from "../claudeInteractionPolicy.ts";
-import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
+import {
+  createInvalidPromptAgentDriverError,
+  type AgentDriverError,
+} from "../mockResponsesProvider/agentDriver.ts";
 
 /** Permission settings shape accepted by Claude Code settings. */
 type ClaudePermissionSettings = NonNullable<Settings["permissions"]>;
 
 /** Builds an explicit Claude SDK driver option validation failure. */
-const optionError = (message: string): AgentDriverError => new AgentDriverError({ message });
+const optionError = (message: string): AgentDriverError =>
+  createInvalidPromptAgentDriverError({ message });
 
 /** One Claude permission rule split into tool name and rule specifier. */
 interface ClaudePermissionRuleParts {
