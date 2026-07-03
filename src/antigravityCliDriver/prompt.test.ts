@@ -58,7 +58,11 @@ describe("Antigravity CLI prompt extraction", () => {
         }),
       );
 
-      assert.match(error.message, /only supports current-turn user input_text messages/i);
+      assert.strictEqual(
+        error.message,
+        "Antigravity driver only supports current-turn user input_text messages.",
+      );
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
     }),
   );
 
@@ -73,7 +77,11 @@ describe("Antigravity CLI prompt extraction", () => {
         }),
       );
 
-      assert.match(error.message, /exactly one normalized user message/i);
+      assert.strictEqual(
+        error.message,
+        "Antigravity driver requires exactly one normalized user message.",
+      );
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
     }),
   );
 
@@ -85,7 +93,11 @@ describe("Antigravity CLI prompt extraction", () => {
         }),
       );
 
-      assert.match(error.message, /only supports current-turn user input_text messages/i);
+      assert.strictEqual(
+        error.message,
+        "Antigravity driver only supports current-turn user input_text messages.",
+      );
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
     }),
   );
 });

@@ -242,7 +242,8 @@ describe("Antigravity CLI options", () => {
         sandboxPosture: "enforced",
       }).pipe(Effect.flip);
 
-      assert.ok(failure.message.includes("sandbox must be true or false."), failure.message);
+      assert.strictEqual(failure.message, "sandbox must be true or false.");
+      assert.strictEqual(failure.responseErrorCode, "invalid_prompt");
     }),
   );
 
@@ -253,7 +254,8 @@ describe("Antigravity CLI options", () => {
           rawDriverOptions: testCase.rawDriverOptions,
         }).pipe(Effect.flip);
 
-        assert.ok(failure.message.includes(testCase.expected), failure.message);
+        assert.strictEqual(failure.message, testCase.expected);
+        assert.strictEqual(failure.responseErrorCode, "invalid_prompt");
       }),
     );
   }

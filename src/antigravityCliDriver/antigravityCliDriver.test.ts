@@ -18,6 +18,7 @@ import {
 } from "../mockResponsesProvider/requestDiagnosticsLogger.ts";
 import {
   assistantTextFromResponseFrames,
+  failedErrorCodeFromResponseFrames,
   failedErrorMessageFromResponseFrames,
   isAssistantMessageDoneData,
   type ResponseFrameWithData,
@@ -633,6 +634,32 @@ describe("Antigravity CLI driver", () => {
         "--log-file",
         logOverride,
       ]);
+    }),
+  );
+
+  it.effect("surfaces invalid Antigravity query options as invalid_prompt response failures", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const relayEvents: Array<RelayLogEvent> = [];
+      const failed = yield* executeTurnRawFrames({
+        turnId: "turn-antigravity-invalid-option",
+        queryString: "?sandbox=yes",
+      }).pipe(Effect.provide(providerLayer({ ...fixture, fakeMode: "success", relayEvents })));
+
+      assert.strictEqual(failed.status, 200);
+      assert.strictEqual(failed.contentType, "text/event-stream");
+      assert.deepStrictEqual(frameEventNames(failed.frames), [
+        "response.created",
+        "response.failed",
+      ]);
+      assert.strictEqual(failedErrorCodeFromResponseFrames(failed.frames), "invalid_prompt");
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failed.frames),
+        "Caara driver failed: sandbox must be true or false.",
+      );
+      assert.deepStrictEqual(assistantMessageDoneFrames(failed.frames), []);
+      assert.strictEqual(frameEventNames(failed.frames).includes("response.completed"), false);
+      assert.deepStrictEqual(turnFailedMessages(relayEvents), ["sandbox must be true or false."]);
     }),
   );
 
