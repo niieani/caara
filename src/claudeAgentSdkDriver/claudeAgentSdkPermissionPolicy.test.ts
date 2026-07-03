@@ -21,6 +21,16 @@ const caaraSettings = ({
   allowDangerousSkipPermissions,
 });
 
+/** Minimal process environment used by permission-scope expansion tests. */
+const processEnvironment = ({
+  tmpdir = "/var/folders/test/T/",
+}: {
+  readonly tmpdir?: string;
+} = {}) => ({
+  PATH: "/usr/bin:/bin",
+  TMPDIR: tmpdir,
+});
+
 /** Builds one fake SDK permission-denied system message. */
 const sdkPermissionDeniedMessage = (): SDKMessage =>
   ({
@@ -186,6 +196,86 @@ describe("Claude Agent SDK permission policy", () => {
 
       assert.strictEqual(options.pathToClaudeCodeExecutable, "/resolved/bin/claude");
     }),
+  );
+
+  it.effect("expands TMPDIR-only Claude permission scope options", () =>
+    Effect.gen(function* () {
+      const options = yield* buildClaudeAgentSdkQueryOptions({
+        caaraSettings: caaraSettings(),
+        cwd: projectRoot,
+        model: "sonnet",
+        processEnvironment: processEnvironment(),
+        rawDriverOptions: {
+          additional_directories: "$TMPDIR,$" + "{TMPDIR}/caara-panel",
+          allowed_tools:
+            "Edit($TMPDIR/caara-panel/smoke/**),Write($" + "{TMPDIR}/caara-panel/smoke/**)",
+          disallowed_tools: "Read($TMPDIR/secret/**)",
+        },
+        startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p120" },
+      });
+
+      assert.deepStrictEqual(options.additionalDirectories, [
+        "/var/folders/test/T",
+        "/var/folders/test/T/caara-panel",
+      ]);
+      assert.deepStrictEqual(options.allowedTools, [
+        "Edit(//var/folders/test/T/caara-panel/smoke/**)",
+        "Write(//var/folders/test/T/caara-panel/smoke/**)",
+      ]);
+      assert.deepStrictEqual(options.disallowedTools, [
+        "Read(//var/folders/test/T/secret/**)",
+        "AskUserQuestion",
+      ]);
+    }),
+  );
+
+  it.effect("rejects scoped TMPDIR expansion without an absolute TMPDIR", () =>
+    Effect.gen(function* () {
+      for (const testCase of [
+        { label: "missing", environment: { PATH: "/usr/bin:/bin" } },
+        { label: "empty", environment: processEnvironment({ tmpdir: "" }) },
+        { label: "relative", environment: processEnvironment({ tmpdir: "relative/tmp" }) },
+      ] as const) {
+        const result = yield* Effect.result(
+          buildClaudeAgentSdkQueryOptions({
+            caaraSettings: caaraSettings(),
+            cwd: projectRoot,
+            model: "sonnet",
+            processEnvironment: testCase.environment,
+            rawDriverOptions: { additional_directories: "$TMPDIR" },
+            startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p121" },
+          }),
+        );
+
+        assert.match(driverErrorMessage(result), new RegExp(`TMPDIR.*${testCase.label}`, "u"));
+      }
+    }),
+  );
+
+  it.effect(
+    "rejects unsupported environment placeholders in scoped Claude permission options",
+    () =>
+      Effect.gen(function* () {
+        const invalidPlaceholderOptions: readonly Readonly<Record<string, string>>[] = [
+          { additional_directories: "$HOME/caara" },
+          { allowed_tools: "Edit($" + "{HOME}/caara/**)" },
+          { disallowed_tools: "Read($TMPDIR_SUFFIX/**)" },
+        ];
+        for (const rawDriverOptions of invalidPlaceholderOptions) {
+          const result = yield* Effect.result(
+            buildClaudeAgentSdkQueryOptions({
+              caaraSettings: caaraSettings(),
+              cwd: projectRoot,
+              model: "sonnet",
+              processEnvironment: processEnvironment(),
+              rawDriverOptions,
+              startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p122" },
+            }),
+          );
+
+          assert.match(driverErrorMessage(result), /Unsupported.*environment.*placeholder/u);
+        }
+      }),
   );
 
   it.effect("rejects dangerous permission bypass unless server settings allow it", () =>

@@ -22,6 +22,10 @@ import {
 } from "../claudeInteractionPolicy.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import type { CodexAdvisoryEffort } from "../mockResponsesProvider/codexTurnContext.ts";
+import {
+  expandClaudePermissionToolRule,
+  parseClaudeAdditionalDirectoriesOption,
+} from "./scopedTmpdirPermissionOptions.ts";
 
 /** Effort values accepted by the installed Claude Agent SDK. */
 const claudeAgentSdkEfforts = [
@@ -51,6 +55,7 @@ export interface ClaudeAgentSdkDriverOptions {
   readonly effort: EffortLevel | undefined;
   readonly maxBudgetUsd: number | undefined;
   readonly tools: ClaudeQueryOptions["tools"] | undefined;
+  readonly additionalDirectories: readonly string[] | undefined;
   readonly allowedTools: readonly string[] | undefined;
   readonly disallowedTools: readonly string[] | undefined;
   readonly includePartialMessages: boolean | undefined;
@@ -73,6 +78,7 @@ const supportedClaudeAgentSdkOptionNames = new Set([
   "effort",
   "max_budget_usd",
   "tools",
+  "additional_directories",
   "allowed_tools",
   "disallowed_tools",
   "include_partial_messages",
@@ -152,16 +158,25 @@ const parseToolsOption = Effect.fnUntraced(function* (value: string | undefined)
 /** Parses an optional comma-delimited Claude tool list query parameter. */
 const parseToolListOption = Effect.fnUntraced(function* ({
   name,
+  processEnvironment,
   value,
   rejectReservedTool,
 }: {
   readonly name: string;
+  readonly processEnvironment: CaaraExecutionPathEnvironment;
   readonly value: string | undefined;
   readonly rejectReservedTool: boolean;
 }) {
-  const tools = Option.match(Option.fromUndefinedOr(value), {
-    onNone: () => undefined,
-    onSome: parseClaudeToolList,
+  const tools = yield* Option.match(Option.fromUndefinedOr(value), {
+    onNone: () => Effect.map(Effect.void, () => undefined),
+    onSome: (rawValue) =>
+      Effect.forEach(parseClaudeToolList(rawValue), (tool) =>
+        expandClaudePermissionToolRule({
+          optionName: name,
+          processEnvironment,
+          tool,
+        }),
+      ),
   });
   const invalidReservedTool = Option.fromUndefinedOr(
     [tools]
@@ -312,6 +327,17 @@ const allowedToolsQueryOptions = (
     onSome: (nextAllowedTools) => ({ allowedTools: [...nextAllowedTools] }),
   });
 
+/** Builds the optional SDK additional-directories options object. */
+const additionalDirectoriesQueryOptions = (
+  additionalDirectories: readonly string[] | undefined,
+): Readonly<Partial<Pick<ClaudeQueryOptions, "additionalDirectories">>> =>
+  Option.match(Option.fromUndefinedOr(additionalDirectories), {
+    onNone: () => ({}),
+    onSome: (nextAdditionalDirectories) => ({
+      additionalDirectories: [...nextAdditionalDirectories],
+    }),
+  });
+
 /** Builds the required SDK disallowed-tools options object with AskUserQuestion reserved. */
 const disallowedToolsQueryOptions = (
   disallowedTools: readonly string[] | undefined,
@@ -340,9 +366,13 @@ const pathToClaudeCodeExecutableQueryOptions = (
   });
 
 /** Validates raw provider query params into SDK driver-owned options. */
-export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
-  rawDriverOptions: Readonly<Record<string, string>>,
-) {
+export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* ({
+  processEnvironment = process.env,
+  rawDriverOptions,
+}: {
+  readonly processEnvironment?: CaaraExecutionPathEnvironment;
+  readonly rawDriverOptions: Readonly<Record<string, string>>;
+}) {
   const unknownOption = Object.keys(rawDriverOptions).find(
     (optionName) => !supportedClaudeAgentSdkOptionNames.has(optionName),
   );
@@ -359,13 +389,19 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
     value: rawDriverOptions.include_partial_messages,
   });
   const tools = yield* parseToolsOption(rawDriverOptions.tools);
+  const additionalDirectories = yield* parseClaudeAdditionalDirectoriesOption({
+    processEnvironment,
+    value: rawDriverOptions.additional_directories,
+  });
   const allowedTools = yield* parseToolListOption({
     name: "allowed_tools",
+    processEnvironment,
     value: rawDriverOptions.allowed_tools,
     rejectReservedTool: true,
   });
   const disallowedTools = yield* parseToolListOption({
     name: "disallowed_tools",
+    processEnvironment,
     value: rawDriverOptions.disallowed_tools,
     rejectReservedTool: false,
   });
@@ -375,6 +411,7 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* (
     effort,
     maxBudgetUsd,
     tools,
+    additionalDirectories,
     allowedTools,
     disallowedTools,
     includePartialMessages,
@@ -402,7 +439,10 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   readonly rawDriverOptions: Readonly<Record<string, string>>;
   readonly startup: ClaudeAgentSdkSessionStartup;
 }) {
-  const driverOptions = yield* parseClaudeAgentSdkDriverOptions(rawDriverOptions);
+  const driverOptions = yield* parseClaudeAgentSdkDriverOptions({
+    processEnvironment,
+    rawDriverOptions,
+  });
   yield* validateDangerousPermissionBypass({
     caaraSettings,
     permissionMode: driverOptions.permissionMode,
@@ -426,6 +466,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     ...effortQueryOptions(effort),
     ...maxBudgetUsdQueryOptions(driverOptions.maxBudgetUsd),
     ...toolsQueryOptions(driverOptions.tools),
+    ...additionalDirectoriesQueryOptions(driverOptions.additionalDirectories),
     ...allowedToolsQueryOptions(driverOptions.allowedTools),
     ...disallowedToolsQueryOptions(driverOptions.disallowedTools),
     ...pathToClaudeCodeExecutableQueryOptions(pathToClaudeCodeExecutable),

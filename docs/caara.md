@@ -426,6 +426,7 @@ Driver options accepted from provider query parameters:
 - `effort`
 - `max_budget_usd`
 - `tools`
+- `additional_directories`
 - `allowed_tools`
 - `disallowed_tools`
 - `include_partial_messages`
@@ -763,6 +764,13 @@ Use `query_params.effort` for an explicit Claude effort override. It wins over C
 `reasoning.effort`, and it is the only way to request Claude-only `max`.
 Use `query_params.permission_mode = "bypassPermissions"` only when Caara was started with
 `--allow-dangerous-skip-permissions`.
+Use `query_params.additional_directories` to pass a comma-delimited list of absolute extra
+directories to Claude Code. In `additional_directories`, `allowed_tools`, and `disallowed_tools`,
+Caara expands only `$TMPDIR` and `${TMPDIR}`. Missing, empty, or relative `TMPDIR` fails
+explicitly, and other shell-style placeholders such as `$HOME` fail explicitly. For Claude
+permission rules, Caara expands TMPDIR only inside `Tool(...)` rule specifiers and converts absolute
+filesystem rules to Claude's double-slash form, for example
+`Edit($TMPDIR/caara-panel/smoke/**)` becomes `Edit(//var/.../T/caara-panel/smoke/**)`.
 
 Example with Antigravity options:
 
