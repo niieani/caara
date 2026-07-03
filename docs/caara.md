@@ -612,7 +612,7 @@ lost context and restate the question.
 Recovery message:
 
 ```text
-I couldn't resume the previous external agent session, so I lost the prior context of this subagent conversation. Please send me the relevant past context and restate the question.
+I lost the external agent session context. Remind me, what did we discuss prior to this message, restate any relevant context and your request.
 ```
 
 This is a normal agent reply, not a transport error. Caara does not silently continue as if old

@@ -748,20 +748,36 @@ describe("Antigravity CLI driver", () => {
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
       const relayEvents: Array<RelayLogEvent> = [];
-      const result = yield* runTurn({
-        ...fixture,
-        fakeAgyPath: path.join(fixture.fakeAgyPath, "missing"),
-        fakeMode: "success",
-        relayEvents,
-      });
-
-      assert.deepStrictEqual(result, { _tag: "StreamFailure", status: 200 });
-      assert.ok(
-        turnFailedMessages(relayEvents).some((message) =>
-          message.includes("Antigravity CLI failed to start"),
+      const missingExecutablePath = path.join(fixture.fakeAgyPath, "missing");
+      const failed = yield* executeTurnRawFrames({
+        turnId: "turn-antigravity-missing-executable",
+      }).pipe(
+        Effect.provide(
+          providerLayer({
+            ...fixture,
+            fakeAgyPath: missingExecutablePath,
+            fakeMode: "success",
+            relayEvents,
+          }),
         ),
-        String(turnFailedMessages(relayEvents)),
       );
+
+      assert.strictEqual(failed.status, 200);
+      assert.strictEqual(failed.contentType, "text/event-stream");
+      assert.deepStrictEqual(frameEventNames(failed.frames), [
+        "response.created",
+        "response.failed",
+      ]);
+      assert.strictEqual(failedErrorCodeFromResponseFrames(failed.frames), "invalid_prompt");
+      assert.strictEqual(
+        failedErrorMessageFromResponseFrames(failed.frames),
+        `Caara driver failed: Antigravity CLI failed to start: command ${missingExecutablePath} is not available.`,
+      );
+      assert.deepStrictEqual(assistantMessageDoneFrames(failed.frames), []);
+      assert.strictEqual(frameEventNames(failed.frames).includes("response.completed"), false);
+      assert.deepStrictEqual(turnFailedMessages(relayEvents), [
+        `Antigravity CLI failed to start: command ${missingExecutablePath} is not available.`,
+      ]);
     }),
   );
 });

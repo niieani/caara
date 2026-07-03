@@ -5,6 +5,7 @@ import type * as Path from "effect/Path";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  createInvalidPromptAgentDriverError,
   createServerErrorAgentDriverError,
   type AgentDriverError,
   type AgentDriverTurn,
@@ -152,7 +153,7 @@ const ensureAntigravityCommandAvailable = Effect.fnUntraced(function* ({
   return yield* Option.match(Option.fromUndefinedOr(executable), {
     onNone: () =>
       Effect.fail(
-        createServerErrorAgentDriverError({
+        createInvalidPromptAgentDriverError({
           message: `Antigravity CLI failed to start: command ${settings.command} is not available.`,
         }),
       ),

@@ -273,7 +273,10 @@ describe("Claude Agent SDK lost-session recovery", () => {
         const layer = fakeRecoveryLayer({
           recordedRequests,
           outcomes: [
-            new ClaudeAgentSdkClientError({ message: "rejected stale session" }),
+            new ClaudeAgentSdkClientError({
+              message:
+                "No conversation found with session ID: 00000000-0000-4000-8000-000000000501",
+            }),
             fakeRuntime([]),
           ],
           sessionIds: ["00000000-0000-4000-8000-000000000502"],
@@ -289,7 +292,7 @@ describe("Claude Agent SDK lost-session recovery", () => {
         assert.deepStrictEqual(result.lostSessionRecovery, {
           reason: "sdk-resume-query-failed",
           diagnostics: {
-            message: "rejected stale session",
+            message: "No conversation found with session ID: 00000000-0000-4000-8000-000000000501",
             previousCursor: "00000000-0000-4000-8000-000000000501",
           },
         });

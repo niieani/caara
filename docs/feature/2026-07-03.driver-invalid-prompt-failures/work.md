@@ -40,3 +40,8 @@
 - Focused tests while implementing each slice.
 - Required child gate: `bun lint`; `bun run test --run`; `bun run fmt`.
 - Final PRD review by independent subagent before parent closeout.
+- Review remediation:
+  - Claude resume continuity text `No conversation found with session ID: ...` remains recoverable
+    `server_error`; generic SDK `not found` no longer means `invalid_prompt`.
+  - Missing Antigravity executable streams accepted `response.failed` with `invalid_prompt`.
+  - Recovery-message docs match `lostSessionRecoveryAssistantText`.

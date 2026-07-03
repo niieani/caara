@@ -83,8 +83,8 @@ export const claudeAgentSdkSessionIdGeneratorLive = Layer.effect(
 
 /** Returns true when an SDK client failure is actionable for the spawning agent or role author. */
 const isActionableClaudeSdkClientError = (message: string): boolean =>
-  [/native CLI binary/i, /unsupported/i, /invalid/i, /not found/i, /not available/i].some(
-    (pattern) => pattern.test(message),
+  [/native CLI binary/i, /unsupported/i, /invalid/i, /not available/i].some((pattern) =>
+    pattern.test(message),
   );
 
 /** Maps SDK client construction errors into driver-facing failures. */
