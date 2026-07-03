@@ -5,12 +5,17 @@ import path from "node:path";
 import { Console, Effect, Match, Option } from "effect";
 
 import { pathEntriesFromValue } from "./caaraExecutionPath.ts";
+import type { CaaraConfigLoader } from "./caaraSettings.ts";
 import {
   safeCodexRoleDriverCatalogs,
   type CaaraCodexRoleDefinition,
   type CaaraCodexRoleDriverCatalog,
 } from "./codexRoleCatalog.ts";
 import { caaraCodexRoleInstallerError } from "./codexRoleInstallerError.ts";
+import {
+  parseInstallCodexRolesOptions,
+  yoloValidationFailure,
+} from "./codexRoleInstallerOptions.ts";
 import {
   firstCollision,
   preflightRoleWrites,
@@ -25,7 +30,9 @@ import {
 export { CaaraCodexRoleInstallerError } from "./codexRoleInstallerError.ts";
 
 /** Environment fields consumed by standalone Codex role installation. */
-export interface CaaraCodexRoleInstallerEnvironment {
+export interface CaaraCodexRoleInstallerEnvironment extends Readonly<
+  Record<string, string | undefined>
+> {
   readonly CODEX_HOME?: string | undefined;
   readonly HOME?: string | undefined;
   readonly PATH?: string | undefined;
@@ -50,6 +57,7 @@ export interface CaaraCodexRoleInstallResult {
 /** Options accepted by in-process Codex role installation. */
 export interface RunCaaraInstallCodexRolesOptions {
   readonly args: readonly string[];
+  readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraCodexRoleInstallerEnvironment;
 }
 
@@ -276,11 +284,13 @@ const successfulInstallResult = Effect.fnUntraced(function* ({
   roles,
   targetDirectory,
   writePlans,
+  yolo,
 }: {
   readonly detected: readonly DetectedRoleDriver[];
   readonly roles: readonly CaaraCodexRoleDefinition[];
   readonly targetDirectory: string;
   readonly writePlans: readonly RoleWritePlan[];
+  readonly yolo: boolean;
 }) {
   yield* removeStaleMarkedRoles({ roles, targetDirectory });
   const writtenFiles = yield* Effect.forEach(
@@ -290,6 +300,7 @@ const successfulInstallResult = Effect.fnUntraced(function* ({
         queryParams: plan.queryParams,
         role: plan.role,
         targetDirectory,
+        yolo,
       }),
     { concurrency: 1 },
   );
@@ -314,12 +325,14 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
   roles,
   targetDirectory,
   writePlans,
+  yolo,
 }: {
   readonly collision: RoleCollisionPlan | undefined;
   readonly detected: readonly DetectedRoleDriver[];
   readonly roles: readonly CaaraCodexRoleDefinition[];
   readonly targetDirectory: string;
   readonly writePlans: readonly RoleWritePlan[];
+  readonly yolo: boolean;
 }) {
   return yield* Match.value(collision).pipe(
     Match.when(undefined, () =>
@@ -328,6 +341,7 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
         roles,
         targetDirectory,
         writePlans,
+        yolo,
       }),
     ),
     Match.orElse(({ filePath }) =>
@@ -343,42 +357,50 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
 /** Runs `caara install-codex-roles` without terminating the host process. */
 export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
   args,
+  configLoader,
   env = processCodexRoleInstallerEnvironment(),
 }: RunCaaraInstallCodexRolesOptions) {
-  const targetDirectory = targetDirectoryFromArgs({ args, env });
-  return yield* Option.match(Option.fromUndefinedOr(targetDirectory), {
+  const options = parseInstallCodexRolesOptions({ args });
+  const validationFailure = yield* yoloValidationFailure({ configLoader, env, options });
+  const targetDirectory = targetDirectoryFromArgs({ args: options.targetArgs, env });
+  return yield* Option.match(Option.fromUndefinedOr(validationFailure), {
     onNone: () =>
-      Effect.succeed(
-        invalidInstallResult({
-          message:
-            "caara install-codex-roles requires zero arguments or one target directory, and HOME or CODEX_HOME must be set.",
-        }),
-      ),
-    onSome: (resolvedTargetDirectory) =>
-      Effect.gen(function* () {
-        yield* Effect.tryPromise({
-          try: () => fs.mkdir(resolvedTargetDirectory, { recursive: true }),
-          catch: (cause) =>
-            caaraCodexRoleInstallerError(
-              `Failed to create Codex roles directory ${resolvedTargetDirectory}: ${String(cause)}`,
-            ),
-        });
-        const detected = yield* detectRoleDrivers({ env });
-        const roles = rolesFromAvailableDrivers(detected);
-        const preflightPlans = yield* preflightRoleWrites({
-          roles,
-          targetDirectory: resolvedTargetDirectory,
-        });
-        const collision = firstCollision({ plans: preflightPlans });
-        const writePlans = writePlansFromPreflight({ plans: preflightPlans });
-        return yield* installResultFromPreflight({
-          collision,
-          detected,
-          roles,
-          targetDirectory: resolvedTargetDirectory,
-          writePlans,
-        });
+      Option.match(Option.fromUndefinedOr(targetDirectory), {
+        onNone: () =>
+          Effect.succeed(
+            invalidInstallResult({
+              message:
+                "caara install-codex-roles requires zero arguments or one target directory, and HOME or CODEX_HOME must be set.",
+            }),
+          ),
+        onSome: (resolvedTargetDirectory) =>
+          Effect.gen(function* () {
+            yield* Effect.tryPromise({
+              try: () => fs.mkdir(resolvedTargetDirectory, { recursive: true }),
+              catch: (cause) =>
+                caaraCodexRoleInstallerError(
+                  `Failed to create Codex roles directory ${resolvedTargetDirectory}: ${String(cause)}`,
+                ),
+            });
+            const detected = yield* detectRoleDrivers({ env });
+            const roles = rolesFromAvailableDrivers(detected);
+            const preflightPlans = yield* preflightRoleWrites({
+              roles,
+              targetDirectory: resolvedTargetDirectory,
+            });
+            const collision = firstCollision({ plans: preflightPlans });
+            const writePlans = writePlansFromPreflight({ plans: preflightPlans });
+            return yield* installResultFromPreflight({
+              collision,
+              detected,
+              roles,
+              targetDirectory: resolvedTargetDirectory,
+              writePlans,
+              yolo: options.yolo,
+            });
+          }),
       }),
+    onSome: (message) => Effect.succeed(invalidInstallResult({ message })),
   });
 });
 

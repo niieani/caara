@@ -168,9 +168,11 @@ const runCaaraInstallServiceNoStartWithRoles = Effect.fnUntraced(function* ({
   });
   const roleMessage = yield* installServiceCodexRoles({
     codexRoles,
+    configPath: outcome.resolution.configPath,
     env,
     settings: outcome.resolution.settings,
     skip: options.noInstallCodexRoles,
+    yolo: options.yolo,
   });
   return serviceResultWithCodexRoleMessage({ result: outcome.result, roleMessage });
 });

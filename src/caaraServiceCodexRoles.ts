@@ -69,17 +69,30 @@ export const serviceSettingsWithPathEntries = ({
   path: [...settings.path, ...appendedPathEntries],
 });
 
+/** Builds role installer args for service-driven role installation. */
+const installCodexRoleArgs = ({
+  configPath,
+  yolo,
+}: {
+  readonly configPath: string;
+  readonly yolo: boolean;
+}): readonly string[] => ["--yolo", "--config", configPath].filter(() => yolo);
+
 /** Installs generated Codex roles with the installed service execution path. */
 export const installServiceCodexRoles = Effect.fnUntraced(function* ({
   codexRoles,
+  configPath,
   env,
   settings,
   skip,
+  yolo,
 }: {
   readonly codexRoles: CaaraServiceCodexRoles;
+  readonly configPath: string;
   readonly env: CaaraServiceLifecycleEnvironment;
   readonly settings: CaaraSettingsValue;
   readonly skip: boolean;
+  readonly yolo: boolean;
 }) {
   const roleMessages = yield* Effect.forEach(
     [settings].filter(() => !skip),
@@ -90,7 +103,7 @@ export const installServiceCodexRoles = Effect.fnUntraced(function* ({
           settings: serviceSettings,
         });
         const result = yield* codexRoles.install({
-          args: [],
+          args: installCodexRoleArgs({ configPath, yolo }),
           env: codexRoleEnvironment({ env, pathValue: servicePath }),
         });
         return result.message;

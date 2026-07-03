@@ -33,6 +33,7 @@ export interface InstallServiceOptions {
   readonly noStart: boolean;
   readonly settingsArgs: readonly string[];
   readonly updatesConfig: boolean;
+  readonly yolo: boolean;
 }
 
 /** Result of writing service artifacts without starting the service. */
@@ -66,7 +67,26 @@ const isConfigUpdateArg = (arg: string): boolean =>
 
 /** Returns true when one arg is consumed by service lifecycle rather than settings. */
 const isInstallLifecycleArg = (arg: string): boolean =>
-  new Set(["--no-install-codex-roles", "--no-start"]).has(arg);
+  new Set(["--no-install-codex-roles", "--no-start", "--yolo"]).has(arg);
+
+/** Returns settings args with yolo translated into the service dangerous gate. */
+const settingsArgsWithYolo = ({
+  args,
+}: {
+  readonly args: readonly string[];
+}): readonly string[] => {
+  const yolo = args.includes("--yolo");
+  const filteredArgs = args
+    .filter((arg) => !isInstallLifecycleArg(arg))
+    .filter(
+      (arg) =>
+        !new Set([
+          "--allow-dangerous-skip-permissions",
+          "--no-allow-dangerous-skip-permissions",
+        ]).has(arg),
+    );
+  return [...filteredArgs, ...["--allow-dangerous-skip-permissions"].filter(() => yolo)];
+};
 
 /** Parses install-service args and strips lifecycle-only flags from settings args. */
 export const parseInstallServiceOptions = ({
@@ -74,12 +94,13 @@ export const parseInstallServiceOptions = ({
 }: {
   readonly args: readonly string[];
 }): InstallServiceOptions => {
-  const settingsArgs = args.filter((arg) => !isInstallLifecycleArg(arg));
+  const settingsArgs = settingsArgsWithYolo({ args });
   return {
     noInstallCodexRoles: args.includes("--no-install-codex-roles"),
     noStart: args.includes("--no-start"),
     settingsArgs,
     updatesConfig: settingsArgs.some(isConfigUpdateArg),
+    yolo: args.includes("--yolo"),
   };
 };
 

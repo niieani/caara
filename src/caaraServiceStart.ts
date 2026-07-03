@@ -189,12 +189,14 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
   const doctorResult = yield* doctor.fix(serviceDoctorOptions({ configLoader, env, options }));
   const roleMessage = yield* installServiceCodexRoles({
     codexRoles,
+    configPath: installOutcome.resolution.configPath,
     env,
     settings: serviceSettingsWithPathEntries({
       appendedPathEntries: doctorResult.appendedPathEntries,
       settings: installOutcome.resolution.settings,
     }),
     skip: options.noInstallCodexRoles,
+    yolo: options.yolo,
   });
   const installResult = serviceResultWithCodexRoleMessage({
     result: installOutcome.result,

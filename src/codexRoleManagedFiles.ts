@@ -28,9 +28,80 @@ export interface RoleCollisionPlan {
 /** Managed role file write or refusal decision. */
 export type RolePreflightPlan = RoleWritePlan | RoleCollisionPlan;
 
+/** Driver family inferred from one generated role model slug. */
+type RoleDriverFamily = "Antigravity" | "Claude" | "Unknown";
+
 /** Builds the managed Codex role filename for one definition. */
 const roleFilename = ({ role }: { readonly role: CaaraCodexRoleDefinition }): string =>
   `${role.name}.toml`;
+
+/** Infers the driver family from one generated role model slug. */
+const roleDriverFamily = ({
+  role,
+}: {
+  readonly role: CaaraCodexRoleDefinition;
+}): RoleDriverFamily =>
+  Match.value(role.model.split("/").at(0)).pipe(
+    Match.when("agy", () => "Antigravity" as const),
+    Match.when("claude", () => "Claude" as const),
+    Match.orElse(() => "Unknown" as const),
+  );
+
+/** Lists query param keys owned by yolo permission posture for one role. */
+const yoloOwnedQueryParamKeys = ({
+  role,
+}: {
+  readonly role: CaaraCodexRoleDefinition;
+}): readonly string[] =>
+  Match.value(roleDriverFamily({ role })).pipe(
+    Match.when("Antigravity", () => ["dangerously_skip_permissions"] as const),
+    Match.when("Claude", () => ["permission_mode"] as const),
+    Match.orElse(() => [] as readonly string[]),
+  );
+
+/** Builds yolo query params for one generated role. */
+const yoloQueryParams = ({
+  role,
+  yolo,
+}: {
+  readonly role: CaaraCodexRoleDefinition;
+  readonly yolo: boolean;
+}): CodexRoleQueryParams =>
+  Match.value({ driver: roleDriverFamily({ role }), yolo }).pipe(
+    Match.when({ driver: "Antigravity", yolo: true }, () => ({
+      dangerously_skip_permissions: "true",
+    })),
+    Match.when({ driver: "Claude", yolo: true }, () => ({
+      permission_mode: "bypassPermissions",
+    })),
+    Match.orElse(() => ({})),
+  );
+
+/** Removes query params owned by the generated role permission posture. */
+const withoutYoloOwnedQueryParams = ({
+  queryParams,
+  role,
+}: {
+  readonly queryParams: CodexRoleQueryParams;
+  readonly role: CaaraCodexRoleDefinition;
+}): CodexRoleQueryParams =>
+  Object.fromEntries(
+    Object.entries(queryParams).filter(([key]) => !yoloOwnedQueryParamKeys({ role }).includes(key)),
+  );
+
+/** Applies the selected generated role permission posture to preserved query params. */
+const queryParamsForRoleMode = ({
+  queryParams,
+  role,
+  yolo,
+}: {
+  readonly queryParams: CodexRoleQueryParams;
+  readonly role: CaaraCodexRoleDefinition;
+  readonly yolo: boolean;
+}): CodexRoleQueryParams => ({
+  ...withoutYoloOwnedQueryParams({ queryParams, role }),
+  ...yoloQueryParams({ role, yolo }),
+});
 
 /** Builds the managed Codex role path for one target directory. */
 const roleFilePath = ({
@@ -282,14 +353,24 @@ export const writeRoleFile = Effect.fnUntraced(function* ({
   queryParams,
   role,
   targetDirectory,
+  yolo,
 }: {
   readonly queryParams: CodexRoleQueryParams;
   readonly role: CaaraCodexRoleDefinition;
   readonly targetDirectory: string;
+  readonly yolo: boolean;
 }) {
   const filePath = roleFilePath({ role, targetDirectory });
   yield* Effect.tryPromise({
-    try: () => fs.writeFile(filePath, renderCodexRoleToml({ queryParams, role }), "utf8"),
+    try: () =>
+      fs.writeFile(
+        filePath,
+        renderCodexRoleToml({
+          queryParams: queryParamsForRoleMode({ queryParams, role, yolo }),
+          role,
+        }),
+        "utf8",
+      ),
     catch: (cause) =>
       caaraCodexRoleInstallerError(
         `Failed to write generated Codex role ${filePath}: ${String(cause)}`,

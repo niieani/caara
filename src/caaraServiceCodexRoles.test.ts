@@ -260,4 +260,42 @@ describe("Caara service Codex role lifecycle", () => {
       assert.match(result.message, /removed test Codex roles/u);
     }),
   );
+
+  it.effect("install-service --yolo enables the dangerous gate and requests yolo roles", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const events: string[] = [];
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start", "--yolo"],
+        codexRoles: {
+          ...recordingCodexRoles({ events }),
+          install: Effect.fnUntraced(function* ({ args, env: roleEnv }) {
+            events.push(`install-args:${args.join(" ")}`);
+            events.push(`install:${roleEnv?.PATH ?? ""}`);
+            yield* Effect.void;
+            return {
+              exitCode: 0,
+              message: "installed yolo Codex roles",
+              skippedDrivers: [],
+              targetDirectory: path.join(roleEnv?.HOME ?? "", ".codex", "agents"),
+              writtenFiles: [],
+            };
+          }),
+        },
+        env,
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+      });
+      const config = yield* Effect.tryPromise(() => fs.readFile(configPath, "utf8"));
+
+      assert.strictEqual(result.exitCode, 0);
+      assert.match(config, /allowDangerousSkipPermissions: true/u);
+      assert.ok(events.includes(`install-args:--yolo --config ${configPath}`));
+    }),
+  );
 });
