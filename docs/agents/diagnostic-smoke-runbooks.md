@@ -40,6 +40,7 @@ For Codex subagent path smokes, use one of the checked-in Diagnostic roles:
 - `caara-diagnostic-activity`
 - `caara-diagnostic-fails-before-output`
 - `caara-diagnostic-fails-after-partial`
+- `caara-diagnostic-fails-invalid-request`
 - `caara-diagnostic-hangs-until-cancel`
 - `caara-diagnostic-recovery`
 - `caara-diagnostic-echo`

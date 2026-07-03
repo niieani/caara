@@ -9,6 +9,7 @@ export const diagnosticDriverFixture = {
   startFailureMessage: "diagnostic driver failed before runtime events",
   runtimeFailureBeforeOutputMessage: "diagnostic driver runtime failed before output",
   runtimeFailureAfterPartialMessage: "diagnostic driver runtime failed after partial output",
+  invalidRequestFailureMessage: "diagnostic driver failed with invalid request semantics",
   unrecoverableSessionFailureMessage:
     "diagnostic driver could not resume prior session or start a fresh external session",
   reasoningItemId: "diagnostic-reasoning",

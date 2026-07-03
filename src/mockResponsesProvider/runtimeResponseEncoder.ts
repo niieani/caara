@@ -439,8 +439,16 @@ const turnFailedToSseEvents = ({
       sequenceNumber: state.sequenceNumber + 1,
       terminal: "failed",
       failureMessage: error.message,
+      failureResponseErrorCode: error.responseErrorCode ?? "server_error",
     },
-    [failedEventFromState({ request, state, failureMessage: error.message })],
+    [
+      failedEventFromState({
+        request,
+        state,
+        failureMessage: error.message,
+        failureResponseErrorCode: error.responseErrorCode ?? "server_error",
+      }),
+    ],
   ] as const;
 
 /** Converts one runtime lifecycle event plus encoder state into SSE frames and next state. */
@@ -488,12 +496,14 @@ export const runtimeTransportEventToSseEvents = ({
           sequenceNumber: state.sequenceNumber + 1,
           terminal: "failed",
           failureMessage: transportEvent.error.message,
+          failureResponseErrorCode: transportEvent.error.responseErrorCode ?? "server_error",
         },
         [
           failedEventFromState({
             request,
             state,
             failureMessage: transportEvent.error.message,
+            failureResponseErrorCode: transportEvent.error.responseErrorCode ?? "server_error",
           }),
         ],
       ] as const,
@@ -515,6 +525,7 @@ export const terminalEventsFromState = ({
         request,
         state,
         failureMessage: state.failureMessage ?? missingRuntimeTerminalFailureMessage(),
+        failureResponseErrorCode: state.failureResponseErrorCode ?? "server_error",
       }),
     ]),
   );

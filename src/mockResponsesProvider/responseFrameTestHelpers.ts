@@ -18,6 +18,7 @@ const FailedResponseData = Schema.Struct({
   response: Schema.Struct({
     status: Schema.Literal("failed"),
     error: Schema.Struct({
+      code: Schema.String,
       message: Schema.String,
     }),
   }),
@@ -54,4 +55,13 @@ export const failedErrorMessageFromResponseFrames = (
   const failed = frames.find((frame) => frame.event === "response.failed");
   assert.ok(failed, "missing response.failed event");
   return Schema.decodeUnknownSync(FailedResponseData)(failed.data).response.error.message;
+};
+
+/** Extracts the failed Responses error code from decoded Responses SSE frames. */
+export const failedErrorCodeFromResponseFrames = (
+  frames: readonly ResponseFrameWithData[],
+): string => {
+  const failed = frames.find((frame) => frame.event === "response.failed");
+  assert.ok(failed, "missing response.failed event");
+  return Schema.decodeUnknownSync(FailedResponseData)(failed.data).response.error.code;
 };

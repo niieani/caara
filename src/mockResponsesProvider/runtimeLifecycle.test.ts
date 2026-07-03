@@ -3,7 +3,10 @@ import { assert, describe, it } from "@effect/vitest";
 import { AgentDriverError, type AgentRuntimeEvent } from "./agentDriver.ts";
 import type { ResponsesCreateRequest } from "./protocol.ts";
 import { createResponseEventsFromRuntimeEvents } from "./responseEvents.ts";
-import { failedErrorMessageFromResponseFrames } from "./responseFrameTestHelpers.ts";
+import {
+  failedErrorCodeFromResponseFrames,
+  failedErrorMessageFromResponseFrames,
+} from "./responseFrameTestHelpers.ts";
 
 /** Stable Responses request used by runtime lifecycle encoder tests. */
 const request = {
@@ -221,6 +224,28 @@ describe("runtime lifecycle events", () => {
     assert.strictEqual(
       failedErrorMessageFromResponseFrames(events),
       "Caara driver failed: runtime failed before output",
+    );
+  });
+
+  it("encodes fatal invalid request driver failures with Codex-compatible error code", () => {
+    const events = createResponseEventsFromRuntimeEvents({
+      request,
+      runtimeEvents: [
+        {
+          _tag: "TurnFailed",
+          error: new AgentDriverError({
+            message: "runtime invalid request",
+            responseErrorCode: "invalid_prompt",
+          }),
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(eventNames(events), ["response.created", "response.failed"]);
+    assert.strictEqual(failedErrorCodeFromResponseFrames(events), "invalid_prompt");
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(events),
+      "Caara driver failed: runtime invalid request",
     );
   });
 });

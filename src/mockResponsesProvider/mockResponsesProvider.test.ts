@@ -18,6 +18,7 @@ import {
   type ResponsesRequestDiagnostics,
 } from "./requestDiagnosticsLogger.ts";
 import {
+  failedErrorCodeFromResponseFrames,
   failedErrorMessageFromResponseFrames,
   isAssistantMessageDoneData,
 } from "./responseFrameTestHelpers.ts";
@@ -521,6 +522,48 @@ function logsDiagnosticDriverFailures() {
   );
 }
 
+/** Test program proving Diagnostic invalid-request failures use a fatal Codex-compatible code. */
+function streamsDiagnosticInvalidRequestFailure() {
+  const loggedInputs: Array<Schema.Json> = [];
+  const loggedDiagnostics: Array<ResponsesRequestDiagnostics> = [];
+  const relayEvents: Array<RelayLogEvent> = [];
+  const stateDir = path.join(projectRoot, "temp.local", `mock-provider-${randomUUID()}`);
+
+  return Effect.gen(function* () {
+    const request = setCodexHeaders({
+      request: yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/v1/responses"), {
+        ...requestBody,
+        model: "diagnostic/fails-invalid-request",
+      }),
+    });
+    const response = yield* HttpClient.execute(request);
+    const frames = yield* decodeRawResponseSseFrames(response.stream);
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(frameEventNames(frames), ["response.created", "response.failed"]);
+    assert.strictEqual(failedErrorCodeFromResponseFrames(frames), "invalid_prompt");
+    assert.strictEqual(
+      failedErrorMessageFromResponseFrames(frames),
+      `Caara driver failed: ${diagnosticDriverFixture.invalidRequestFailureMessage}`,
+    );
+    assert.deepStrictEqual(
+      relayEvents.map((event) => event._tag),
+      [
+        "TurnAccepted",
+        "TargetSelected",
+        "TurnInFlightAcquired",
+        "DriverStarted",
+        "RuntimeEventRelayed",
+        "TurnFailed",
+      ],
+    );
+    assert.deepStrictEqual(loggedInputs, [requestBody.input]);
+    assert.strictEqual(loggedDiagnostics.length, 1);
+  }).pipe(
+    Effect.provide(makeProviderTestLayer(loggedInputs, loggedDiagnostics, relayEvents, stateDir)),
+  );
+}
+
 describe("mock Responses provider", () => {
   it.effect(
     "streams fake reasoning and final answer while logging input",
@@ -587,5 +630,9 @@ describe("mock Responses provider", () => {
 
   it.effect("streams accepted Diagnostic driver failures as response.failed", () =>
     logsDiagnosticDriverFailures(),
+  );
+
+  it.effect("streams Diagnostic invalid-request failures with a fatal response code", () =>
+    streamsDiagnosticInvalidRequestFailure(),
   );
 });

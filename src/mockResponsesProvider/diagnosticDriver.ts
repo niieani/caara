@@ -306,6 +306,21 @@ const diagnosticPartialRuntimeFailureStream = (): Stream.Stream<
     Stream.fail(diagnosticRuntimeFailureError("fails-after-partial")),
   );
 
+/** Builds a Diagnostic terminal failure Codex should classify as a fatal invalid request. */
+const diagnosticInvalidRequestFailureStream = (): Stream.Stream<
+  AgentRuntimeEvent,
+  AgentDriverError
+> =>
+  Stream.fromIterable([
+    {
+      _tag: "TurnFailed",
+      error: new AgentDriverError({
+        message: diagnosticDriverFixture.invalidRequestFailureMessage,
+        responseErrorCode: "invalid_prompt",
+      }),
+    },
+  ]);
+
 /** Builds the diagnostic/basic turn result for first-turn and successful resume paths. */
 const diagnosticBasicTurnResult = Effect.fnUntraced(function* (turn: AgentDriverTurn) {
   const options = yield* parseDiagnosticBasicOptions(turn.target.rawDriverOptions);
@@ -406,6 +421,12 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
       diagnosticScenarioTurnResult({
         turn,
         runtimeEvents: diagnosticPartialRuntimeFailureStream(),
+      }),
+    ),
+    Match.when("fails-invalid-request", () =>
+      diagnosticScenarioTurnResult({
+        turn,
+        runtimeEvents: diagnosticInvalidRequestFailureStream(),
       }),
     ),
     Match.when("hangs-until-cancel", () =>

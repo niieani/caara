@@ -121,6 +121,9 @@ export interface AgentRuntimeFailed {
 /** Terminal runtime outcome contract shared by driver and transport layers. */
 export type AgentRuntimeTerminalOutcome = AgentRuntimeSucceeded | AgentRuntimeFailed;
 
+/** Responses error codes Caara may attach to driver-owned terminal failures. */
+export type AgentDriverResponseErrorCode = "server_error" | "invalid_prompt";
+
 /** Cancellation outcome for a turn interrupted before hidden session mutation. */
 export interface AgentCancellationInterrupted {
   readonly _tag: "Interrupted";
@@ -168,6 +171,7 @@ export class AgentDriverError extends Schema.TaggedErrorClass<AgentDriverError>(
   "AgentDriverError",
   {
     message: Schema.String,
+    responseErrorCode: Schema.optional(Schema.Literals(["server_error", "invalid_prompt"])),
   },
 ) {}
 

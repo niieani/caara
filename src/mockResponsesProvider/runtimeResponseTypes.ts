@@ -1,7 +1,11 @@
 import type * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { Option } from "effect";
 
-import type { AgentRuntimeMessagePhase, AgentRuntimeTransportVisibility } from "./agentDriver.ts";
+import type {
+  AgentDriverResponseErrorCode,
+  AgentRuntimeMessagePhase,
+  AgentRuntimeTransportVisibility,
+} from "./agentDriver.ts";
 import { mockResponsesFixture, type ResponsesCreateRequest } from "./protocol.ts";
 import type { SseEvent } from "./sse.ts";
 
@@ -40,7 +44,7 @@ export type RuntimeOutputItem = RuntimeReasoningItem | RuntimeMessageItem;
 
 /** Minimal failed Responses error object emitted for accepted Caara driver failures. */
 export interface RuntimeResponseError {
-  readonly code: "server_error";
+  readonly code: AgentDriverResponseErrorCode;
   readonly message: string;
 }
 
@@ -65,6 +69,7 @@ export interface RuntimeResponseState {
   readonly items: readonly RuntimeItemState[];
   readonly terminal: RuntimeResponseTerminalState;
   readonly failureMessage: string | undefined;
+  readonly failureResponseErrorCode: AgentDriverResponseErrorCode | undefined;
 }
 
 /** Builds the Codex-visible error text for one accepted driver failure. */
@@ -118,6 +123,7 @@ export const initialRuntimeResponseState = ({
     items: [],
     terminal: "open",
     failureMessage: undefined,
+    failureResponseErrorCode: undefined,
   },
   createdEvent: {
     event: "response.created",
@@ -221,10 +227,12 @@ export const failedEventFromState = ({
   request,
   state,
   failureMessage = state.failureMessage ?? missingRuntimeTerminalFailureMessage(),
+  failureResponseErrorCode = state.failureResponseErrorCode ?? "server_error",
 }: {
   readonly request: ResponsesCreateRequest;
   readonly state: RuntimeResponseState;
   readonly failureMessage?: string;
+  readonly failureResponseErrorCode?: AgentDriverResponseErrorCode;
 }): SseEvent => ({
   event: "response.failed",
   data: {
@@ -234,7 +242,7 @@ export const failedEventFromState = ({
       output: state.output,
       status: "failed",
       error: {
-        code: "server_error",
+        code: failureResponseErrorCode,
         message: caaraDriverFailureMessage({ message: failureMessage }),
       },
     }),
