@@ -8,12 +8,21 @@ const readWorkflow = (): string =>
   fs.readFileSync(path.join(process.cwd(), ".github/workflows/release-publish.yml"), "utf8");
 
 describe("release publish workflow", () => {
-  it("runs from published releases or manual dispatch with write release permissions", () => {
+  it("runs from published releases, Release Please completion, or manual dispatch with write release permissions", () => {
     const workflow = readWorkflow();
 
     assert.match(workflow, /^on:\n(?:.|\n)*release:\n(?:.|\n)*types:\s*\[published\]/mu);
+    assert.match(
+      workflow,
+      /^on:\n(?:.|\n)*workflow_run:\n(?:.|\n)*workflows:\s*\[Release Please\]/mu,
+    );
+    assert.match(workflow, /^on:\n(?:.|\n)*workflow_run:\n(?:.|\n)*types:\s*\[completed\]/mu);
     assert.match(workflow, /^on:\n(?:.|\n)*workflow_dispatch:/mu);
     assert.match(workflow, /permissions:\n\s+contents: write/u);
+    assert.match(workflow, /publish: \$\{\{ steps\.release\.outputs\.publish \}\}/u);
+    assert.match(workflow, /github\.event\.workflow_run\.head_sha/u);
+    assert.match(workflow, /No published release found for Release Please head SHA/u);
+    assert.match(workflow, /if: needs\.resolve-release\.outputs\.publish == 'true'/u);
     assert.match(workflow, /VERSION: \$\{\{ needs\.resolve-release\.outputs\.version \}\}/u);
     assert.match(workflow, /TAG: \$\{\{ needs\.resolve-release\.outputs\.tag \}\}/u);
     assert.match(workflow, /Release tag must start with v/u);
@@ -25,9 +34,12 @@ describe("release publish workflow", () => {
     assert.match(workflow, /1password\/load-secrets-action\/configure@v3/u);
     assert.match(workflow, /1password\/load-secrets-action@v3/u);
     assert.match(workflow, /service-account-token: \$\{\{ secrets\.OP_SERVICE_ACCOUNT_TOKEN \}\}/u);
-    assert.match(workflow, /op:\/\/caara\/apple-developer-id-application/u);
-    assert.match(workflow, /op:\/\/caara\/apple-notary-profile/u);
-    assert.match(workflow, /op:\/\/caara\/homebrew-tap-token/u);
+    assert.match(workflow, /op:\/\/Automation\/Apple Release Signing Developer ID Certificate/u);
+    assert.match(
+      workflow,
+      /op:\/\/Automation\/Apple Developer App Store Connect AuthKey Github Releases/u,
+    );
+    assert.match(workflow, /op:\/\/Automation\/GitHub Token for homebrew-tap/u);
     assert.match(workflow, /security import .*developer-id\.p12/u);
   });
 
@@ -38,7 +50,10 @@ describe("release publish workflow", () => {
     assert.match(workflow, /caara_\$\{VERSION\}_darwin_arm64/u);
     assert.match(workflow, /codesign --force --deep --sign/u);
     assert.match(workflow, /codesign --verify --deep --strict/u);
-    assert.match(workflow, /op read 'op:\/\/caara\/apple-notary-profile\/AuthKey\.p8'/u);
+    assert.match(
+      workflow,
+      /op read 'op:\/\/Automation\/Apple Developer App Store Connect AuthKey Github Releases\/AuthKey\.p8'/u,
+    );
     assert.match(workflow, /ditto -c -k --keepParent/u);
     assert.match(workflow, /xcrun notarytool submit/u);
     assert.match(workflow, /--key-id "\$APPLE_NOTARY_KEY_ID"/u);
