@@ -420,6 +420,7 @@ export const makeAntigravityCliAgentDriver = ({
       caaraSettings,
       externalModelSpecifier: turn.target.externalModelSpecifier,
       rawDriverOptions: turn.target.rawDriverOptions,
+      advisoryEffort: turn.codex.advisoryEffort,
       sandboxPosture: turn.codex.sandboxPosture,
       pathService,
     });

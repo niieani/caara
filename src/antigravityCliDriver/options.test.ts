@@ -3,7 +3,10 @@ import { Effect, Schema } from "effect";
 import * as Path from "effect/Path";
 
 import { defaultCaaraSettingsValue, type CaaraSettingsValue } from "../caaraSettings.ts";
-import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
+import type {
+  CodexAdvisoryEffort,
+  CodexSandboxPosture,
+} from "../mockResponsesProvider/codexTurnContext.ts";
 import { buildAntigravityCliArgv, parseAntigravityCliOptions } from "./options.ts";
 
 /** Caara settings used when explicit skip-permission tests allow dangerous bypass. */
@@ -77,15 +80,102 @@ const invalidOptionCases: readonly InvalidOptionCase[] = [
     rawDriverOptions: { activity: "maybe" },
     expected: "activity must be on or off.",
   },
+  {
+    name: "effort",
+    rawDriverOptions: { effort: "turbo" },
+    expected: "Unsupported Antigravity effort: turbo.",
+  },
+];
+
+/** One Antigravity model-family mapping case visible in the resulting agy argv. */
+interface ModelMappingCase {
+  readonly name: string;
+  readonly externalModelSpecifier: string;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
+  readonly expectedModel: string;
+}
+
+/** Known Antigravity slug mappings and closest-supported effort fallbacks. */
+const modelMappingCases: readonly ModelMappingCase[] = [
+  {
+    name: "Gemini 3.5 Flash low",
+    externalModelSpecifier: "gemini-3.5-flash",
+    advisoryEffort: "low",
+    expectedModel: "Gemini 3.5 Flash (Low)",
+  },
+  {
+    name: "Gemini 3.5 Flash medium",
+    externalModelSpecifier: "gemini-3.5-flash",
+    advisoryEffort: "medium",
+    expectedModel: "Gemini 3.5 Flash (Medium)",
+  },
+  {
+    name: "Gemini 3.5 Flash high",
+    externalModelSpecifier: "gemini-3.5-flash",
+    advisoryEffort: "high",
+    expectedModel: "Gemini 3.5 Flash (High)",
+  },
+  {
+    name: "Gemini 3.5 Flash xhigh closest",
+    externalModelSpecifier: "gemini-3.5-flash",
+    advisoryEffort: "xhigh",
+    expectedModel: "Gemini 3.5 Flash (High)",
+  },
+  {
+    name: "Gemini 3.1 Pro low",
+    externalModelSpecifier: "gemini-3.1-pro",
+    advisoryEffort: "low",
+    expectedModel: "Gemini 3.1 Pro (Low)",
+  },
+  {
+    name: "Gemini 3.1 Pro medium closest",
+    externalModelSpecifier: "gemini-3.1-pro",
+    advisoryEffort: "medium",
+    expectedModel: "Gemini 3.1 Pro (High)",
+  },
+  {
+    name: "Gemini 3.1 Pro xhigh closest",
+    externalModelSpecifier: "gemini-3.1-pro",
+    advisoryEffort: "xhigh",
+    expectedModel: "Gemini 3.1 Pro (High)",
+  },
+  {
+    name: "Claude Sonnet 4.6 thinking",
+    externalModelSpecifier: "claude-sonnet-4.6",
+    advisoryEffort: "low",
+    expectedModel: "Claude Sonnet 4.6 (Thinking)",
+  },
+  {
+    name: "Claude Opus 4.6 thinking",
+    externalModelSpecifier: "claude-opus-4.6",
+    advisoryEffort: "xhigh",
+    expectedModel: "Claude Opus 4.6 (Thinking)",
+  },
+  {
+    name: "GPT-OSS 120B medium",
+    externalModelSpecifier: "gpt-oss-120b",
+    advisoryEffort: "high",
+    expectedModel: "GPT-OSS 120B (Medium)",
+  },
+  {
+    name: "unknown exact pass-through",
+    externalModelSpecifier: "custom-model-exact",
+    advisoryEffort: "xhigh",
+    expectedModel: "custom-model-exact",
+  },
 ];
 
 /** Parses Antigravity options with the default Path service. */
 const parseOptions = ({
+  externalModelSpecifier = "gemini-3.5-flash",
   rawDriverOptions,
+  advisoryEffort,
   sandboxPosture,
   caaraSettings = defaultCaaraSettingsValue,
 }: {
+  readonly externalModelSpecifier?: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
   readonly sandboxPosture?: CodexSandboxPosture;
   readonly caaraSettings?: CaaraSettingsValue;
 }) =>
@@ -93,8 +183,9 @@ const parseOptions = ({
     const pathService = yield* Path.Path;
     return yield* parseAntigravityCliOptions({
       caaraSettings,
-      externalModelSpecifier: "gemini-3.5-flash",
+      externalModelSpecifier,
       rawDriverOptions,
+      advisoryEffort,
       sandboxPosture,
       pathService,
     });
@@ -173,6 +264,46 @@ describe("Antigravity CLI options", () => {
           logFilePath: "/tmp/default.log",
         }).slice(4, 6),
         ["--print-timeout", "86400s"],
+      );
+    }),
+  );
+
+  for (const testCase of modelMappingCases) {
+    it.effect(`maps ${testCase.name} into exact agy --model argv`, () =>
+      Effect.gen(function* () {
+        const options = yield* parseOptions({
+          externalModelSpecifier: testCase.externalModelSpecifier,
+          advisoryEffort: testCase.advisoryEffort,
+          rawDriverOptions: {},
+        });
+
+        assert.deepStrictEqual(
+          buildAntigravityCliArgv({
+            prompt: "turn turn-1",
+            options,
+            logFilePath: "/tmp/default.log",
+          }).slice(2, 4),
+          ["--model", testCase.expectedModel],
+        );
+      }),
+    );
+  }
+
+  it.effect("keeps Antigravity effort query option above Codex advisory effort", () =>
+    Effect.gen(function* () {
+      const options = yield* parseOptions({
+        externalModelSpecifier: "gemini-3.5-flash",
+        advisoryEffort: "high",
+        rawDriverOptions: { effort: "low" },
+      });
+
+      assert.deepStrictEqual(
+        buildAntigravityCliArgv({
+          prompt: "turn turn-1",
+          options,
+          logFilePath: "/tmp/default.log",
+        }).slice(2, 4),
+        ["--model", "Gemini 3.5 Flash (Low)"],
       );
     }),
   );

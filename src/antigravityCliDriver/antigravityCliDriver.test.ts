@@ -10,6 +10,7 @@ import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { CaaraSettings, defaultCaaraSettingsValue } from "../caaraSettings.ts";
+import type { CodexAdvisoryEffort } from "../mockResponsesProvider/codexTurnContext.ts";
 import { InputLogger } from "../mockResponsesProvider/inputLogger.ts";
 import { RelayLogger, type RelayLogEvent } from "../mockResponsesProvider/relayLogger.ts";
 import {
@@ -106,13 +107,19 @@ const makeBody = ({
       content: [{ type: "input_text", text: `turn ${turnId}` }],
     },
   ],
+  advisoryEffort,
 }: {
   readonly turnId: string;
   readonly input?: Schema.Json;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
 }): Schema.Json => ({
   model: "agy/gemini-3.5-flash",
   input,
   stream: true,
+  ...Match.value(advisoryEffort).pipe(
+    Match.when(undefined, () => ({})),
+    Match.orElse((effort) => ({ reasoning: { effort } })),
+  ),
   client_metadata: {
     thread_id: "codex-thread-agy",
     turn_id: turnId,
@@ -313,16 +320,18 @@ const executeTurnRequest = Effect.fnUntraced(function* ({
   turnId,
   queryString,
   input,
+  advisoryEffort,
 }: {
   readonly turnId: string;
   readonly queryString?: string;
   readonly input?: Schema.Json;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
 }) {
   const url = `/v1/responses${queryString ?? ""}`;
   const request = setHeaders({
     request: yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post(url),
-      makeBody({ turnId, input }),
+      makeBody({ turnId, input, advisoryEffort }),
     ),
     headers: makeHeaders({ turnId }),
   });
@@ -334,12 +343,14 @@ const executeTurnRawFrames = Effect.fnUntraced(function* ({
   turnId,
   queryString,
   input,
+  advisoryEffort,
 }: {
   readonly turnId: string;
   readonly queryString?: string;
   readonly input?: Schema.Json;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
 }) {
-  const response = yield* executeTurnRequest({ turnId, queryString, input });
+  const response = yield* executeTurnRequest({ turnId, queryString, input, advisoryEffort });
   const frames = yield* decodeUnknownResponseSseFrames(response.stream);
   return {
     frames,
@@ -357,6 +368,7 @@ const runTurn = ({
   fakeMode,
   queryString,
   input,
+  advisoryEffort,
   relayEvents,
 }: {
   readonly stateDir: string;
@@ -366,10 +378,16 @@ const runTurn = ({
   readonly fakeMode: string;
   readonly queryString?: string;
   readonly input?: Schema.Json;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
   readonly relayEvents: Array<RelayLogEvent>;
 }) =>
   Effect.gen(function* () {
-    const response = yield* executeTurnRequest({ turnId: "turn-1", queryString, input });
+    const response = yield* executeTurnRequest({
+      turnId: "turn-1",
+      queryString,
+      input,
+      advisoryEffort,
+    });
     const success = decodeResponseSseFrames(response.stream).pipe(
       Effect.map((frames) => successfulHttpTurnResult({ frames, status: response.status })),
     );
@@ -544,7 +562,7 @@ describe("Antigravity CLI driver", () => {
       });
       assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "turn turn-1"]);
       assert.ok(!invocation.args.includes("--print"));
-      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "gemini-3.5-flash"]);
+      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "Gemini 3.5 Flash (Medium)"]);
       assert.deepStrictEqual(invocation.args.slice(4, 6), ["--print-timeout", "7200s"]);
       assert.ok(invocation.args.includes("--log-file"));
       assert.strictEqual(invocation.cwd, projectRoot);
@@ -634,6 +652,24 @@ describe("Antigravity CLI driver", () => {
         "--log-file",
         logOverride,
       ]);
+    }),
+  );
+
+  it.effect("maps Codex advisory effort into exact Antigravity model argv", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const result = yield* runTurn({
+        ...fixture,
+        fakeMode: "success",
+        advisoryEffort: "xhigh",
+        relayEvents: [],
+      });
+
+      assert.deepStrictEqual(result, { _tag: "Success", text: fakeAgyFixture.finalAnswer });
+      const invocation = yield* readFakeInvocation({
+        invocationLogPath: fixture.invocationLogPath,
+      });
+      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "Gemini 3.5 Flash (High)"]);
     }),
   );
 

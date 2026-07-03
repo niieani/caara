@@ -6,7 +6,10 @@ import {
   createInvalidPromptAgentDriverError,
   type AgentDriverError,
 } from "../mockResponsesProvider/agentDriver.ts";
-import type { CodexSandboxPosture } from "../mockResponsesProvider/codexTurnContext.ts";
+import type {
+  CodexAdvisoryEffort,
+  CodexSandboxPosture,
+} from "../mockResponsesProvider/codexTurnContext.ts";
 
 /** Parsed Antigravity reasoning relay mode. */
 export type AntigravityRelayMode = "on" | "off";
@@ -14,6 +17,7 @@ export type AntigravityRelayMode = "on" | "off";
 /** Driver-owned Antigravity CLI options parsed from provider query params. */
 export interface AntigravityCliOptions {
   readonly model: string;
+  readonly effort: CodexAdvisoryEffort | undefined;
   readonly printTimeoutSeconds: number;
   readonly sandbox: boolean;
   readonly dangerouslySkipPermissions: boolean;
@@ -33,7 +37,14 @@ const antigravityOptionNames = [
   "log_file",
   "reasoning",
   "activity",
+  "effort",
 ] as const;
+
+/** Antigravity effort values accepted from provider query params and Codex advisory input. */
+const antigravityEfforts = ["low", "medium", "high", "xhigh"] as const;
+
+/** Default effort used when a known Antigravity model family is selected without advisory effort. */
+const defaultAntigravityEffort = "medium" as const satisfies CodexAdvisoryEffort;
 
 /** Default Antigravity print-mode wait timeout that Caara passes to `agy`. */
 const defaultPrintTimeoutSeconds = 7200;
@@ -50,6 +61,9 @@ const AddDirsOption = Schema.fromJsonString(Schema.Array(Schema.NonEmptyString))
 
 /** Validated non-empty Antigravity model option. */
 const ModelOption = Schema.NonEmptyString;
+
+/** Schema for Antigravity effort values accepted at the driver boundary. */
+const EffortOption = Schema.Literals(antigravityEfforts);
 
 /** Returns the first unsupported Antigravity raw option name, if present. */
 const unsupportedAntigravityOption = (
@@ -106,6 +120,63 @@ const parseModelOption = Effect.fnUntraced(function* ({
     rawDriverOptions.model ?? externalModelSpecifier,
   ).pipe(Effect.mapError(() => optionError("model must be non-empty.")));
 });
+
+/** Parses the optional Antigravity effort driver option. */
+const parseEffortOption = Effect.fnUntraced(function* (value: string | undefined) {
+  return yield* Option.match(Option.fromUndefinedOr(value), {
+    onNone: () => Effect.map(Effect.void, (): CodexAdvisoryEffort | undefined => undefined),
+    onSome: (effort) =>
+      Schema.decodeUnknownEffect(EffortOption)(effort).pipe(
+        Effect.mapError(() => optionError(`Unsupported Antigravity effort: ${effort}.`)),
+      ),
+  });
+});
+
+/** Chooses the Antigravity effort source, with query option precedence over Codex advisory effort. */
+const effectiveAntigravityEffort = ({
+  driverEffort,
+  advisoryEffort,
+}: {
+  readonly driverEffort: CodexAdvisoryEffort | undefined;
+  readonly advisoryEffort: CodexAdvisoryEffort | undefined;
+}): CodexAdvisoryEffort => driverEffort ?? advisoryEffort ?? defaultAntigravityEffort;
+
+/** Maps Gemini 3.5 Flash effort to the closest supported Antigravity display model. */
+const geminiFlashDisplayModel = (effort: CodexAdvisoryEffort): string =>
+  Match.value(effort).pipe(
+    Match.when("low", () => "Gemini 3.5 Flash (Low)"),
+    Match.when("medium", () => "Gemini 3.5 Flash (Medium)"),
+    Match.when("high", () => "Gemini 3.5 Flash (High)"),
+    Match.when("xhigh", () => "Gemini 3.5 Flash (High)"),
+    Match.exhaustive,
+  );
+
+/** Maps Gemini 3.1 Pro effort to the closest supported Antigravity display model. */
+const geminiProDisplayModel = (effort: CodexAdvisoryEffort): string =>
+  Match.value(effort).pipe(
+    Match.when("low", () => "Gemini 3.1 Pro (Low)"),
+    Match.when("medium", () => "Gemini 3.1 Pro (High)"),
+    Match.when("high", () => "Gemini 3.1 Pro (High)"),
+    Match.when("xhigh", () => "Gemini 3.1 Pro (High)"),
+    Match.exhaustive,
+  );
+
+/** Maps known Antigravity model-family slugs to exact display model names. */
+const antigravityDisplayModelFromSpecifier = ({
+  model,
+  effort,
+}: {
+  readonly model: string;
+  readonly effort: CodexAdvisoryEffort;
+}): string =>
+  Match.value(model).pipe(
+    Match.when("gemini-3.5-flash", () => geminiFlashDisplayModel(effort)),
+    Match.when("gemini-3.1-pro", () => geminiProDisplayModel(effort)),
+    Match.when("claude-sonnet-4.6", () => "Claude Sonnet 4.6 (Thinking)"),
+    Match.when("claude-opus-4.6", () => "Claude Opus 4.6 (Thinking)"),
+    Match.when("gpt-oss-120b", () => "GPT-OSS 120B (Medium)"),
+    Match.orElse((unknownModel) => unknownModel),
+  );
 
 /** Maps Codex sandbox posture into Antigravity's default sandbox behavior. */
 const sandboxDefaultFromCodexPosture = (sandboxPosture: CodexSandboxPosture | undefined): boolean =>
@@ -256,17 +327,24 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
   caaraSettings,
   externalModelSpecifier,
   rawDriverOptions,
+  advisoryEffort,
   sandboxPosture,
   pathService,
 }: {
   readonly caaraSettings: CaaraSettingsValue;
   readonly externalModelSpecifier: string;
   readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly advisoryEffort?: CodexAdvisoryEffort;
   readonly sandboxPosture?: CodexSandboxPosture;
   readonly pathService: Path.Path;
 }) {
   yield* validateSupportedOptions(rawDriverOptions);
-  const model = yield* parseModelOption({ externalModelSpecifier, rawDriverOptions });
+  const rawModel = yield* parseModelOption({ externalModelSpecifier, rawDriverOptions });
+  const effort = yield* parseEffortOption(rawDriverOptions.effort);
+  const model = antigravityDisplayModelFromSpecifier({
+    model: rawModel,
+    effort: effectiveAntigravityEffort({ driverEffort: effort, advisoryEffort }),
+  });
   const sandbox = yield* parseBooleanOption({
     rawDriverOptions,
     optionName: "sandbox",
@@ -291,6 +369,7 @@ export const parseAntigravityCliOptions = Effect.fnUntraced(function* ({
 
   return {
     model,
+    effort,
     printTimeoutSeconds: printTimeoutSeconds ?? defaultPrintTimeoutSeconds,
     sandbox,
     dangerouslySkipPermissions,
