@@ -1,6 +1,8 @@
 {
   "name": "caara",
+  "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "bin": {
     "caara": "src/caara.ts"
   },
