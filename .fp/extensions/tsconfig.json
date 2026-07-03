@@ -4,14 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
-    "noEmit": true,
-    "paths": {
-      "@fiberplane/extensions": [
-        "/Users/bbrzoska/.fiberplane/extensions/types"
-      ]
-    }
+    "noEmit": true
   },
-  "include": [
-    "*.ts"
-  ]
+  "include": ["*.ts"]
 }

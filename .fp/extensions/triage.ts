@@ -5,7 +5,39 @@
  * work execution (`todo`, `in-progress`, `done`), while triage tracks the
  * routing decision that agent workflows use before implementation starts.
  */
-import type { FpExtensionContext, PropertyOption } from "@fiberplane/extensions";
+/**
+ * Select option handle returned by fp's extension UI builder.
+ */
+type PropertyOption = unknown;
+
+/**
+ * Minimal fp extension API surface used by this extension.
+ */
+interface FpExtensionContext {
+  readonly issues: {
+    readonly registerProperty: (
+      key: string,
+      property: {
+        readonly label: string;
+        readonly icon: string;
+        readonly display: unknown;
+      },
+    ) => Promise<void>;
+  };
+  readonly ui: {
+    readonly properties: {
+      readonly option: (
+        value: string,
+        property: {
+          readonly label: string;
+          readonly icon: string;
+          readonly color: string;
+        },
+      ) => PropertyOption;
+      readonly select: (...options: readonly PropertyOption[]) => unknown;
+    };
+  };
+}
 
 /**
  * Builds the canonical triage states shown in fp's issue property UI.
