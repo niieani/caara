@@ -597,6 +597,40 @@ describe("Claude Agent SDK activity commentary", () => {
     }),
   );
 
+  it.effect("does not emit lost-session recovery text for resumed invalid Claude options", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* makeStateDir();
+      const inputs: Array<Schema.Json> = [];
+      const diagnostics: Array<ResponsesRequestDiagnostics> = [];
+      const relayEvents: Array<RelayLogEvent> = [];
+      const harness = providerHarness({
+        stateDir,
+        inputs,
+        diagnostics,
+        relayEvents,
+      });
+
+      const seedFrames = yield* executeClaudeSdkActivityRequest({
+        turnId: "turn-claude-sdk-invalid-option-seed",
+        url: "/v1/responses",
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(eventNames(seedFrames).at(-1), "response.completed");
+      assert.strictEqual(eventNames(seedFrames).includes("response.failed"), false);
+
+      const failedFrames = yield* executeClaudeSdkActivityRequest({
+        turnId: "turn-claude-sdk-invalid-option-resumed",
+        url: "/v1/responses?permission-mode=auto",
+      }).pipe(Effect.provide(harness.layer));
+
+      assertInvalidPromptFailure({
+        frames: failedFrames,
+        message: "Unsupported Claude Agent SDK driver option: permission-mode.",
+      });
+      assert.deepStrictEqual(assistantMessageDoneData(failedFrames), []);
+      assert.strictEqual(harness.recordedRequests.length, 1);
+    }),
+  );
+
   it.effect("surfaces scoped Claude TMPDIR validation as invalid_prompt response failures", () =>
     Effect.gen(function* () {
       const stateDir = yield* makeStateDir();
@@ -613,7 +647,8 @@ describe("Claude Agent SDK activity commentary", () => {
       assertInvalidPromptFailure({
         frames,
         message:
-          "Unsupported environment placeholder in Claude Agent SDK additional_directories: $HOME. Only $TMPDIR and ${TMPDIR} are supported.",
+          "Unsupported environment placeholder in Claude Agent SDK additional_directories: $HOME. Only $TMPDIR and $" +
+          "{TMPDIR} are supported.",
       });
       assert.strictEqual(harness.recordedRequests.length, 0);
     }),

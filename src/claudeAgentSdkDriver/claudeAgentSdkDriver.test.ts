@@ -788,6 +788,37 @@ describe("Claude Agent SDK driver", () => {
     }),
   );
 
+  it.effect("does not recover cwd-change turns with invalid driver options", () =>
+    Effect.gen(function* () {
+      const harness = fakeSdkHarness({
+        sessionIds: ["00000000-0000-4000-8000-000000000303"],
+        runtimeMessages: [],
+      });
+      const turn = makeTurn({
+        target: makeTarget({ rawDriverOptions: { "permission-mode": "auto" } }),
+        cwd: "/old/project",
+        requestedCwd: "/new/project",
+        externalSession: new DurableExternalSession({
+          driverResumeCursor: makeDriverResumeCursor("00000000-0000-4000-8000-000000000303"),
+        }),
+      });
+
+      const result = yield* Effect.result(runDriverTurn({ harness, turn }));
+
+      Result.match(result, {
+        onFailure: (error) => {
+          assert.strictEqual(error.responseErrorCode, "invalid_prompt");
+          assert.strictEqual(
+            error.message,
+            "Unsupported Claude Agent SDK driver option: permission-mode.",
+          );
+        },
+        onSuccess: () => assert.fail("expected invalid driver option failure"),
+      });
+      assert.deepStrictEqual(harness.recordedRequests, []);
+    }),
+  );
+
   it.effect("fails explicitly when fresh recovery session start fails", () =>
     Effect.gen(function* () {
       const harness = fakeSdkHarness({

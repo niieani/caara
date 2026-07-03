@@ -75,12 +75,16 @@ const makeCodex = ({ turnId }: { readonly turnId: string }): CodexTurnContext =>
   });
 
 /** Builds one selected Antigravity target for direct driver tests. */
-const makeTarget = (): AgentTarget =>
+const makeTarget = ({
+  rawDriverOptions = {},
+}: {
+  readonly rawDriverOptions?: Readonly<Record<string, string>>;
+} = {}): AgentTarget =>
   new AgentTarget({
     requestedModel: "agy/gemini-3.5-flash",
     externalAgentKind: "agy",
     externalModelSpecifier: "gemini-3.5-flash",
-    rawDriverOptions: {},
+    rawDriverOptions,
   });
 
 /** Returns the previous target only when the test turn has an existing external session. */
@@ -96,12 +100,14 @@ const previousTargetForSession = (
 const makeTurn = ({
   turnId,
   externalSession,
+  rawDriverOptions,
 }: {
   readonly turnId: string;
   readonly externalSession?: DurableExternalSession;
+  readonly rawDriverOptions?: Readonly<Record<string, string>>;
 }): AgentDriverTurn => ({
   codex: makeCodex({ turnId }),
-  target: makeTarget(),
+  target: makeTarget({ rawDriverOptions }),
   prompt: {
     input: [
       {
@@ -234,6 +240,34 @@ const runDriverTurn = ({
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("Antigravity CLI driver resume", () => {
+  it.effect("does not recover resumed invalid driver options", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const first = yield* runDriverTurn({
+        fixture,
+        fakeMode: "success",
+        turn: makeTurn({ turnId: "turn-resume-invalid-option-seed" }),
+      });
+      const failure = yield* Effect.flip(
+        runDriverTurn({
+          fixture,
+          fakeMode: "fresh-recovery-success",
+          turn: makeTurn({
+            turnId: "turn-resume-invalid-option-followup",
+            externalSession: durableSessionFromResult(first.result),
+            rawDriverOptions: { "permission-mode": "auto" },
+          }),
+        }),
+      );
+
+      assert.strictEqual(failure.responseErrorCode, "invalid_prompt");
+      assert.strictEqual(
+        failure.message,
+        "Unsupported Antigravity driver option: permission-mode.",
+      );
+    }),
+  );
+
   it.effect("resumes stored cursor with --conversation and emits appended transcript records", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();

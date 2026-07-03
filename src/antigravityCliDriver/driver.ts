@@ -328,6 +328,51 @@ const recoverMissingResumeTranscript = (error: AgentDriverError) =>
     Match.orElse(() => Effect.fail(error)),
   );
 
+/** Recovers only continuity-class Antigravity failures; surfaced request failures stay terminal. */
+const recoverServerErrorWithFreshAntigravitySession = ({
+  error,
+  fileSystem,
+  pathService,
+  settings,
+  spawner,
+  turn,
+  options,
+  logFilePath,
+  reason,
+  previousCursor,
+}: {
+  readonly error: AgentDriverError;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly options: AntigravityCliOptions;
+  readonly logFilePath: string;
+  readonly reason: string;
+  readonly previousCursor: string;
+}) =>
+  Match.value(error.responseErrorCode).pipe(
+    Match.when("invalid_prompt", () => Effect.fail(error)),
+    Match.when("server_error", () =>
+      recoverWithFreshAntigravitySession({
+        fileSystem,
+        pathService,
+        settings,
+        spawner,
+        turn,
+        options,
+        logFilePath,
+        reason,
+        diagnostics: {
+          previousCursor,
+          message: error.message,
+        },
+      }),
+    ),
+    Match.exhaustive,
+  );
+
 /** Reads the transcript state that existed before a resumed Antigravity process is spawned. */
 const observePriorResumeTranscript = Effect.fnUntraced(function* ({
   fileSystem,
@@ -404,7 +449,8 @@ export const makeAntigravityCliAgentDriver = ({
       onSome: (rawCursor) =>
         Effect.matchEffect(decodeAntigravityDriverResumeCursor(rawCursor), {
           onFailure: (error) =>
-            recoverWithFreshAntigravitySession({
+            recoverServerErrorWithFreshAntigravitySession({
+              error,
               fileSystem,
               pathService,
               settings,
@@ -413,10 +459,7 @@ export const makeAntigravityCliAgentDriver = ({
               options,
               logFilePath,
               reason: "antigravity-invalid-resume-cursor",
-              diagnostics: {
-                previousCursor: rawCursor,
-                message: error.message,
-              },
+              previousCursor: rawCursor,
             }),
           onSuccess: (cursor) =>
             Effect.matchEffect(
@@ -429,7 +472,8 @@ export const makeAntigravityCliAgentDriver = ({
               }),
               {
                 onFailure: (error) =>
-                  recoverWithFreshAntigravitySession({
+                  recoverServerErrorWithFreshAntigravitySession({
+                    error,
                     fileSystem,
                     pathService,
                     settings,
@@ -438,10 +482,7 @@ export const makeAntigravityCliAgentDriver = ({
                     options,
                     logFilePath,
                     reason: "antigravity-invalid-resume-cursor",
-                    diagnostics: {
-                      previousCursor: cursor.conversationId,
-                      message: error.message,
-                    },
+                    previousCursor: cursor.conversationId,
                   }),
                 onSuccess: (observation) =>
                   Effect.matchEffect(
@@ -459,7 +500,8 @@ export const makeAntigravityCliAgentDriver = ({
                     }),
                     {
                       onFailure: (error) =>
-                        recoverWithFreshAntigravitySession({
+                        recoverServerErrorWithFreshAntigravitySession({
+                          error,
                           fileSystem,
                           pathService,
                           settings,
@@ -468,10 +510,7 @@ export const makeAntigravityCliAgentDriver = ({
                           options,
                           logFilePath,
                           reason: "antigravity-resume-failed",
-                          diagnostics: {
-                            previousCursor: cursor.conversationId,
-                            message: error.message,
-                          },
+                          previousCursor: cursor.conversationId,
                         }),
                       onSuccess: Effect.succeed,
                     },

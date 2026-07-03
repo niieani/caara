@@ -157,16 +157,24 @@ const fakeRecoveryLayer = ({
   );
 
 /** Builds one selected Claude target for SDK recovery tests. */
-const makeTarget = (): AgentTarget =>
+const makeTarget = ({
+  rawDriverOptions = {},
+}: {
+  readonly rawDriverOptions?: Readonly<Record<string, string>>;
+} = {}): AgentTarget =>
   new AgentTarget({
     requestedModel: "claude/sonnet",
     externalAgentKind: "claude",
     externalModelSpecifier: "sonnet",
-    rawDriverOptions: {},
+    rawDriverOptions,
   });
 
 /** Builds one follow-up turn with an existing durable SDK cursor. */
-const makeTurn = (): AgentDriverTurn => ({
+const makeTurn = ({
+  rawDriverOptions,
+}: {
+  readonly rawDriverOptions?: Readonly<Record<string, string>>;
+} = {}): AgentDriverTurn => ({
   codex: new CodexTurnContext({
     parentSessionId: "parent-session-sdk-recovery",
     threadId: "codex-thread-sdk-recovery",
@@ -181,7 +189,7 @@ const makeTurn = (): AgentDriverTurn => ({
     workspacePaths: [projectRoot],
     cwdCandidates: [projectRoot],
   }),
-  target: makeTarget(),
+  target: makeTarget({ rawDriverOptions }),
   prompt: {
     input: [
       {
@@ -214,6 +222,49 @@ const runDriverTurn = Effect.fnUntraced(function* ({ turn }: { readonly turn: Ag
 });
 
 describe("Claude Agent SDK lost-session recovery", () => {
+  it.effect("does not recover invalid_prompt resume query failures", () =>
+    Effect.gen(function* () {
+      const recordedRequests: RecordedQueryRequest[] = [];
+      const layer = fakeRecoveryLayer({
+        recordedRequests,
+        outcomes: [
+          new ClaudeAgentSdkClientError({ message: "unsupported driver option from SDK" }),
+          fakeRuntime([]),
+        ],
+        sessionIds: ["00000000-0000-4000-8000-000000000503"],
+      });
+      const error = yield* runDriverTurn({ turn: makeTurn() }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
+      assert.strictEqual(error.message, "unsupported driver option from SDK");
+      assert.strictEqual(recordedRequests.length, 1);
+    }),
+  );
+
+  it.effect("does not recover resumed invalid driver options", () =>
+    Effect.gen(function* () {
+      const recordedRequests: RecordedQueryRequest[] = [];
+      const layer = fakeRecoveryLayer({
+        recordedRequests,
+        outcomes: [fakeRuntime([])],
+        sessionIds: ["00000000-0000-4000-8000-000000000504"],
+      });
+      const error = yield* runDriverTurn({
+        turn: makeTurn({ rawDriverOptions: { "permission-mode": "auto" } }),
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      assert.strictEqual(error.responseErrorCode, "invalid_prompt");
+      assert.strictEqual(
+        error.message,
+        "Unsupported Claude Agent SDK driver option: permission-mode.",
+      );
+      assert.deepStrictEqual(recordedRequests, []);
+    }),
+  );
+
   it.effect(
     "recovers a rejected resume query with a fresh SDK session and core recovery metadata",
     () =>

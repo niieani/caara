@@ -81,9 +81,18 @@ export const claudeAgentSdkSessionIdGeneratorLive = Layer.effect(
   }),
 ).pipe(Layer.provide(BunCrypto.layer));
 
+/** Returns true when an SDK client failure is actionable for the spawning agent or role author. */
+const isActionableClaudeSdkClientError = (message: string): boolean =>
+  [/native CLI binary/i, /unsupported/i, /invalid/i, /not found/i, /not available/i].some(
+    (pattern) => pattern.test(message),
+  );
+
 /** Maps SDK client construction errors into driver-facing failures. */
 const clientErrorToDriverError = (error: ClaudeAgentSdkClientError): AgentDriverError =>
-  createInvalidPromptAgentDriverError({ message: error.message });
+  Match.value(isActionableClaudeSdkClientError(error.message)).pipe(
+    Match.when(true, () => createInvalidPromptAgentDriverError({ message: error.message })),
+    Match.orElse(() => createServerErrorAgentDriverError({ message: error.message })),
+  );
 
 /** Extracts a durable Claude SDK resume cursor from prior external session state. */
 const durableResumeCursorOption = (turn: AgentDriverTurn): Option.Option<string> =>
@@ -292,6 +301,44 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
   } satisfies AgentDriverTurnResult;
 });
 
+/** Recovers a resume failure only when it is an external-session continuity failure. */
+const recoverFailedResumeQueryError = ({
+  caaraSettings,
+  error,
+  client,
+  settings,
+  generator,
+  turn,
+  resume,
+}: {
+  readonly caaraSettings: CaaraSettingsValue;
+  readonly error: AgentDriverError;
+  readonly client: ClaudeAgentSdkClient["Service"];
+  readonly settings: ClaudeAgentSdkSettings["Service"];
+  readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
+  readonly turn: AgentDriverTurn;
+  readonly resume: string;
+}) =>
+  Match.value(error.responseErrorCode).pipe(
+    Match.when("invalid_prompt", () => Effect.fail(error)),
+    Match.when("server_error", () =>
+      recoverWithFreshSdkSession({
+        caaraSettings,
+        client,
+        settings,
+        generator,
+        turn,
+        reason: "sdk-resume-query-failed",
+        diagnostics: {
+          message: error.message,
+          previousCursor: resume,
+        },
+        freshCwd: turn.cwd,
+      }),
+    ),
+    Match.exhaustive,
+  );
+
 /** Converts a failed SDK resume query into a fresh-session lost-continuity recovery. */
 const recoverFailedResumeQuery = ({
   caaraSettings,
@@ -312,18 +359,14 @@ const recoverFailedResumeQuery = ({
 }) =>
   turnResult.pipe(
     Effect.catchTag("AgentDriverError", (error) =>
-      recoverWithFreshSdkSession({
+      recoverFailedResumeQueryError({
         caaraSettings,
+        error,
         client,
         settings,
         generator,
         turn,
-        reason: "sdk-resume-query-failed",
-        diagnostics: {
-          message: error.message,
-          previousCursor: resume,
-        },
-        freshCwd: turn.cwd,
+        resume,
       }),
     ),
   );
