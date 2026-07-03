@@ -42,7 +42,7 @@ jobs:
               exit 0
             fi
             HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-            TAG="$(gh release list --limit 20 --json tagName,targetCommitish,isDraft --jq ".[] | select(.isDraft == false and .targetCommitish == \"$HEAD_SHA\") | .tagName" | head -n 1)"
+            TAG="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --jq ".[] | select(.draft == false and .target_commitish == \"$HEAD_SHA\") | .tag_name" | head -n 1)"
             if [ -z "$TAG" ]; then
               echo "No published release found for Release Please head SHA ${HEAD_SHA}; skipping publish."
               echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -206,6 +206,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.resolve-release.outputs.tag }}
       VERSION: ${{ needs.resolve-release.outputs.version }}
     steps:

@@ -21,10 +21,13 @@ describe("release publish workflow", () => {
     assert.match(workflow, /permissions:\n\s+contents: write/u);
     assert.match(workflow, /publish: \$\{\{ steps\.release\.outputs\.publish \}\}/u);
     assert.match(workflow, /github\.event\.workflow_run\.head_sha/u);
+    assert.match(workflow, /repos\/\$\{GITHUB_REPOSITORY\}\/releases/u);
+    assert.match(workflow, /target_commitish/u);
     assert.match(workflow, /No published release found for Release Please head SHA/u);
     assert.match(workflow, /if: needs\.resolve-release\.outputs\.publish == 'true'/u);
     assert.match(workflow, /VERSION: \$\{\{ needs\.resolve-release\.outputs\.version \}\}/u);
     assert.match(workflow, /TAG: \$\{\{ needs\.resolve-release\.outputs\.tag \}\}/u);
+    assert.match(workflow, /GH_REPO: \$\{\{ github\.repository \}\}/u);
     assert.match(workflow, /Release tag must start with v/u);
   });
 
