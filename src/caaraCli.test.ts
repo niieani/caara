@@ -24,5 +24,9 @@ describe("Caara CLI dispatch", () => {
       _tag: "UninstallService",
       args: ["--purge"],
     });
+    assert.deepStrictEqual(selectCaaraCommand({ args: ["install-codex-roles", "./agents"] }), {
+      _tag: "InstallCodexRoles",
+      args: ["./agents"],
+    });
   });
 });
