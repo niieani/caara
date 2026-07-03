@@ -1,0 +1,282 @@
+name: Publish Release Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-release:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Resolve tag and version
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *)
+              echo "Release tag must start with v: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          VERSION="${TAG#v}"
+          test -n "${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    name: Build, sign, and notarize macOS Apple Silicon
+    needs: resolve-release
+    runs-on: macos-14
+    env:
+      TAG: ${{ needs.resolve-release.outputs.tag }}
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v2
+
+      - name: Configure 1Password service account
+        uses: 1password/load-secrets-action/configure@v3
+        with:
+          service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Load Apple signing and notary metadata
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+          unset-previous: true
+        env:
+          APPLE_NOTARY_ISSUER_ID: op://caara/apple-notary-profile/issuer-id
+          APPLE_NOTARY_KEY_ID: op://caara/apple-notary-profile/key-id
+          APPLE_SIGN_PASSWORD: op://caara/apple-developer-id-application/password
+
+      - name: Build release artifacts
+        run: bun run build:service:all
+
+      - name: Sign, verify, and notarize macOS binary
+        env:
+          BINARY_PATH: dist/release/caara_${{ env.VERSION }}_darwin_arm64/caara
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          keychain_path="$RUNNER_TEMP/caara-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          trap 'rm -rf "$temp_dir"; security delete-keychain "$keychain_path" >/dev/null 2>&1 || true' EXIT
+
+          op read 'op://caara/apple-notary-profile/AuthKey.p8' --out-file "$temp_dir/AuthKey.p8"
+          op read 'op://caara/apple-developer-id-application/Developer ID Application.p12' --out-file "$temp_dir/developer-id.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security import "$temp_dir/developer-id.p12" -k "$keychain_path" -P "$APPLE_SIGN_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          identity="$(security find-identity -v -p codesigning "$keychain_path" | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "Developer ID Application signing identity not found" >&2
+            exit 1
+          fi
+
+          codesign --force --deep --sign "$identity" --timestamp --options runtime "$BINARY_PATH"
+          codesign --verify --deep --strict --verbose=2 "$BINARY_PATH"
+          ditto -c -k --keepParent "$BINARY_PATH" "dist/caara_${VERSION}_darwin_arm64-notary.zip"
+          xcrun notarytool submit "dist/caara_${VERSION}_darwin_arm64-notary.zip" \
+            --key "$temp_dir/AuthKey.p8" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait
+
+      - name: Repackage notarized macOS tarball
+        run: tar -czf "dist/caara_${VERSION}_darwin_arm64.tar.gz" -C "dist/release/caara_${VERSION}_darwin_arm64" caara README.md LICENSE
+
+      - name: Write macOS checksum
+        run: shasum -a 256 "dist/caara_${VERSION}_darwin_arm64.tar.gz" > "dist/checksums-darwin_arm64.txt"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-darwin-arm64
+          path: |
+            dist/caara_${{ env.VERSION }}_darwin_arm64.tar.gz
+            dist/checksums-darwin_arm64.txt
+
+  build-linux:
+    name: Build Linux release tarballs
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        asset:
+          - linux_amd64
+          - linux_arm64
+    env:
+      TAG: ${{ needs.resolve-release.outputs.tag }}
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Linux tarballs
+        run: bun run build:service:all
+
+      - name: Write Linux checksum
+        run: shasum -a 256 "dist/caara_${VERSION}_${{ matrix.asset }}.tar.gz" > "dist/checksums-${{ matrix.asset }}.txt"
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.asset }}
+          path: |
+            dist/caara_${{ env.VERSION }}_${{ matrix.asset }}.tar.gz
+            dist/checksums-${{ matrix.asset }}.txt
+
+  publish-release:
+    name: Upload GitHub release assets
+    needs:
+      - resolve-release
+      - build-macos
+      - build-linux
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.resolve-release.outputs.tag }}
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Merge checksum manifest
+        run: cat dist/checksums-*.txt > dist/checksums.txt
+
+      - name: Upload release assets
+        run: |
+          gh release upload "${TAG}" \
+            "dist/caara_${VERSION}_darwin_arm64.tar.gz" \
+            "dist/caara_${VERSION}_linux_amd64.tar.gz" \
+            "dist/caara_${VERSION}_linux_arm64.tar.gz" \
+            "dist/checksums.txt" \
+            --clobber
+
+      - name: Upload publish bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-publish-bundle
+          path: dist
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs:
+      - resolve-release
+      - publish-release
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.resolve-release.outputs.tag }}
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          path: caara-source
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: caara-source
+        run: bun install --frozen-lockfile
+
+      - name: Download publish bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-publish-bundle
+          path: caara-source/dist
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v2
+
+      - name: Configure 1Password service account
+        uses: 1password/load-secrets-action/configure@v3
+        with:
+          service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Load Homebrew tap token
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+          unset-previous: true
+        env:
+          HOMEBREW_TAP_TOKEN: op://caara/homebrew-tap-token/token
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: niieani/homebrew-tap
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Generate and validate cask
+        working-directory: caara-source
+        run: |
+          mkdir -p ../homebrew-tap/Casks
+          bun run scripts/writeHomebrewCask.ts \
+            --version "${VERSION}" \
+            --repository niieani/caara \
+            --checksums dist/checksums.txt \
+            --output ../homebrew-tap/Casks/caara.rb
+          ruby -c ../homebrew-tap/Casks/caara.rb
+
+      - name: Commit and push cask update
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/caara.rb
+          if git diff --cached --quiet; then
+            echo "Casks/caara.rb already up to date"
+            exit 0
+          fi
+          git commit -m "Update caara cask to ${VERSION}"
+          git push
