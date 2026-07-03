@@ -14,6 +14,7 @@ import {
   installServiceCodexRoles,
   liveCaaraServiceCodexRoles,
   serviceResultWithCodexRoleMessage,
+  serviceResultWithCodexRoleResult,
   type CaaraServiceCodexRoles,
   uninstallServiceCodexRoles,
 } from "./caaraServiceCodexRoles.ts";
@@ -166,7 +167,7 @@ const runCaaraInstallServiceNoStartWithRoles = Effect.fnUntraced(function* ({
     platform,
     runtime,
   });
-  const roleMessage = yield* installServiceCodexRoles({
+  const roleResult = yield* installServiceCodexRoles({
     codexRoles,
     configPath: outcome.resolution.configPath,
     env,
@@ -174,7 +175,7 @@ const runCaaraInstallServiceNoStartWithRoles = Effect.fnUntraced(function* ({
     skip: options.noInstallCodexRoles,
     yolo: options.yolo,
   });
-  return serviceResultWithCodexRoleMessage({ result: outcome.result, roleMessage });
+  return serviceResultWithCodexRoleResult({ result: outcome.result, roleResult });
 });
 
 /** Runs `install-service` without terminating the host process. */

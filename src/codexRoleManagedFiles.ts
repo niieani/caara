@@ -350,11 +350,13 @@ export const removeMarkedRoles = Effect.fnUntraced(function* ({
 
 /** Writes one generated role file into the target directory. */
 export const writeRoleFile = Effect.fnUntraced(function* ({
+  baseUrl,
   queryParams,
   role,
   targetDirectory,
   yolo,
 }: {
+  readonly baseUrl: string;
   readonly queryParams: CodexRoleQueryParams;
   readonly role: CaaraCodexRoleDefinition;
   readonly targetDirectory: string;
@@ -366,6 +368,7 @@ export const writeRoleFile = Effect.fnUntraced(function* ({
       fs.writeFile(
         filePath,
         renderCodexRoleToml({
+          baseUrl,
           queryParams: queryParamsForRoleMode({ queryParams, role, yolo }),
           role,
         }),

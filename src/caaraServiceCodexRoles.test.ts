@@ -83,7 +83,7 @@ const recordingCodexRoles = ({
       message: "installed test Codex roles",
       skippedDrivers: [],
       targetDirectory: path.join(roleEnv.HOME ?? "", ".codex", "agents"),
-      writtenFiles: [],
+      writtenFiles: [path.join(roleEnv.HOME ?? "", ".codex", "agents", "caara-test.toml")],
     };
   }),
   uninstall: Effect.fnUntraced(function* ({ env }) {
@@ -171,6 +171,87 @@ describe("Caara service Codex role lifecycle", () => {
       assert.strictEqual(pathEntries.at(0), driverBin);
       assert.ok(pathEntries.includes(path.join(env.HOME, ".local", "bin")));
       assert.match(result.message, /installed test Codex roles/u);
+    }),
+  );
+
+  it.effect("fails install-service when generated role installation fails", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const events: string[] = [];
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start"],
+        codexRoles: {
+          ...recordingCodexRoles({ events }),
+          install: Effect.fnUntraced(function* () {
+            yield* Effect.void;
+            return {
+              exitCode: 1,
+              message: "caara install-codex-roles refused unmarked existing Codex role",
+              skippedDrivers: [],
+              targetDirectory: path.join(env.HOME, ".codex", "agents"),
+              writtenFiles: [],
+            };
+          }),
+        },
+        env,
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+      });
+
+      assert.strictEqual(result.exitCode, 1);
+      assert.match(result.message, /refused unmarked existing Codex role/u);
+    }),
+  );
+
+  it.effect("install-service --no-start fails when no real external driver is available", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = {
+        ...serviceEnv({ root }),
+        PATH: "",
+      };
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start"],
+        env,
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+      });
+
+      assert.strictEqual(result.exitCode, 1);
+      assert.match(result.message, /no real external driver/u);
+      assert.match(result.message, /skipped Claude/u);
+      assert.match(result.message, /skipped Antigravity/u);
+    }),
+  );
+
+  it.effect("install-service generated roles use the resolved service host and port", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const binDir = path.join(env.HOME, ".local", "bin");
+      const sourceExecutable = path.join(root, "dist", "caara-source");
+      const rolePath = path.join(env.HOME, ".codex", "agents", "caara-claude-haiku.toml");
+      yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
+      yield* writeFile({ filePath: path.join(binDir, "claude"), content: "#!/bin/sh\n" });
+      yield* Effect.tryPromise(() => fs.chmod(path.join(binDir, "claude"), 0o755));
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start", "--host", "127.0.0.1", "--port", "8799"],
+        env,
+        platform: "linux",
+        runtime: compiledRuntime({ executablePath: sourceExecutable }),
+      });
+      const role = yield* Effect.tryPromise(() => fs.readFile(rolePath, "utf8"));
+
+      assert.strictEqual(result.exitCode, 0);
+      assert.match(role, /base_url = "http:\/\/127\.0\.0\.1:8799\/v1"/u);
     }),
   );
 
@@ -283,7 +364,9 @@ describe("Caara service Codex role lifecycle", () => {
               message: "installed yolo Codex roles",
               skippedDrivers: [],
               targetDirectory: path.join(roleEnv?.HOME ?? "", ".codex", "agents"),
-              writtenFiles: [],
+              writtenFiles: [
+                path.join(roleEnv?.HOME ?? "", ".codex", "agents", "caara-yolo-test.toml"),
+              ],
             };
           }),
         },

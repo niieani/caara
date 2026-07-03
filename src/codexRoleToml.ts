@@ -6,6 +6,13 @@ import type { CaaraCodexRoleDefinition } from "./codexRoleCatalog.ts";
 /** Query parameters preserved and rendered inside the Caara model provider block. */
 export type CodexRoleQueryParams = Readonly<Record<string, string>>;
 
+/** Options required to render one generated Codex role file. */
+export interface RenderCodexRoleTomlOptions {
+  readonly baseUrl: string;
+  readonly queryParams: CodexRoleQueryParams;
+  readonly role: CaaraCodexRoleDefinition;
+}
+
 /** Failure while parsing an existing generated Codex role. */
 export class CodexRoleTomlError extends Schema.TaggedErrorClass<CodexRoleTomlError>()(
   "CodexRoleTomlError",
@@ -58,12 +65,10 @@ const renderQueryParams = (queryParams: CodexRoleQueryParams): string => {
 
 /** Renders one generated Codex role as parseable TOML. */
 export const renderCodexRoleToml = ({
+  baseUrl,
   queryParams,
   role,
-}: {
-  readonly queryParams: CodexRoleQueryParams;
-  readonly role: CaaraCodexRoleDefinition;
-}): string =>
+}: RenderCodexRoleTomlOptions): string =>
   [
     caaraGeneratedCodexRoleMarker(),
     `name = ${tomlString(role.name)}`,
@@ -75,7 +80,7 @@ export const renderCodexRoleToml = ({
     "",
     "[model_providers.caara]",
     'name = "Caara Responses"',
-    'base_url = "http://127.0.0.1:8787/v1"',
+    `base_url = ${tomlString(baseUrl)}`,
     'wire_api = "responses"',
     "requires_openai_auth = false",
     "request_max_retries = 0",

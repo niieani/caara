@@ -131,7 +131,7 @@ describe("Caara service lifecycle", () => {
     Effect.gen(function* () {
       const root = testRoot();
       const result = yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env: serviceEnv({ root }),
         platform: "darwin",
         runtime: sourceRuntime({ executablePath: path.join(root, "src", "caara.ts") }),
@@ -151,7 +151,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
       const result = yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env,
         platform: "darwin",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -178,7 +178,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
       yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env,
         platform: "linux",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -206,7 +206,14 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: explicitConfigPath, content: "port: 8787\n" });
 
       const result = yield* runCaaraInstallService({
-        args: ["--no-start", "--config", relativeConfigPath, "--port", "8798"],
+        args: [
+          "--no-start",
+          "--no-install-codex-roles",
+          "--config",
+          relativeConfigPath,
+          "--port",
+          "8798",
+        ],
         env,
         platform: "linux",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -237,7 +244,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: configPath, content: originalConfigFixture() });
 
       const preserved = yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env,
         platform: "linux",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -245,7 +252,7 @@ describe("Caara service lifecycle", () => {
       const preservedConfig = yield* readFile({ filePath: configPath });
 
       const updated = yield* runCaaraInstallService({
-        args: ["--no-start", "--port", "8799"],
+        args: ["--no-start", "--no-install-codex-roles", "--port", "8799"],
         env,
         platform: "linux",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -270,7 +277,7 @@ describe("Caara service lifecycle", () => {
       const managerEvents: string[] = [];
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
       yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env,
         platform: "darwin",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -295,7 +302,7 @@ describe("Caara service lifecycle", () => {
 
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
       yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         env,
         platform: "darwin",
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
@@ -326,7 +333,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
       const result = yield* runCaaraInstallService({
-        args: ["--host", "0.0.0.0", "--port", "8799"],
+        args: ["--no-install-codex-roles", "--host", "0.0.0.0", "--port", "8799"],
         doctor: recordingDoctor({ events, result: doctorOkResult({ configPath }) }),
         env,
         healthProbe: recordingHealthProbe({ events }),
@@ -359,7 +366,7 @@ describe("Caara service lifecycle", () => {
         yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
         const result = yield* runCaaraInstallService({
-          args: [],
+          args: ["--no-install-codex-roles"],
           doctor: recordingDoctor({
             events,
             result: {
@@ -395,7 +402,7 @@ describe("Caara service lifecycle", () => {
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
       const result = yield* runCaaraInstallService({
-        args: ["--no-start"],
+        args: ["--no-start", "--no-install-codex-roles"],
         doctor: recordingDoctor({
           events,
           result: doctorOkResult({ configPath: path.join(root, "unused.yaml") }),
@@ -460,7 +467,7 @@ describe("Caara service lifecycle", () => {
         yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
 
         const result = yield* runCaaraInstallService({
-          args: ["--port", "8799"],
+          args: ["--no-install-codex-roles", "--port", "8799"],
           doctor: recordingDoctor({ events, result: doctorOkResult({ configPath }) }),
           env,
           healthProbe: failingHealthProbe({ attempts: healthAttempts }),

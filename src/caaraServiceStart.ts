@@ -13,7 +13,7 @@ import type {
 } from "./caaraServiceArtifacts.ts";
 import {
   installServiceCodexRoles,
-  serviceResultWithCodexRoleMessage,
+  serviceResultWithCodexRoleResult,
   serviceSettingsWithPathEntries,
   type CaaraServiceCodexRoles,
 } from "./caaraServiceCodexRoles.ts";
@@ -187,7 +187,7 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
     runtime,
   });
   const doctorResult = yield* doctor.fix(serviceDoctorOptions({ configLoader, env, options }));
-  const roleMessage = yield* installServiceCodexRoles({
+  const roleResult = yield* installServiceCodexRoles({
     codexRoles,
     configPath: installOutcome.resolution.configPath,
     env,
@@ -198,12 +198,15 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
     skip: options.noInstallCodexRoles,
     yolo: options.yolo,
   });
-  const installResult = serviceResultWithCodexRoleMessage({
+  const installResult = serviceResultWithCodexRoleResult({
     result: installOutcome.result,
-    roleMessage,
+    roleResult,
   });
-  return yield* Match.value(doctorResult.exitCode).pipe(
-    Match.when(1, () =>
+  return yield* Match.value({
+    doctorExitCode: doctorResult.exitCode,
+    installExitCode: installResult.exitCode,
+  }).pipe(
+    Match.when({ doctorExitCode: 1 }, () =>
       Effect.succeed(
         doctorFailureInstallResult({
           doctorResult,
@@ -211,6 +214,7 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
         }),
       ),
     ),
+    Match.when({ installExitCode: 1 }, () => Effect.succeed(installResult)),
     Match.orElse(() =>
       Effect.gen(function* () {
         const request = serviceManagerRequestFromPaths({ paths: installOutcome.paths });

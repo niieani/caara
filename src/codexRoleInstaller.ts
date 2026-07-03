@@ -5,7 +5,11 @@ import path from "node:path";
 import { Console, Effect, Match, Option } from "effect";
 
 import { pathEntriesFromValue } from "./caaraExecutionPath.ts";
-import type { CaaraConfigLoader } from "./caaraSettings.ts";
+import {
+  resolveCaaraSettingsResolutionFromArgs,
+  type CaaraConfigLoader,
+  type CaaraSettingsValue,
+} from "./caaraSettings.ts";
 import {
   safeCodexRoleDriverCatalogs,
   type CaaraCodexRoleDefinition,
@@ -109,6 +113,31 @@ const processCodexRoleInstallerEnvironment = (): CaaraCodexRoleInstallerEnvironm
   HOME: process.env.HOME,
   PATH: process.env.PATH,
 });
+
+/** Maps bind-all service hosts to loopback targets usable by local Codex clients. */
+const codexRoleProviderHost = ({ host }: { readonly host: string }): string =>
+  Match.value(host).pipe(
+    Match.when("0.0.0.0", () => "127.0.0.1"),
+    Match.when("::", () => "::1"),
+    Match.orElse((providerHost) => providerHost),
+  );
+
+/** Formats a host for an HTTP URL, including IPv6 bracket handling. */
+const hostForUrl = (host: string): string =>
+  [host]
+    .filter((candidate) => candidate.includes(":"))
+    .map((candidate) => `[${candidate}]`)
+    .at(0) ?? host;
+
+/** Builds the Caara Responses base URL rendered into generated Codex roles. */
+const codexRoleBaseUrlFromSettings = ({
+  settings,
+}: {
+  readonly settings: CaaraSettingsValue;
+}): string => {
+  const host = codexRoleProviderHost({ host: settings.host });
+  return `http://${hostForUrl(host)}:${settings.port}/v1`;
+};
 
 /** Returns true when an environment path value can be used. */
 const hasNonEmptyPath = (value: string): boolean => value.length > 0;
@@ -280,12 +309,14 @@ const invalidUninstallResult = ({
 
 /** Builds the successful install result after preflight passes. */
 const successfulInstallResult = Effect.fnUntraced(function* ({
+  baseUrl,
   detected,
   roles,
   targetDirectory,
   writePlans,
   yolo,
 }: {
+  readonly baseUrl: string;
   readonly detected: readonly DetectedRoleDriver[];
   readonly roles: readonly CaaraCodexRoleDefinition[];
   readonly targetDirectory: string;
@@ -297,6 +328,7 @@ const successfulInstallResult = Effect.fnUntraced(function* ({
     writePlans,
     (plan) =>
       writeRoleFile({
+        baseUrl,
         queryParams: plan.queryParams,
         role: plan.role,
         targetDirectory,
@@ -320,6 +352,7 @@ const successfulInstallResult = Effect.fnUntraced(function* ({
 
 /** Builds an install result from managed role preflight output. */
 const installResultFromPreflight = Effect.fnUntraced(function* ({
+  baseUrl,
   collision,
   detected,
   roles,
@@ -327,6 +360,7 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
   writePlans,
   yolo,
 }: {
+  readonly baseUrl: string;
   readonly collision: RoleCollisionPlan | undefined;
   readonly detected: readonly DetectedRoleDriver[];
   readonly roles: readonly CaaraCodexRoleDefinition[];
@@ -337,6 +371,7 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
   return yield* Match.value(collision).pipe(
     Match.when(undefined, () =>
       successfulInstallResult({
+        baseUrl,
         detected,
         roles,
         targetDirectory,
@@ -362,6 +397,12 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
 }: RunCaaraInstallCodexRolesOptions) {
   const options = parseInstallCodexRolesOptions({ args });
   const validationFailure = yield* yoloValidationFailure({ configLoader, env, options });
+  const settingsResolution = yield* resolveCaaraSettingsResolutionFromArgs({
+    args: options.settingsArgs,
+    configLoader,
+    env,
+  });
+  const baseUrl = codexRoleBaseUrlFromSettings({ settings: settingsResolution.settings });
   const targetDirectory = targetDirectoryFromArgs({ args: options.targetArgs, env });
   return yield* Option.match(Option.fromUndefinedOr(validationFailure), {
     onNone: () =>
@@ -391,6 +432,7 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
             const collision = firstCollision({ plans: preflightPlans });
             const writePlans = writePlansFromPreflight({ plans: preflightPlans });
             return yield* installResultFromPreflight({
+              baseUrl,
               collision,
               detected,
               roles,
