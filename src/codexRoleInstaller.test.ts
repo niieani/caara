@@ -115,6 +115,29 @@ const expectedClaudeRoleFiles = [
   "caara-claude-sonnet.toml",
 ] as const;
 
+/** Expected safe Antigravity role filenames generated when agy is available. */
+const expectedAntigravityRoleFiles = [
+  "caara-agy-claude-opus-4-6.toml",
+  "caara-agy-claude-sonnet-4-6.toml",
+  "caara-agy-gemini-3-1-pro.toml",
+  "caara-agy-gemini-3-5-flash.toml",
+  "caara-agy-gpt-oss-120b.toml",
+] as const;
+
+/** Expected skipped-driver report when Antigravity is not available. */
+const expectedSkippedAntigravity = {
+  driverName: "Antigravity",
+  executableName: "agy",
+  reason: "command not found on PATH",
+} as const;
+
+/** Expected skipped-driver report when Claude is not available. */
+const expectedSkippedClaude = {
+  driverName: "Claude",
+  executableName: "claude",
+  reason: "command not found on PATH",
+} as const;
+
 describe("Caara Codex role installer", () => {
   it.effect("writes safe Claude roles to CODEX_HOME agents by default", () =>
     Effect.gen(function* () {
@@ -137,8 +160,9 @@ describe("Caara Codex role installer", () => {
       assert.strictEqual(result.exitCode, 0);
       assert.strictEqual(result.targetDirectory, targetDirectory);
       assert.deepStrictEqual(filenames, [...expectedClaudeRoleFiles]);
-      assert.deepStrictEqual(result.skippedDrivers, []);
+      assert.deepStrictEqual(result.skippedDrivers, [expectedSkippedAntigravity]);
       assert.match(result.message, /installed 4 Codex roles/u);
+      assert.match(result.message, /skipped Antigravity/u);
     }),
   );
 
@@ -161,6 +185,7 @@ describe("Caara Codex role installer", () => {
 
       assert.strictEqual(result.targetDirectory, explicitTarget);
       assert.deepStrictEqual(filenames, [...expectedClaudeRoleFiles]);
+      assert.deepStrictEqual(result.skippedDrivers, [expectedSkippedAntigravity]);
     }),
   );
 
@@ -182,6 +207,87 @@ describe("Caara Codex role installer", () => {
 
       assert.strictEqual(result.targetDirectory, targetDirectory);
     }),
+  );
+
+  it.effect("writes short safe Antigravity roles when agy is available", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const binDir = path.join(root, "bin");
+      const targetDirectory = path.join(root, "agents");
+      yield* writeExecutable({ filePath: path.join(binDir, "agy") });
+
+      const result = yield* runCaaraInstallCodexRoles({
+        args: [targetDirectory],
+        env: roleEnv({
+          home: path.join(root, "home"),
+          pathValue: binDir,
+        }),
+      });
+      const filenames = yield* listFilenames({ dirPath: targetDirectory });
+
+      assert.deepStrictEqual(filenames, [...expectedAntigravityRoleFiles]);
+      assert.deepStrictEqual(result.skippedDrivers, [expectedSkippedClaude]);
+      assert.ok(!filenames.some((filename) => /(?:low|medium|high|thinking)/iu.test(filename)));
+      assert.match(result.message, /installed 5 Codex roles/u);
+    }),
+  );
+
+  it.effect("uses Antigravity model-family slugs instead of exact display names", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const binDir = path.join(root, "bin");
+      const targetDirectory = path.join(root, "agents");
+      yield* writeExecutable({ filePath: path.join(binDir, "agy") });
+
+      yield* runCaaraInstallCodexRoles({
+        args: [targetDirectory],
+        env: roleEnv({
+          home: path.join(root, "home"),
+          pathValue: binDir,
+        }),
+      });
+      const { config, source } = yield* parseGeneratedRole({
+        filePath: path.join(targetDirectory, "caara-agy-gemini-3-5-flash.toml"),
+      });
+
+      assert.strictEqual(config.name, "caara-agy-gemini-3-5-flash");
+      assert.strictEqual(config.model, "agy/gemini-3.5-flash");
+      assert.strictEqual(config.model_providers.caara.base_url, "http://127.0.0.1:8787/v1");
+      assert.deepStrictEqual(config.model_providers.caara.query_params, {});
+      assert.ok(!source.includes("Gemini 3.5 Flash (Low)"));
+      assert.ok(!source.includes("Gemini 3.5 Flash (Medium)"));
+      assert.ok(!source.includes("Gemini 3.5 Flash (High)"));
+      assert.ok(!source.includes("dangerously_skip_permissions"));
+      assert.ok(!source.includes("permission_mode"));
+    }),
+  );
+
+  it.effect(
+    "writes mixed Claude and Antigravity catalogs when both executables are available",
+    () =>
+      Effect.gen(function* () {
+        const root = testRoot();
+        const binDir = path.join(root, "bin");
+        const targetDirectory = path.join(root, "agents");
+        yield* writeExecutable({ filePath: path.join(binDir, "claude") });
+        yield* writeExecutable({ filePath: path.join(binDir, "agy") });
+
+        const result = yield* runCaaraInstallCodexRoles({
+          args: [targetDirectory],
+          env: roleEnv({
+            home: path.join(root, "home"),
+            pathValue: binDir,
+          }),
+        });
+        const filenames = yield* listFilenames({ dirPath: targetDirectory });
+
+        assert.deepStrictEqual(filenames, [
+          ...expectedAntigravityRoleFiles,
+          ...expectedClaudeRoleFiles,
+        ]);
+        assert.deepStrictEqual(result.skippedDrivers, []);
+        assert.match(result.message, /installed 9 Codex roles/u);
+      }),
   );
 
   it.effect("generates marked parseable safe TOML without a generic Claude alias", () =>
@@ -234,13 +340,11 @@ describe("Caara Codex role installer", () => {
       assert.strictEqual(result.exitCode, 0);
       assert.deepStrictEqual(filenames, []);
       assert.deepStrictEqual(result.skippedDrivers, [
-        {
-          driverName: "Claude",
-          executableName: "claude",
-          reason: "command not found on PATH",
-        },
+        expectedSkippedClaude,
+        expectedSkippedAntigravity,
       ]);
       assert.match(result.message, /skipped Claude/u);
+      assert.match(result.message, /skipped Antigravity/u);
     }),
   );
 });
