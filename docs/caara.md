@@ -60,10 +60,12 @@ Supported root commands:
 
 ```text
 caara [--config <path>] [--host <host>] [--port <port>] [--allow-dangerous-skip-permissions]
-caara install-service [--config <path>] [--host <host>] [--port <port>] [--allow-dangerous-skip-permissions] [--no-start]
+caara install-service [--config <path>] [--host <host>] [--port <port>] [--allow-dangerous-skip-permissions] [--no-start] [--no-install-codex-roles] [--yolo]
 caara uninstall-service [--purge]
 caara status [--config <path>] [--host <host>] [--port <port>]
 caara doctor [--config <path>] [--fix]
+caara install-codex-roles [--config <path>] [--yolo] [target-dir]
+caara uninstall-codex-roles [target-dir]
 ```
 
 Service install flow:
@@ -74,14 +76,20 @@ Service install flow:
 4. Caara creates or updates `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`.
 5. Caara writes the platform service file and install receipt.
 6. Caara runs `doctor --fix`.
-7. By default, Caara enables/starts the user service and polls `/health`.
+7. Caara installs generated Codex roles for available real drivers unless
+   `--no-install-codex-roles` is passed.
+8. By default, Caara enables/starts the user service and polls `/health`.
 
 The generated service invokes Caara with `--config <absolute-resolved-config-path>`, including
 explicit `install-service --config <path>` values, so service restarts keep using the selected
 config file without depending on a working directory.
 
-`install-service --no-start` stops after writing the binary, config, service file, and receipt. It
-does not run doctor, start the service, or verify health.
+`install-service --no-start` stops after writing the binary, config, service file, receipt, and
+generated Codex roles. It does not run doctor, start the service, or verify health.
+
+`install-service --no-install-codex-roles` opts out of role installation. `install-service --yolo`
+turns on `allowDangerousSkipPermissions` in the service config and requests yolo generated roles so
+driver permission-bypass query params line up with the process-level dangerous gate.
 
 Platform service identity:
 
@@ -120,12 +128,12 @@ Default `install-service` waits up to 5 seconds for health, polling every 250ms.
 fails, output includes the last health error and a service-manager status hint, such as
 `launchctl print gui/<uid>/dev.caara` or `systemctl --user status caara.service`.
 
-`caara doctor` checks executable requirements declared by registered drivers. The Diagnostic driver
-declares no external executable requirements, Claude declares `claude`, and Antigravity declares
-`agy`. `doctor --fix` searches configured path prefixes, inherited `PATH`, and built-in service
-defaults, then appends discovered non-default executable directories to the config `path`.
-`install-service` runs doctor fix before starting and fails before service start if a required
-registered-driver executable is still missing.
+`caara doctor` checks executable requirements declared by real external drivers. Claude declares
+`claude`, Antigravity declares `agy`, and the Diagnostic driver is ignored for operator health
+because it is not a real external capability. `doctor --fix` searches configured path prefixes,
+inherited `PATH`, and built-in service defaults, then appends discovered non-default executable
+directories to the config `path`. Missing optional drivers are reported with remediation hints.
+Doctor and service install fail only when no real external driver is available.
 
 `caara uninstall-service` unloads/stops the user service, removes the service manager file, removes
 the installer-managed binary recorded in the install receipt, and removes the receipt. It preserves
@@ -201,7 +209,7 @@ initialize. The current fixed policy rotates at 10 MiB and retains 3 rotated fil
 
 ## Release And Bootstrap Contract
 
-Build scripts:
+Development build scripts:
 
 ```bash
 bun run build:service
@@ -216,13 +224,12 @@ dist/caara
 dist/checksums.txt
 ```
 
-Release artifact names:
+Public release artifact names:
 
 ```text
-dist/caara-darwin-arm64
-dist/caara-darwin-x64
-dist/caara-linux-arm64
-dist/caara-linux-x64
+dist/caara_<version>_darwin_arm64.tar.gz
+dist/caara_<version>_linux_amd64.tar.gz
+dist/caara_<version>_linux_arm64.tar.gz
 dist/checksums.txt
 ```
 
@@ -235,17 +242,57 @@ dist/checksums.txt
 `--codesign-identity` is optional and applies only to macOS release artifacts in the `--all` build.
 Linux artifacts are never codesigned by this script.
 
-Future pipeable installer contract:
+Release Please owns `package.json` version bumps, changelog, tags, GitHub releases, and release
+notes. `package.json` remains `private: true`; npm publishing is intentionally deferred.
+
+The release publish workflow runs from a published GitHub release or manual `workflow_dispatch` tag.
+The tag must start with `v`; the workflow resolves `TAG` and `VERSION` once, then shares those
+outputs with build, publish, and Homebrew jobs.
+
+Initial public artifacts are Apple Silicon macOS, Linux x64, and Linux arm64. Intel macOS is not
+part of the public contract. Each tarball contains:
+
+```text
+caara
+README.md
+LICENSE
+```
+
+The macOS job loads Apple signing and notary material through the 1Password service account token,
+reads the App Store Connect key and Developer ID `.p12` payload with `op`, imports the certificate
+into a temporary keychain, signs the bare `caara` executable, verifies the signature, submits a zip
+to `notarytool`, and packages the notarized binary into
+`caara_<version>_darwin_arm64.tar.gz`. Linux jobs build tarballs without macOS signing or
+notarization commands.
+
+The publish job uploads the three tarballs plus merged `checksums.txt` to the GitHub release with
+`gh release upload --clobber`.
+
+Manual tarball install contract:
 
 1. Select the release asset for the host OS and CPU architecture.
 2. Download that asset plus `checksums.txt`.
 3. Verify the SHA-256 checksum.
-4. Place or execute the selected binary.
+4. Extract the tarball and place or execute the selected `caara` binary.
 5. Run `caara install-service`, forwarding user install args.
 
-Future Homebrew cask contract: the cask should install the binary and delegate lifecycle to
-`caara install-service` and `caara uninstall-service`. It should not duplicate launchd/systemd
-service definitions or uninstall policy.
+Homebrew cask contract:
+
+```bash
+brew install --cask niieani/tap/caara
+brew uninstall --cask caara
+brew uninstall --cask --zap caara
+```
+
+The generated cask chooses the matching GitHub release tarball for Apple Silicon macOS, Linux x64,
+or Linux arm64. It validates per-artifact checksums, installs the `caara` binary, and delegates
+postflight setup to `caara install-service`. Normal uninstall delegates to
+`caara uninstall-service`, preserving config, state, sessions, and logs. Zap maps to the Caara
+config/state/log cleanup paths. The cask does not duplicate launchd or systemd service definitions.
+
+The release workflow loads the Homebrew tap token from 1Password, rewrites `Casks/caara.rb` from the
+release checksum manifest, validates Ruby syntax with `ruby -c`, commits only when the cask changed,
+and pushes directly to `niieani/homebrew-tap`.
 
 ## Codex Turn Context
 
@@ -703,7 +750,83 @@ The driver implementation owns process lifecycle and external agent session ids.
 target selection, Codex turn context decoding, session binding persistence, concurrency control, and
 relaying normalized runtime events onto the Responses transport.
 
-## Codex Role Configuration
+## Installed Codex Agent Roles
+
+Installed Codex agent roles are Caara-managed generated role files intended for the user's global
+Codex environment. They are distinct from this repository's checked-in smoke roles.
+
+Commands:
+
+```bash
+caara install-codex-roles [target-dir]
+caara install-codex-roles --yolo --config <path> [target-dir]
+caara uninstall-codex-roles [target-dir]
+```
+
+Default target:
+
+```text
+${CODEX_HOME:-$HOME/.codex}/agents
+```
+
+An explicit `target-dir` is useful for project-local roles and verification runs. The installer
+creates the target directory when needed.
+
+Generated installed role files carry this marker:
+
+```toml
+# Generated by Caara. Do not edit directly.
+# caara-generated-role = true
+```
+
+Role update rules:
+
+- Caara writes only role names from its managed catalog.
+- Unmarked same-name files cause a hard failure; Caara will not overwrite user roles.
+- Marked files are regenerated around preserved `[model_providers.caara].query_params`.
+- Marked roles for drivers that are no longer found are removed as stale.
+- `uninstall-codex-roles` removes only marked Caara roles.
+
+Driver detection depends on invocation context. Standalone `install-codex-roles` uses the invoking
+shell path. `install-service` uses the resolved service execution path, including selected config
+path prefixes and built-in service defaults.
+
+Generated Claude roles when `claude` is available:
+
+```text
+caara-claude-haiku
+caara-claude-sonnet
+caara-claude-opus
+caara-claude-fable
+```
+
+Generated Antigravity roles when `agy` is available:
+
+```text
+caara-agy-gemini-3-5-flash
+caara-agy-gemini-3-1-pro
+caara-agy-claude-sonnet-4-6
+caara-agy-claude-opus-4-6
+caara-agy-gpt-oss-120b
+```
+
+Safe roles are the default. They do not include repository smoke TMPDIR permissions, broad tool
+grants, or dangerous permission-bypass query params.
+
+Yolo mode is explicit and coupled:
+
+- `install-service --yolo` writes `allowDangerousSkipPermissions: true` into the selected service
+  config and installs yolo roles.
+- Standalone `install-codex-roles --yolo --config <path>` fails unless that config already has
+  `allowDangerousSkipPermissions: true`.
+- Yolo Claude roles set `permission_mode = "bypassPermissions"`.
+- Yolo Antigravity roles set `dangerously_skip_permissions = "true"`.
+- Yolo Antigravity roles do not force `sandbox = "false"`; sandbox remains Codex-advisory/default
+  unless the user preserves a custom query param.
+- Switching yolo on or off updates only the driver-specific dangerous keys and preserves unrelated
+  query params.
+
+## Checked-In Codex Smoke Roles
 
 The local Codex roles live at `.codex/agents/caara-claude.toml`,
 `.codex/agents/caara-claude-fable.toml`, and `.codex/agents/caara-antigravity.toml`. Each role file
@@ -822,8 +945,41 @@ query_params = { print_timeout_seconds = "7200", sandbox = "true" }
 Use `query_params.print_timeout_seconds` for an explicit Antigravity print-mode wait. It accepts
 integer seconds from `1` through `86400`. When omitted, Caara still passes `7200s` to `agy` instead
 of relying on the CLI's `5m0s` default.
+Use `query_params.effort` for an explicit Antigravity effort override. It accepts `low`, `medium`,
+`high`, and `xhigh`; invalid values fail the turn explicitly. The query option wins over Codex
+`reasoning.effort`.
 Use `query_params.dangerously_skip_permissions = "true"` only when Caara was started with
 `--allow-dangerous-skip-permissions`.
+
+Known Antigravity installed-role slugs map effort to Antigravity display model names at turn time:
+
+| Slug | Mapping |
+| --- | --- |
+| `gemini-3.5-flash` | low/medium/high map exactly; xhigh maps to High |
+| `gemini-3.1-pro` | low maps to Low; medium/high/xhigh map to High |
+| `gpt-oss-120b` | always maps to Medium |
+| `claude-sonnet-4.6` | always maps to Thinking |
+| `claude-opus-4.6` | always maps to Thinking |
+
+Unknown Antigravity model specifiers pass through unchanged and do not receive effort mapping.
+
+## Explicit Failure Modes
+
+Caara prefers hard, user-readable failures over silent fallback:
+
+- `install-codex-roles --yolo --config <path>` fails when the selected config lacks
+  `allowDangerousSkipPermissions: true`.
+- Generated role updates fail on unmarked same-name files, for example a hand-written
+  `caara-claude-haiku.toml`.
+- Doctor and service install fail when no real external driver executable is available.
+- Turns targeting unavailable drivers fail at request time; role generation does not create roles
+  for missing drivers.
+- Invalid Claude or Antigravity `effort` query params fail before driver dispatch.
+- Cask generation fails when any required release artifact checksum is missing or malformed, and
+  the release workflow also runs `ruby -c` before pushing the tap update.
+- Release publishing fails on invalid non-`v` manual tags, missing signing/notary/tap 1Password
+  material, failed `codesign` verification, failed notarization, missing tarballs, checksum
+  generation errors, or failed `gh release upload --clobber`.
 
 ## Effect Usage
 

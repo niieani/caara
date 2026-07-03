@@ -33,6 +33,28 @@ Current Caara behavior:
 
 ## Install
 
+Public install uses the Homebrew cask:
+
+```bash
+brew install --cask niieani/tap/caara
+```
+
+The cask installs the `caara` binary and runs `caara install-service` from Homebrew postflight.
+Normal cask uninstall stops/removes the user service but preserves Caara config, state, sessions,
+and logs:
+
+```bash
+brew uninstall --cask caara
+```
+
+Use Homebrew zap only for intentional local data cleanup:
+
+```bash
+brew uninstall --cask --zap caara
+```
+
+Development install:
+
 ```bash
 bun install
 ```
@@ -81,9 +103,10 @@ dist/caara install-service
 
 `install-service` copies the current compiled executable to
 `${XDG_BIN_HOME:-$HOME/.local/bin}/caara`, writes the service config and launchd/systemd user unit,
-runs `doctor --fix`, starts/enables the service, and verifies `/health`. The generated service
-invokes Caara with `--config <absolute-resolved-config-path>` so explicit install config paths
-remain durable. Use `--no-start` to only write artifacts:
+runs `doctor --fix`, installs Caara-managed Codex roles for available real drivers, starts/enables
+the service, and verifies `/health`. The generated service invokes Caara with
+`--config <absolute-resolved-config-path>` so explicit install config paths remain durable. Use
+`--no-start` to write artifacts and roles without starting the service:
 
 ```bash
 dist/caara install-service --no-start
@@ -97,7 +120,18 @@ caara doctor
 caara doctor --fix
 caara uninstall-service
 caara uninstall-service --purge
+caara install-codex-roles [target-dir]
+caara uninstall-codex-roles [target-dir]
 ```
+
+`install-service --no-install-codex-roles` skips global Codex role changes. `install-service --yolo`
+enables `allowDangerousSkipPermissions` in the service config and installs bypass roles. Standalone
+`install-codex-roles --yolo --config <path>` fails unless that selected config already has
+`allowDangerousSkipPermissions: true`.
+
+Claude Code and Antigravity are optional driver capabilities. A service install is healthy when at
+least one real external driver executable is available; missing optional drivers are reported, and
+turns targeting unavailable drivers fail explicitly.
 
 Defaults:
 
@@ -209,6 +243,7 @@ Supported provider query params:
 | `dangerously_skip_permissions` | `true` or `false`; requires server dangerous gate |
 | `add_dirs`                     | JSON array of non-empty absolute paths            |
 | `log_file`                     | absolute path                                     |
+| `effort`                       | `low`, `medium`, `high`, or `xhigh`               |
 | `reasoning`                    | `on` or `off`; defaults to `on`                   |
 | `activity`                     | `on` or `off`; defaults to `on`                   |
 
@@ -220,6 +255,12 @@ Caara always passes `--print-timeout` to `agy`. When `print_timeout_seconds` is 
 
 `dangerously_skip_permissions=true` is rejected unless the server was started with
 `--allow-dangerous-skip-permissions`.
+
+Known Antigravity model-family slugs map Codex advisory effort to Antigravity display names:
+`gemini-3.5-flash` maps low/medium/high exactly and xhigh to High; `gemini-3.1-pro` maps low to Low
+and all other efforts to High; `gpt-oss-120b` maps to Medium; Claude Sonnet 4.6 and Claude Opus 4.6
+map to Thinking. `query_params.effort` overrides Codex advisory effort. Unknown Antigravity model
+specifiers pass through unchanged.
 
 ## Diagnostic Driver
 
@@ -251,7 +292,7 @@ Useful query params:
 
 ## Codex Agent Roles
 
-Local Codex subagent configs live in `.codex/agents/caara-claude.toml`,
+Checked-in smoke roles live in `.codex/agents/caara-claude.toml`,
 `.codex/agents/caara-claude-fable.toml`, and `.codex/agents/caara-antigravity.toml`.
 
 | File                                    | `agent_type`         | Model                  |
@@ -263,7 +304,31 @@ Local Codex subagent configs live in `.codex/agents/caara-claude.toml`,
 Each role embeds its own `[model_providers.caara]` block because Codex validates custom agent role
 config layers before merging project-level provider config.
 
+Installed roles are different: `caara install-codex-roles` writes Caara-managed generated roles to
+`${CODEX_HOME:-$HOME/.codex}/agents` by default, or to one explicit target directory. It generates
+Claude roles for Haiku/Sonnet/Opus/Fable when `claude` is available and Antigravity roles for the
+initial `caara-agy-*` catalog when `agy` is available. Generated files are marked, updates preserve
+existing Caara provider `query_params`, unmarked same-name files cause a hard failure, and stale
+marked roles for missing drivers are removed.
+
 Manual Codex smoke flow: [docs/agents/smoke-testing.md](docs/agents/smoke-testing.md).
+
+## Release Assets
+
+Release Please owns version bumps, tags, changelog, and GitHub releases. The publish workflow reacts
+to a published release or manual `v<version>` tag, uploads these assets, and updates the Homebrew
+tap:
+
+```text
+caara_<version>_darwin_arm64.tar.gz
+caara_<version>_linux_amd64.tar.gz
+caara_<version>_linux_arm64.tar.gz
+checksums.txt
+```
+
+Each tarball contains `caara`, `README.md`, and `LICENSE`. macOS is Apple Silicon only; the macOS
+binary is Developer ID signed and notarized before packaging. Linux tarballs are not codesigned.
+`checksums.txt` contains SHA-256 lines for every uploaded tarball.
 
 ## Sessions And State
 

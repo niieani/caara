@@ -31,6 +31,11 @@ _Avoid_: Parent process, caller
 A Codex-managed delegated agent handle with its own stable Codex thread identity.
 _Avoid_: Fake subagent, simulated subagent
 
+**Installed Codex agent role**:
+A Caara-managed Codex subagent configuration installed into the user's Codex environment so Codex
+can spawn Caara-backed external agents outside this repository.
+_Avoid_: Checked-in smoke role, user template, copied fixture
+
 **External agent**:
 A non-Codex code agent that Caara drives on behalf of a Codex subagent.
 _Avoid_: Backend, provider
