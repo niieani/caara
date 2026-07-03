@@ -417,6 +417,30 @@ Driver-specific prompt mappers still own content validation after normalization.
 driver may accept text and path-based files while explicitly rejecting unsupported current-turn
 content.
 
+## Driver Failure Semantics
+
+Failures that should guide the spawning Codex agent are accepted turn failures, not transport
+crashes. Caara streams them as SSE:
+
+- terminal event: `response.failed`
+- `response.status: "failed"`
+- `response.error.code: "invalid_prompt"`
+- `response.error.message: "Caara driver failed: <driver message>"`
+
+Use `invalid_prompt` for Caara-facing request, prompt, configuration, option, startup, and expected
+environment failures where retrying the same request cannot help. Examples include unsupported
+driver option names, invalid option values, unsupported current-turn content, missing required
+driver executables, unsupported external agent kinds, and core current-turn normalization failures.
+Codex treats this code as nonretryable instead of provider high demand.
+
+Use `server_error` only by explicit classification for true internal, operational, or retryable
+driver failures. Caara has no default "missing code means server error" path for
+`AgentDriverError`; driver code must choose the response error code intentionally.
+
+Malformed transport input that is rejected before Caara accepts a turn remains an HTTP `400`
+OpenAI-shaped `invalid_request_error`. Once a request has been accepted and target selection has
+started, driver-bound failures should use SSE `response.failed`, not HTTP JSON `server_error`.
+
 ## Claude Agent SDK Driver
 
 The Claude Agent SDK driver is one real external-agent driver in v1.
@@ -473,6 +497,7 @@ Supported v1 scenario names:
 - `diagnostic/activity`
 - `diagnostic/fails-before-output`
 - `diagnostic/fails-after-partial`
+- `diagnostic/fails-invalid-request`
 - `diagnostic/hangs-until-cancel`
 - `diagnostic/recovery`
 - `diagnostic/echo`
@@ -500,6 +525,10 @@ non-normalized current-turn content.
 assistant message, records lost-continuity diagnostics, and updates the binding to a fresh
 Diagnostic resume cursor. `diagnostic_fresh_start=failure` forces the unrecoverable failure path for
 smoke testing.
+
+`diagnostic/fails-invalid-request` is the reference smoke for Codex-readable nonretryable driver
+failures. It streams `response.failed` with `error.code = "invalid_prompt"` and the deterministic
+Diagnostic invalid-request message.
 
 Unsupported Diagnostic option names, invalid option values, and unknown scenarios fail explicitly.
 The retired simulator driver and `simulator_*` query options are not part of the public or test

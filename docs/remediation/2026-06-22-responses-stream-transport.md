@@ -5,6 +5,11 @@ Date: 2026-06-22
 Scope: Codex-facing OpenAI Responses HTTP/SSE transport and runtime-event encoder in
 `src/mockResponsesProvider/*`.
 
+Historical note: this remediation predates `CAARA-cglrpxly`. Current accepted driver/request
+failures stream `response.failed` with an explicit driver-selected error code. Caara-facing
+validation failures use `invalid_prompt`; HTTP 500 JSON is not the desired path for accepted
+driver-bound failures.
+
 ## Sources read
 
 - `src/mockResponsesProvider/*`
@@ -143,7 +148,8 @@ The main bug is in `server.ts` and `responseEvents.ts`.
 
 Current path:
 
-1. Driver startup failure before a stream is returned becomes HTTP 500. This part is fine.
+1. Driver startup failure before a stream is returned became HTTP 500. This historical note is
+   superseded for accepted driver-bound failures.
 2. Driver runtime stream failure after startup is caught in `server.ts`:
    `Stream.catch((error) => Stream.drain(Stream.fromEffect(relayLogger.log(TurnFailed))))`.
 3. That turns the failed runtime stream into a normally completed empty tail.
@@ -258,7 +264,9 @@ Target:
 
 Before `response.created` has been sent:
 
-- keep returning HTTP 500 JSON with OpenAI-shaped error.
+- historical note: this doc previously recommended HTTP 500 JSON. Current accepted driver-bound
+  failures should stream `response.failed`; malformed pre-acceptance transport input remains HTTP
+  400 `invalid_request_error`.
 
 After SSE has started:
 
@@ -333,7 +341,7 @@ Use a test `AgentDriverRegistry` layer instead of simulator query params for fai
 
 Cases:
 
-- startup failure before runtime stream still returns HTTP 500 and logs `TurnFailed`;
+- historical startup failure behavior is superseded by accepted SSE `response.failed` coverage;
 - runtime failure before first runtime event streams `response.created`, then `response.failed`,
   no `response.completed`, logs `TurnFailed`, no `TurnCompleted`, no binding save;
 - runtime failure after partial output streams partial events, then `response.failed`, no
@@ -439,4 +447,3 @@ Implications:
 8. Add partial-output cancellation and failed-stream session-binding tests.
 9. Re-run a Codex subagent smoke test from `docs/agents/smoke-testing.md` after the behavior is
    fixed.
-

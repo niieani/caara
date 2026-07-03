@@ -8,8 +8,9 @@
 - Claude and Antigravity validation helpers mostly create bare `AgentDriverError`.
 - Recovery paths treat all start failures similarly; they need to distinguish fatal surfaced
   driver errors from lost-session continuity failures.
-- Server pre-driver catches convert `AgentDriverError` to HTTP `server_error`; unsupported model
-  and current-turn normalization need nonretryable OpenAI-shaped or accepted SSE behavior.
+- Original server pre-driver catches converted `AgentDriverError` to HTTP `server_error`;
+  unsupported external agent kind and current-turn normalization now stream accepted SSE
+  `response.failed` with `invalid_prompt`.
 
 ## Design
 

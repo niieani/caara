@@ -239,10 +239,51 @@ Recommended supplemental checks:
   visible.
 - `?tools=default&activity=off`: ask the same thing and verify no assistant commentary messages are
   visible while relay logs still include runtime item lifecycle events.
+- `?permission-mode=auto`: verify the turn fails explicitly with the unsupported driver-option
+  message and `invalid_prompt`.
 - `?allowed_tools=AskUserQuestion`: verify the turn fails explicitly with the reserved interactive
-  tool validation error.
+  tool validation error and `invalid_prompt`.
 - Same synthetic thread id with a changed cwd: verify `LostSessionRecovered`, the Caara-owned
   recovery assistant text, and a new persisted driver resume cursor.
+
+### Claude Invalid-Option Failure Canary
+
+Use this canary when checking that Codex sees Caara request/driver validation failures as
+nonretryable invalid prompt errors instead of provider high demand.
+
+Direct-provider URL:
+
+```text
+/v1/responses?permission-mode=auto
+```
+
+Use the Codex-shaped body and headers from
+`docs/agents/diagnostic-smoke-runbooks.md#common-setup`, with `model = "claude/haiku"` and any
+current user `input_text` prompt.
+
+Expected SSE:
+
+- HTTP `200` with `content-type: text/event-stream`.
+- Events: `response.created`, then `response.failed`.
+- `response.error.code = "invalid_prompt"`.
+- Exact message:
+  `Caara driver failed: Unsupported Claude Agent SDK driver option: permission-mode.`
+- No `response.completed`.
+
+To verify through the spawning-agent path, make a temporary local copy of
+`.codex/agents/caara-claude.toml` with the same provider block but this invalid query param:
+
+```toml
+query_params = { "permission-mode" = "auto" }
+```
+
+Spawn that temporary role and ask for any one-line reply. The expected visible failure text is the
+exact message above; provider high-demand wording means the Codex error-code mapping regressed.
+
+Focused regression reference:
+
+- `src/claudeAgentSdkDriver/claudeAgentSdkActivity.test.ts`
+  - `surfaces invalid Claude driver options as invalid_prompt response failures`
 
 ## SDK Architecture Checks
 

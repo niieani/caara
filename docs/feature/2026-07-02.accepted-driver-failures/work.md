@@ -1,12 +1,18 @@
 # Work Notes
 
+Historical note: this PRD established accepted driver failures as SSE `response.failed`, but its
+examples predate `CAARA-cglrpxly`. Current semantics require each `AgentDriverError` to choose an
+explicit response code. Caara-facing request, prompt, configuration, and expected startup failures
+use `invalid_prompt`; true internal or retryable failures opt into `server_error`.
+
 ## Transport Failure Contract
 
 - Accepted driver failures use Responses SSE, never assistant final answers.
 - Terminal event: `response.failed`.
 - Failed response payload:
   - `response.status: "failed"`;
-  - `response.error.code: "server_error"`;
+  - `response.error.code`: explicitly classified by the driver/runtime; historical examples in this
+    PRD used `server_error`;
   - `response.error.message: "Caara driver failed: <AgentDriverError.message>"`.
 - Success path remains producer-minimal; do not expand completed response objects in this PRD.
 
@@ -20,8 +26,10 @@
 
 ## Accepted Start Failures
 
-- `server.ts` keeps registry/transport validation errors on JSON error responses before the accepted
-  driver boundary.
+- Historical behavior: `server.ts` kept registry failures on JSON error responses before the
+  accepted driver boundary. Current behavior streams accepted target-selection and current-turn
+  normalization `AgentDriverError` failures as `response.failed` with their explicit response code.
+  Malformed transport input remains HTTP `400` `invalid_request_error`.
 - Once Caara has logged `DriverStarted`, a `startOrResumeTurn` `AgentDriverError` becomes a
   synthetic failed driver turn result:
   - runtime stream: one `TurnFailed` event;
@@ -36,8 +44,9 @@
 - Provider tests that need non-minimal response fields decode SSE data as `Schema.Unknown`, because
   `OpenAiSchema.ResponseStreamEvent` intentionally drops response fields outside its minimal local
   `Response` schema.
-- Existing provider tests were updated from accepted HTTP 500 expectations to SSE failure assertions;
-  registry failures before `DriverStarted` still assert JSON transport errors.
+- Existing provider tests were updated from accepted HTTP 500 expectations to SSE failure
+  assertions. Later `CAARA-cglrpxly` work also moved unsupported external-agent-kind registry
+  failures to the accepted SSE `invalid_prompt` path.
 
 ## Claude Native Binary Regression
 

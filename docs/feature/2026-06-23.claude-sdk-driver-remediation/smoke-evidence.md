@@ -161,6 +161,10 @@ Activity opt-out request:
 
 Reserved interactive tool request:
 
+Historical note: this evidence predates `CAARA-cglrpxly`. Current Claude driver validation failures
+stream `response.failed` with `error.code = "invalid_prompt"`; the HTTP `server_error` body below
+is retained only as old evidence.
+
 - URL: `/v1/responses?allowed_tools=AskUserQuestion`
 - Status: `500`.
 - Body:

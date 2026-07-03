@@ -101,6 +101,7 @@ events.
 | Activity | `diagnostic/activity` | `diagnostic_activity=off` optional |
 | Fails before output | `diagnostic/fails-before-output` | none |
 | Fails after partial | `diagnostic/fails-after-partial` | none |
+| Fails invalid request | `diagnostic/fails-invalid-request` | none |
 | Hangs until cancel | `diagnostic/hangs-until-cancel` | `diagnostic_cancel=interrupted`, `abandoned_reusable`, `abandoned_nonreusable`, or `terminated` |
 | Recovery | `diagnostic/recovery` | `diagnostic_fresh_start=failure` optional |
 | Echo | `diagnostic/echo` | none |
@@ -287,6 +288,43 @@ Expected binding:
 Known failure signatures:
 
 - Final answer after the partial failure means a failed runtime stream was converted to success.
+
+## Fails Invalid Request
+
+Goal: prove Codex-readable nonretryable driver failures use `invalid_prompt`, not provider
+high-demand-style retry behavior.
+
+Codex prompt with `agent_type = "caara-diagnostic-fails-invalid-request"`:
+
+```text
+Run a Diagnostic fails-invalid-request smoke. The expected result is provider failure.
+Report the exact failure text you receive.
+```
+
+Direct-provider model: `diagnostic/fails-invalid-request`.
+
+Expected Codex-visible output:
+
+- Terminal `response.failed`.
+- `response.error.code = "invalid_prompt"`.
+- Error message: `Caara driver failed: diagnostic driver failed with invalid request semantics`.
+- No final assistant answer and no `response.completed`.
+
+Expected relay logs:
+
+- `TargetSelected` with `externalModelSpecifier: "fails-invalid-request"`.
+- `DriverStarted`.
+- `TurnFailed` with `diagnostic driver failed with invalid request semantics`.
+
+Focused regression reference:
+
+- `src/mockResponsesProvider/mockResponsesProvider.test.ts`
+  - `streams Diagnostic invalid-request failures with a fatal response code`
+
+Known failure signatures:
+
+- HTTP JSON `server_error`, `response.error.code = "server_error"`, or Codex provider
+  high-demand wording means the invalid-prompt mapping regressed.
 
 ## Hangs Until Cancel
 
