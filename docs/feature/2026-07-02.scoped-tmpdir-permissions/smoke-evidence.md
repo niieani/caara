@@ -1,6 +1,6 @@
 # Scoped TMPDIR Smoke Evidence
 
-Final run: `temp.local/2026-07-02/claude-scoped-tmpdir-smoke/192634`
+Final run: `temp.local/2026-07-02/claude-scoped-tmpdir-smoke/193652`
 
 Role query params:
 

@@ -63,10 +63,11 @@ the TMPDIR write smoke:
 query_params = { additional_directories = "$TMPDIR", allowed_tools = "Write($TMPDIR/caara-panel/smoke/**),Edit($TMPDIR/caara-panel/smoke/**)", permission_mode = "dontAsk" }
 ```
 
-These params keep Claude Code in noninteractive `dontAsk` mode, add only process TMPDIR as an
-additional directory, and pre-approve writes only under `$TMPDIR/caara-panel/smoke/**`. The role
-does not pre-approve Bash; pass the expanded absolute TMPDIR path in the prompt so Claude can use
-`Write` directly.
+These params keep Claude Code in noninteractive `dontAsk` mode, add the process TMPDIR as the only
+additional directory, and pre-approve writes only under `$TMPDIR/caara-panel/smoke/**`. Claude Code
+can see files under the added TMPDIR directory; edit/write permission remains restricted by the
+scoped `Write` and `Edit` rules. The role does not pre-approve Bash; pass the expanded absolute
+TMPDIR path in the prompt so Claude can use `Write` directly.
 
 Use `agent_type = "caara-claude-fable"` only when intentionally testing Fable. That role sets
 `model = "claude/fable"`; Anthropic documents Fable as requiring Claude Code `v2.1.170+` and not

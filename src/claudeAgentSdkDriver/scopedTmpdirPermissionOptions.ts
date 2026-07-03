@@ -19,16 +19,12 @@ interface ClaudePermissionRuleParts {
   readonly specifier: string;
 }
 
-/** Returns a fresh matcher for shell-like environment placeholders in scoped Claude options. */
-const scopedEnvironmentPlaceholderPattern = (): RegExp =>
-  /\$(?:\{(?<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?<plain>[A-Za-z_][A-Za-z0-9_]*))/gu;
-
 /** Returns a fresh matcher for the only supported scoped Claude placeholder. */
-const tmpdirPlaceholderPattern = (): RegExp => /\$(?:\{TMPDIR\}|TMPDIR)/gu;
+const tmpdirPlaceholderPattern = (): RegExp => /\$(?:\{TMPDIR\}|TMPDIR(?![A-Za-z0-9_]))/gu;
 
-/** Extracts the environment variable name from one placeholder regex match. */
-const scopedEnvironmentPlaceholderName = (match: RegExpExecArray): string =>
-  match.groups?.braced ?? match.groups?.plain ?? "";
+/** Returns a fresh matcher for unsupported shell-like dollar expansions in scoped Claude options. */
+const unsupportedScopedEnvironmentPlaceholderPattern = (): RegExp =>
+  /\$(?!(?:\{TMPDIR\}|TMPDIR(?![A-Za-z0-9_])))(?:\{[^}]*\}|\([^)]*\)|[A-Za-z_][A-Za-z0-9_]*|.)?/gu;
 
 /** Finds the first unsupported environment placeholder in a scoped Claude option value. */
 const unsupportedScopedEnvironmentPlaceholder = ({
@@ -37,9 +33,7 @@ const unsupportedScopedEnvironmentPlaceholder = ({
   readonly value: string;
 }): Option.Option<string> =>
   Option.fromUndefinedOr(
-    Array.from(value.matchAll(scopedEnvironmentPlaceholderPattern())).find(
-      (match) => scopedEnvironmentPlaceholderName(match) !== "TMPDIR",
-    ),
+    Array.from(value.matchAll(unsupportedScopedEnvironmentPlaceholderPattern())).at(0),
   ).pipe(Option.map((match) => match[0] ?? "$"));
 
 /** Returns true when a value contains a supported TMPDIR placeholder. */

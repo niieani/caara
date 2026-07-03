@@ -245,6 +245,10 @@ describe("Claude Agent SDK permission policy", () => {
         const invalidPlaceholderOptions: readonly Readonly<Record<string, string>>[] = [
           { additional_directories: "$HOME/caara" },
           { allowed_tools: "Edit($" + "{HOME}/caara/**)" },
+          { allowed_tools: "Edit($" + "{HOME:-/tmp}/caara/**)" },
+          { allowed_tools: "Edit($" + "{TMPDIR:-/tmp}/caara/**)" },
+          { allowed_tools: "Edit($" + "{TMPDIR%/}/caara/**)" },
+          { allowed_tools: "Edit($(pwd)/caara/**)" },
           { disallowed_tools: "Read($TMPDIR_SUFFIX/**)" },
         ];
         for (const rawDriverOptions of invalidPlaceholderOptions) {

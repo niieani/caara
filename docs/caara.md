@@ -773,9 +773,11 @@ permission rules, Caara expands TMPDIR only inside `Tool(...)` rule specifiers a
 filesystem rules to Claude's double-slash form, for example
 `Edit($TMPDIR/caara-panel/smoke/**)` becomes `Edit(//var/.../T/caara-panel/smoke/**)`.
 The checked-in `caara-claude` role uses this to allow only `Write` and `Edit` under
-`$TMPDIR/caara-panel/smoke/**` while keeping `permission_mode = "dontAsk"`. It does not pre-approve
-Bash; the documented smoke prompt passes an expanded absolute TMPDIR path so Claude Code can create
-the file through `Write`.
+`$TMPDIR/caara-panel/smoke/**` while keeping `permission_mode = "dontAsk"`. The role adds the whole
+process TMPDIR as Claude Code's extra filesystem root, so read/path visibility follows Claude Code's
+additional-directory behavior; write/edit approval is still limited to the smoke subtree. It does not
+pre-approve Bash; the documented smoke prompt passes an expanded absolute TMPDIR path so Claude Code
+can create the file through `Write`.
 
 Example with Antigravity options:
 
