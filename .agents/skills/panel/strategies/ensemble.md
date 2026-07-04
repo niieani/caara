@@ -30,22 +30,33 @@ When the deliverable is code, an attempt seat's artifact is an implementation, n
 Documents stay on plain artifacts — this section adds machinery only where code needs it. Pick the
 data plane by scope:
 
-- **Leaf scope** — self-contained files (a component, a single module): attempt seats write into
-  their artifact directories as usual, no worktrees. For judging, the judge assembles a
-  **gallery**: all variants copied into one scratch route or page in project context, rendered
-  side by side or behind a 1/2/3 switcher, so comparison is visual and simultaneous.
+- **Leaf scope** — self-contained files (a component, a single module) built against the
+  project's *existing* dependencies: attempt seats write into their artifact directories as usual,
+  no worktrees. A variant that needs a new dependency or a config change must declare it in its
+  artifact instead of assuming it — that declaration escalates the variant to feature scope for
+  judging.
 - **Feature scope** — anything that must live at real project paths to build (a website, a
-  monorepo package): each attempt seat gets a nested git worktree under the run root, on branch
-  `panel/<run-id>/<token>`, created and made ready by a **prep seat** — a native Codex subagent
-  invoking `$worktree-setup` — so the orchestrator's context stays clean. Attempts start from a
-  green baseline; a seat that receives a broken worktree was failed by the prep seat, not the
-  task.
+  monorepo package), or a leaf variant that escalated: each attempt seat gets a nested git
+  worktree under the run root, on branch `panel/<run-id>/<token>`, created and made ready by a
+  **prep seat** — a native Codex subagent invoking `$worktree-setup` — so the orchestrator's
+  context stays clean. Attempts start from a green baseline; a seat that receives a broken
+  worktree was failed by the prep seat, not the task.
 
 Judging replaces the synthesis reading rule: the judge **runs** each variant before writing
-anything. Web deliverables: the prep seat boots every variant simultaneously, each on its own
-port, and hands the judge — and the user — a URL list (a compare page with links or iframes when
-side-by-side viewing helps). Backends: judge on code quality and the test suite; execute only when
-variants' state is isolated (ports, databases). Findings cite what was run, not what was read.
+anything, and visual deliverables get a **gallery** — side-by-side or behind a 1/2/3 switcher — in
+one of two forms, selected mechanically by what the variants touched (`git diff --stat` against
+base, or the leaf declarations):
+
+- **Copy gallery** — every variant left manifests and config untouched (no `package.json`,
+  lockfile, or tool-config changes): copy the variants into one scratch route or page in project
+  context, one dev server, cheapest comparison.
+- **Served gallery** — any variant touched dependencies or config: never merge incompatible
+  worlds into one checkout. The prep seat boots each variant in its own worktree on its own port,
+  and the gallery is a static compare page iframing each port behind the switcher (plain links as
+  fallback — some dev servers refuse frames). The judge and the user get the same URL list.
+
+Backends: judge on code quality and the test suite; execute only when variants' state is isolated
+(ports, databases). Findings cite what was run, not what was read.
 
 Verdict and composition: pick one variant, or compose — the composer (usually the judge, warm)
 merges the winning parts into `panel/<run-id>/final`. Either way every variant branch is kept and
