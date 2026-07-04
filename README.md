@@ -1,169 +1,100 @@
+<div align="center">
+  <img src="site/assets/caara-mark.png" alt="caara" width="180" />
+
 # caara
 
-Caara lets Codex spawn external code agents as subagents through an OpenAI Responses-compatible
-transport.
+**Run Claude Code and Antigravity as native Codex subagents.**
 
-Codex sends a streaming `POST /v1/responses` request to Caara. Caara resolves the requested
-`model` string, starts or resumes the matching external driver, and relays normalized runtime events
-back to Codex as Responses SSE frames.
+One OpenAI Responses–compatible bridge · every frontier model you subscribe to, on the same task
 
-Deeper protocol and design details live in [docs/caara.md](docs/caara.md).
+[Website](https://niieani.github.io/caara/) · [Quickstart](#quickstart) ·
+[Spec](docs/caara.md) · [MIT License](LICENSE)
 
-## What Works
+</div>
 
-Current drivers:
+---
 
-| Model prefix   | Driver                | Purpose                                     |
-| -------------- | --------------------- | ------------------------------------------- |
-| `claude/*`     | Claude Agent SDK      | Run Claude Code as a Codex subagent.        |
-| `agy/*`        | Antigravity CLI       | Run Antigravity as a Codex subagent.        |
-| `diagnostic/*` | In-process Diagnostic | Smoke-test Caara without an external agent. |
+Caara is a local-first bridge that lets [Codex](https://openai.com/codex/) spawn **external code
+agents** — Claude Code, Antigravity — as first-class subagents. Codex sends its normal streaming
+`POST /v1/responses` request; Caara resolves the `model` string to a driver, starts or resumes the
+real agent behind it, and relays text, reasoning, and activity back as Responses SSE frames. To
+Codex, `claude/fable` is just another model.
 
-Current Caara behavior:
+## Why
 
-- validates Codex turn identity and workspace metadata before driver dispatch
-- supports only streaming `POST /v1/responses`
-- selects drivers from `model = "<external-agent-kind>/<external-model>"`
-- persists session bindings per external agent kind and Codex thread id
-- resumes follow-up turns with driver-owned resume cursors
-- normalizes current-turn input before driver dispatch
-- streams assistant text, reasoning summaries, and activity commentary back to Codex
-- cancels in-flight driver work when Codex disconnects
-- fails explicitly for malformed requests, invalid options, unsupported content, and unknown drivers
+- **Panels beat frontier.** OpenRouter's
+  [Fusion experiment](https://openrouter.ai/blog/announcements/fusion-beats-frontier/) showed that
+  synthesizing multiple models outscores every single frontier model — a Fable 5 + GPT‑5.5 panel hit
+  69.0% on deep-research tasks vs. 65.3% for solo Fable 5, and a budget trio beat solo GPT‑5.5 and
+  Opus at half the cost. Caara turns your Codex session into that orchestrator.
+- **Right model, right job.** Claude for frontend and judgment-heavy work, GPT‑5.5 for execution and
+  orchestration, Gemini (or a mix) for breadth-first code review.
+- **Cross-model validation.** Have an agent from a *different model family* review your diff —
+  self-review is biased by construction.
+- **Fable without the sticker shock.** Reserve Claude Fable for the moments that need it; delegate
+  execution to cheaper seats.
+- **Use every subscription you pay for.** Caara drives the agent binaries you already have — no new
+  API keys, no per-token metering, no middleman cloud.
+- **Open source, local-first, explicit.** MIT, runs on `127.0.0.1`, and every failure mode is loud:
+  no silent fallbacks anywhere.
 
-## Install
-
-Public install uses the Homebrew cask:
+## Quickstart
 
 ```bash
 brew install --cask niieani/tap/caara
 ```
 
-The cask installs the `caara` binary and runs `caara install-service` from Homebrew postflight.
-Normal cask uninstall stops/removes the user service but preserves Caara config, state, sessions,
-and logs:
+The cask installs the signed `caara` binary, sets up a per-user service on `127.0.0.1:8787`, runs
+`doctor --fix`, health-checks it, and generates **Codex agent roles** for every driver it finds on
+your machine (`claude`, `agy`):
 
 ```bash
-brew uninstall --cask caara
+ls ~/.codex/agents/caara-*.toml
+# caara-claude-fable · caara-claude-sonnet · caara-agy-gemini-3-5-flash · …
 ```
 
-Use Homebrew zap only for intentional local data cleanup:
+Then, inside Codex:
+
+```text
+> spawn a caara-claude-fable subagent to redesign the settings page
+> use the panel skill: cross-review my last diff
+```
+
+Follow-up turns resume the same external agent session. Linux tarballs (and the macOS one) are on
+[GitHub Releases](https://github.com/niieani/caara/releases).
+
+Uninstall keeps your config/state/logs; zap removes them too:
 
 ```bash
-brew uninstall --cask --zap caara
+brew uninstall --cask caara          # stop + remove service, keep data
+brew uninstall --cask --zap caara    # intentional full cleanup
 ```
 
-Development install:
+## The Panel skill
 
-```bash
-bun install
+Caara ships a repo-level Codex skill pack. **Panel** (`.agents/skills/panel/`) convenes a
+cross-model panel of Caara-backed subagents plus the native Codex seat, then adjudicates:
+
+| Strategy | Insures against | Shape |
+| --- | --- | --- |
+| **Ensemble** | omission | isolated panelists attempt the task in parallel; a synthesis seat consolidates |
+| **Debate** | contested direction | panelists argue across rounds; dissent is preserved |
+| **Cross-review** | self-bias | one panelist works, a different model family reviews |
+
+The skill is engineered against sycophantic convergence: the orchestrator never reads panelist
+artifacts (mechanical verification only), forwards positions as artifact paths rather than
+paraphrase, quarantines per-seat run directories from git and search, and applies a stall test
+instead of a round cap. The Caara service itself stays unaware of the skill pack.
+
+## How it works
+
+```text
+Codex ──POST /v1/responses (SSE)──▶ caara ──▶ Claude Agent SDK   (claude/*)
+                                         ├──▶ Antigravity CLI    (agy/*)
+                                         └──▶ Diagnostic driver  (diagnostic/*)
 ```
 
-## Run
-
-Start the local Responses-compatible bridge on `127.0.0.1:8787`:
-
-```bash
-bun run start
-```
-
-Startup flags:
-
-| Flag                                 | Values / shape                    |
-| ------------------------------------ | --------------------------------- |
-| `--config`                           | absolute or relative YAML path    |
-| `--host`                             | non-empty bind host               |
-| `--port`                             | integer from `1` to `65535`       |
-| `--allow-dangerous-skip-permissions` | enables dangerous driver bypasses |
-
-For example:
-
-```bash
-bun run start --port 8788
-```
-
-Caara serves:
-
-- `POST /v1/responses`
-- `GET /health`
-- `stream: true` only
-- Responses SSE output only
-
-`GET /health` returns HTTP 200 with `{"status":"ok","service":"caara"}` when Caara's HTTP router is
-up. It is shallow: it does not verify Claude, Antigravity, credentials, or driver availability.
-
-## User Service
-
-Build a standalone executable, then install Caara as a per-user service:
-
-```bash
-bun run build:service
-dist/caara install-service
-```
-
-`install-service` copies the current compiled executable to
-`${XDG_BIN_HOME:-$HOME/.local/bin}/caara`, writes the service config and launchd/systemd user unit,
-runs `doctor --fix`, installs Caara-managed Codex roles for available real drivers, starts/enables
-the service, and verifies `/health`. The generated service invokes Caara with
-`--config <absolute-resolved-config-path>` so explicit install config paths remain durable. Use
-`--no-start` to write artifacts and roles without starting the service:
-
-```bash
-dist/caara install-service --no-start
-```
-
-Operator commands:
-
-```bash
-caara status
-caara doctor
-caara doctor --fix
-caara uninstall-service
-caara uninstall-service --purge
-caara install-codex-roles [target-dir]
-caara uninstall-codex-roles [target-dir]
-```
-
-`install-service --no-install-codex-roles` skips global Codex role changes. `install-service --yolo`
-enables `allowDangerousSkipPermissions` in the service config and installs bypass roles. Standalone
-`install-codex-roles --yolo --config <path>` fails unless that selected config already has
-`allowDangerousSkipPermissions: true`.
-
-Claude Code and Antigravity are optional driver capabilities. A service install is healthy when at
-least one real external driver executable is available; missing optional drivers are reported, and
-turns targeting unavailable drivers fail explicitly.
-
-Defaults:
-
-- config: `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`
-- state/receipt/logs: `${XDG_STATE_HOME:-$HOME/.local/state}/caara`
-- app log: `<state>/logs/caara.log`, rotated at 10 MiB with 3 retained files
-- macOS service id/file: `dev.caara`,
-  `$HOME/Library/LaunchAgents/dev.caara.plist`
-- Linux service id/file: `caara.service`,
-  `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service`
-
-Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, and `logFile`.
-CLI flags override YAML; YAML overrides built-in defaults. Foreground runs prepend config `path`
-entries to inherited `PATH`; installed services prepend config `path` entries to built-in defaults
-including `$HOME/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin`.
-
-Non-loopback `host` values expose an unauthenticated local agent bridge. Use them only in controlled
-setups, such as containerized isolation with bind-mounted workspaces.
-
-## Request Contract
-
-Codex normally builds the request. For direct tests, the important fields are:
-
-```json
-{
-  "model": "claude/haiku",
-  "input": "Summarize this repository.",
-  "stream": true
-}
-```
-
-The model prefix selects the driver. The model suffix is driver-owned:
+The model prefix selects the driver; the suffix is driver-owned:
 
 ```text
 claude/fable
@@ -173,46 +104,21 @@ agy/gemini-3.5-flash
 diagnostic/basic
 ```
 
-Provider query parameters become driver options. Caara rejects duplicate query keys before driver
-dispatch, and each driver rejects unknown option names.
+For each valid streaming turn, Caara:
 
-## Claude Driver
+- validates Codex turn identity and workspace metadata before driver dispatch
+- starts or resumes the external agent's own session (durable session bindings per external agent
+  kind and Codex thread id, with driver-owned resume cursors)
+- streams assistant text, reasoning summaries, and activity commentary back to Codex
+- cancels in-flight driver work when Codex disconnects
+- fails explicitly for malformed requests, invalid options, unsupported content, and unknown drivers
 
-`claude/*` targets route to the Claude Agent SDK driver.
+Caara serves `POST /v1/responses` (streaming only, Responses SSE output) and a shallow
+`GET /health`. Full protocol and design details: [docs/caara.md](docs/caara.md).
 
-The driver starts SDK `query()` with a durable Caara-generated session id on the first turn. On
-follow-up turns it passes the stored Claude SDK resume cursor back to the SDK.
+### Codex provider config
 
-Claude model suffixes pass through to the SDK as-is. `claude/fable` selects Claude Code's Fable
-alias; `claude/claude-fable-5` selects the full Claude API model name when the configured Claude
-Code provider supports it. Fable requires Claude Code `v2.1.170+`, and Anthropic does not make it
-available for zero-data-retention organizations.
-
-Supported provider query params:
-
-| Query param                | Values / shape                                      |
-| -------------------------- | --------------------------------------------------- |
-| `effort`                   | `low`, `medium`, `high`, `xhigh`, `max`             |
-| `max_budget_usd`           | positive number                                     |
-| `tools`                    | `default`, `disabled`, or comma-delimited tool list |
-| `allowed_tools`            | comma-delimited tool list                           |
-| `disallowed_tools`         | comma-delimited tool list                           |
-| `include_partial_messages` | `true` or `false`; defaults to `true`               |
-| `permission_mode`          | `auto`, `dontAsk`, `bypassPermissions`              |
-| `activity`                 | `on` or `off`; defaults to `on`                     |
-
-`permission_mode` defaults to `dontAsk`. Caara intentionally rejects interactive Claude permission
-modes because Codex subagent turns do not have an approval loop. `bypassPermissions` also sets the
-SDK's required dangerous-bypass opt-in, and is rejected unless the server was started with
-`--allow-dangerous-skip-permissions`.
-
-`AskUserQuestion` is always reserved for unsupported interactive questions. Attempts to allow it via
-`tools` or `allowed_tools` fail explicitly; it is always included in `disallowedTools`.
-
-Claude activity events become commentary messages by default. Use `activity=off` to keep activity in
-relay logs while hiding it from the Codex-visible stream.
-
-Example Codex provider config:
+Installed roles embed this for you; for manual setups:
 
 ```toml
 [model_providers.caara]
@@ -225,15 +131,38 @@ stream_max_retries = 0
 query_params = { effort = "high", permission_mode = "auto" }
 ```
 
-## Antigravity Driver
+Provider query parameters become driver options. Caara rejects duplicate query keys, and each
+driver rejects unknown option names.
 
-`agy/*` targets route to the Antigravity CLI driver.
+## Drivers
 
-The driver runs `agy` with a normalized prompt, model, sandbox settings, optional extra directories,
-and a JSONL transcript log. Follow-up turns pass the stored Antigravity conversation id when one is
-available.
+### Claude (`claude/*`)
 
-Supported provider query params:
+Runs Claude Code through the Claude Agent SDK. Model suffixes pass through as-is: `claude/fable`
+selects Claude Code's Fable alias; `claude/claude-fable-5` selects the full API model name when the
+configured provider supports it. Fable requires Claude Code `v2.1.170+` and is not available to
+zero-data-retention organizations.
+
+| Query param                | Values / shape                                      |
+| -------------------------- | --------------------------------------------------- |
+| `effort`                   | `low`, `medium`, `high`, `xhigh`, `max`             |
+| `max_budget_usd`           | positive number                                     |
+| `tools`                    | `default`, `disabled`, or comma-delimited tool list |
+| `allowed_tools`            | comma-delimited tool list                           |
+| `disallowed_tools`         | comma-delimited tool list                           |
+| `include_partial_messages` | `true` or `false`; defaults to `true`               |
+| `permission_mode`          | `auto`, `dontAsk`, `bypassPermissions`              |
+| `activity`                 | `on` or `off`; defaults to `on`                     |
+
+`permission_mode` defaults to `dontAsk`. Interactive permission modes are rejected — Codex subagent
+turns have no approval loop. `bypassPermissions` additionally requires the server to run with
+`--allow-dangerous-skip-permissions`. `AskUserQuestion` is always disallowed. Claude activity events
+stream as commentary by default; `activity=off` keeps them in relay logs only.
+
+### Antigravity (`agy/*`)
+
+Runs the `agy` CLI with a normalized prompt, model, sandbox settings, optional extra directories,
+and a JSONL transcript log. Follow-up turns pass the stored Antigravity conversation id.
 
 | Query param                    | Values / shape                                    |
 | ------------------------------ | ------------------------------------------------- |
@@ -247,121 +176,99 @@ Supported provider query params:
 | `reasoning`                    | `on` or `off`; defaults to `on`                   |
 | `activity`                     | `on` or `off`; defaults to `on`                   |
 
-`reasoning=off` hides Antigravity thinking output from the Codex reasoning stream. `activity=off`
-keeps command/activity lifecycle in relay logs while hiding Codex-visible commentary.
+Known Antigravity model-family slugs map Codex advisory effort to Antigravity display names
+(`gemini-3.5-flash` maps low/medium/high exactly and xhigh to High; `gemini-3.1-pro` maps low to
+Low and everything else to High; `gpt-oss-120b` maps to Medium; Claude Sonnet/Opus 4.6 map to
+Thinking). Unknown model specifiers pass through unchanged.
 
-Caara always passes `--print-timeout` to `agy`. When `print_timeout_seconds` is omitted, Caara uses
-`7200` seconds instead of the `agy` CLI's own `5m0s` default.
+### Diagnostic (`diagnostic/*`)
 
-`dangerously_skip_permissions=true` is rejected unless the server was started with
-`--allow-dangerous-skip-permissions`.
+In-process scenarios for smoke-testing Caara without an external agent: `basic`, `reasoning`,
+`activity`, `fails-before-output`, `fails-after-partial`, `hangs-until-cancel`, `recovery`, `echo`.
+Tune them with `diagnostic_answer_text`, `diagnostic_chunk_count`, `diagnostic_delay_ms`,
+`diagnostic_cancel`, `diagnostic_resume`, `diagnostic_fresh_start`, and `diagnostic_activity`.
 
-Known Antigravity model-family slugs map Codex advisory effort to Antigravity display names:
-`gemini-3.5-flash` maps low/medium/high exactly and xhigh to High; `gemini-3.1-pro` maps low to Low
-and all other efforts to High; `gpt-oss-120b` maps to Medium; Claude Sonnet 4.6 and Claude Opus 4.6
-map to Thinking. `query_params.effort` overrides Codex advisory effort. Unknown Antigravity model
-specifiers pass through unchanged.
+## Operating the service
 
-## Diagnostic Driver
-
-`diagnostic/*` targets run inside Caara and do not invoke an external agent. Use them for smoke tests,
-transport checks, recovery checks, and cancellation checks.
-
-Supported scenarios:
-
-- `diagnostic/basic`
-- `diagnostic/reasoning`
-- `diagnostic/activity`
-- `diagnostic/fails-before-output`
-- `diagnostic/fails-after-partial`
-- `diagnostic/hangs-until-cancel`
-- `diagnostic/recovery`
-- `diagnostic/echo`
-
-Useful query params:
-
-| Query param              | Purpose                                |
-| ------------------------ | -------------------------------------- |
-| `diagnostic_answer_text` | custom deterministic answer text       |
-| `diagnostic_chunk_count` | split deterministic output into chunks |
-| `diagnostic_delay_ms`    | add bounded artificial delay           |
-| `diagnostic_cancel`      | tune cancellation scenario             |
-| `diagnostic_resume`      | tune resume behavior                   |
-| `diagnostic_fresh_start` | force recovery fresh-start behavior    |
-| `diagnostic_activity`    | `on` or `off` activity visibility      |
-
-## Codex Agent Roles
-
-Checked-in smoke roles live in `.codex/agents/caara-claude.toml`,
-`.codex/agents/caara-claude-fable.toml`, and `.codex/agents/caara-antigravity.toml`.
-
-| File                                    | `agent_type`         | Model                  |
-| --------------------------------------- | -------------------- | ---------------------- |
-| `.codex/agents/caara-claude.toml`       | `caara-claude`       | `claude/haiku`         |
-| `.codex/agents/caara-claude-fable.toml` | `caara-claude-fable` | `claude/fable`         |
-| `.codex/agents/caara-antigravity.toml`  | `caara-antigravity`  | `agy/gemini-3.5-flash` |
-
-Each role embeds its own `[model_providers.caara]` block because Codex validates custom agent role
-config layers before merging project-level provider config.
-
-Installed roles are different: `caara install-codex-roles` writes Caara-managed generated roles to
-`${CODEX_HOME:-$HOME/.codex}/agents` by default, or to one explicit target directory. It generates
-Claude roles for Haiku/Sonnet/Opus/Fable when `claude` is available and Antigravity roles for the
-initial `caara-agy-*` catalog when `agy` is available. Generated files are marked, updates preserve
-existing Caara provider `query_params`, unmarked same-name files cause a hard failure, and stale
-marked roles for missing drivers are removed.
-
-Manual Codex smoke flow: [docs/agents/smoke-testing.md](docs/agents/smoke-testing.md).
-
-## Release Assets
-
-Release Please owns version bumps, tags, changelog, and GitHub releases. The publish workflow reacts
-to a published release or manual `v<version>` tag, uploads these assets, and updates the Homebrew
-tap:
-
-```text
-caara_<version>_darwin_arm64.tar.gz
-caara_<version>_linux_amd64.tar.gz
-caara_<version>_linux_arm64.tar.gz
-checksums.txt
+```bash
+caara status                     # service + health overview
+caara doctor [--fix]             # diagnose (and repair) the installation
+caara install-service            # install binary + service + Codex roles, verify health
+caara uninstall-service [--purge]
+caara install-codex-roles [target-dir]
+caara uninstall-codex-roles [target-dir]
 ```
 
-Each tarball contains `caara`, `README.md`, and `LICENSE`. macOS is Apple Silicon only; the macOS
-binary is Developer ID signed and notarized before packaging. Linux tarballs are not codesigned.
-`checksums.txt` contains SHA-256 lines for every uploaded tarball.
+`install-service` copies the compiled executable to `${XDG_BIN_HOME:-$HOME/.local/bin}/caara`,
+writes the service config and launchd/systemd user unit, runs `doctor --fix`, installs Codex roles
+for available drivers, starts the service, and verifies `/health`. Use `--no-start` to write
+artifacts without starting, `--no-install-codex-roles` to skip role generation, and `--yolo` to
+enable `allowDangerousSkipPermissions` plus bypass roles (standalone
+`install-codex-roles --yolo --config <path>` fails unless that config already opts in).
 
-## Sessions And State
+Generated role files are marked; updates preserve your `query_params` tweaks, unmarked same-name
+files cause a hard failure, and stale roles for missing drivers are removed. Claude Code and
+Antigravity are optional capabilities — an install is healthy with at least one real driver, and
+turns targeting unavailable drivers fail explicitly.
 
-Caara stores durable session bindings outside the repository. Bindings contain resume metadata only;
-external agents remain the source of truth for their own conversation context.
+### Defaults
 
-State directory resolution:
+| What | Where |
+| --- | --- |
+| config | `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml` |
+| state / receipts / sessions | `${XDG_STATE_HOME:-$HOME/.local/state}/caara` (or `CAARA_STATE_DIR`) |
+| app log | `<state>/logs/caara.log`, rotated at 10 MiB, 3 files retained |
+| macOS service | `dev.caara` → `~/Library/LaunchAgents/dev.caara.plist` |
+| Linux service | `caara.service` → `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service` |
 
-1. `CAARA_STATE_DIR`
-2. `$XDG_STATE_HOME/caara`
-3. `$HOME/.local/state/caara`
+Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, `logFile`.
+CLI flags override YAML; YAML overrides built-in defaults. Foreground runs prepend config `path`
+entries to the inherited `PATH`; installed services prepend them to built-in defaults including
+`$HOME/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin`.
 
-Session bindings are keyed by external agent kind and Codex thread id. Changing requested model or
-driver query options on an existing thread is treated as desired state for that driver, not a new
-Caara session identity.
+> [!WARNING]
+> A non-loopback `host` exposes an unauthenticated local agent bridge. Use one only in controlled
+> setups, such as containerized isolation with bind-mounted workspaces.
+
+### Running from source
+
+```bash
+bun install
+bun run start                    # foreground bridge on 127.0.0.1:8787
+bun run start --port 8788        # flags: --config, --host, --port, --allow-dangerous-skip-permissions
+bun run build:service            # compile the single-file executable to dist/caara
+```
+
+## Sessions and state
+
+Session bindings are keyed by external agent kind + Codex thread id and hold resume metadata only —
+the external agent remains the source of truth for its own conversation. Changing the requested
+model or driver options on an existing thread updates that binding's desired state; it does not
+create a new session identity. If a session cannot be resumed, the agent asks the managing agent to
+restate context — never a silent reset.
+
+## Releases
+
+Release Please owns version bumps, tags, changelog, and GitHub releases. The publish workflow
+uploads `caara_<version>_{darwin_arm64,linux_amd64,linux_arm64}.tar.gz` plus `checksums.txt`
+(SHA-256), and updates the Homebrew tap. The macOS binary is Developer ID signed and notarized;
+macOS is Apple Silicon only.
 
 ## Development
 
-Format, lint, typecheck, and focused tests:
-
 ```bash
-bun run fmt
-bun run lint
-bun run typecheck
+bun run fmt        # oxfmt
+bun run lint       # biome + oxlint
+bun run typecheck  # tsgo
 bun run test src/claudeAgentSdkDriver/claudeAgentSdkPermissionPolicy.test.ts
 ```
 
-Project test conventions:
+Conventions: Bun for engine and package manager; Vitest via `bun run test` (never `bun test`);
+test files are `*.test.ts`, type tests `*.tst.ts`. Read
+[docs/agents/testing-patterns.md](docs/agents/testing-patterns.md) before writing tests, and
+[docs/agents/smoke-testing.md](docs/agents/smoke-testing.md) for the manual Codex smoke flow.
+Project vocabulary lives in [CONTEXT.md](CONTEXT.md); decisions in [docs/adr/](docs/adr/).
 
-- use Bun as package manager and runtime
-- run Vitest through `bun run test <filters/options>`
-- do not use Bun's built-in test runner for this project
-- test files use `*.test.ts`; type tests use `*.tst.ts`
+## License
 
-Before writing or changing tests, read
-[docs/agents/testing-patterns.md](docs/agents/testing-patterns.md).
+[MIT](LICENSE) © [Bazyli Brzóska](https://github.com/niieani)
