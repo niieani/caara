@@ -50,17 +50,30 @@ present.
 
 ### 3. Create the run directory
 
+Default root: repo-local `.panel/`, quarantined rather than relocated — portable across sandbox
+postures that restrict writes to the workspace.
+
 ```bash
-run_dir=$(mktemp -d "${TMPDIR:-/tmp}/caara-panel.XXXXXX")
+mkdir -p .panel/<run-id>   # run-id: date plus a random suffix
+grep -qxF '.panel/' .git/info/exclude 2>/dev/null || echo '.panel/' >> .git/info/exclude
 ```
 
-One subdirectory per seat, created before any spawn. Never stage panel work inside the project
-workspace: isolated panelists reliably stumble on sibling work there and build on it instead of
-producing novel work (contamination). Copying results into the project afterwards is step 7's
-explicit decision, never a side effect.
+One subdirectory per seat, named with an opaque random token, created before any spawn. The
+quarantine layers, and what each buys: the exclude entry hides the tree from `git status` and from
+ignore-respecting search (ripgrep, glob) — the two vectors by which isolated panelists actually
+stumble on sibling work (contamination); the dot prefix hides it from plain listings; opaque
+tokens make sibling paths unguessable; cold-blind seats spawn in parallel so sibling artifacts
+barely exist while they work. Give each cold-blind seat only its own subdirectory — never the run
+layout.
 
-Done when the run directory exists outside the workspace and every seat has an assigned
-subdirectory.
+Maximum isolation opt-in: set `CAARA_PANEL_ROOT` to a path outside the workspace (e.g. under
+`$TMPDIR`) when every driver's permission posture allows writes there. If it is set and a seat
+cannot write, fail the run and say why — never fall back silently.
+
+Copying results into the project proper is step 7's explicit decision, never a side effect.
+
+Done when the run directory exists, the exclude entry is present (default root only), and every
+seat has an assigned token subdirectory.
 
 ### 4. Select the strategy
 

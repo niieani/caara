@@ -338,13 +338,25 @@ orchestrator neutrality.
 _Avoid_: Consensus, agreement, alignment
 
 **Run directory**:
-The per-run artifact staging area outside the project workspace, laid out per seat by the
-orchestrator so isolated panelists cannot stumble on sibling work. Copying results back into the
-project afterwards is the orchestrator's optional, explicit step.
-_Avoid_: Project temp folder, workspace subdirectory, scratch dir
+The per-run artifact staging area, quarantined from workspace discovery by ignore semantics and
+opaque per-seat paths, or relocated outside the workspace by explicit opt-in. Laid out per seat by
+the orchestrator so isolated panelists cannot stumble on sibling work; copying results into the
+project proper stays an explicit orchestrator step.
+_Avoid_: Project temp folder, visible scratch dir, silent fallback location
 
 **Contamination**:
-The isolation failure mode: a panelist meant to work independently discovering sibling work in the
-workspace and building on it instead of producing novel work. Prevented by the run directory;
-in-project outputs that cannot leave the workspace need prompt guards or worktrees.
+The isolation failure mode: a panelist meant to work independently discovering sibling work and
+building on it instead of producing novel work. Prevented by the run directory's quarantine
+layers.
 _Avoid_: Cheating, leakage, cross-talk
+
+**Variant**:
+One of several competing implementations of the same task produced by isolated panelists, durable
+as a branch, judged by being run, and kept for the user to overrule the judges.
+_Avoid_: Draft, attempt artifact, throwaway
+
+**Prep seat**:
+A panel seat that makes variant workspaces ready before attempt seats arrive — dependencies, local
+configuration, green baseline — keeping setup toil out of both the orchestrator's context and the
+attempts' task.
+_Avoid_: Setup script, bootstrap step, orchestrator chore
