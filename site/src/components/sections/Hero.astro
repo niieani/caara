@@ -50,11 +50,6 @@ const marqueeSpecs = [
       </div>
     </div>
 
-    <!-- relay signal: a mint pulse crossing from the copy to the mark -->
-    <div class="signal-wire absolute top-1/2 right-0 left-0 hidden lg:block" aria-hidden="true">
-      <span class="signal-dot"></span>
-    </div>
-
     <div class="enter enter-3 relative mx-auto aspect-square w-full max-w-md lg:max-w-none">
       <div class="mark-float size-full">
         <LiquidMark
@@ -107,27 +102,6 @@ const marqueeSpecs = [
       50% { transform: translateY(-12px); }
     }
 
-    .signal-dot {
-      position: absolute;
-      top: -2px;
-      left: 0;
-      width: 5px;
-      height: 5px;
-      border-radius: 999px;
-      background: var(--c-mint);
-      box-shadow: 0 0 10px 1px color-mix(in oklab, var(--c-mint) 70%, transparent);
-      opacity: 0;
-      animation: signal 4.5s ease-in-out infinite;
-      animation-delay: 1.2s;
-    }
-    @keyframes signal {
-      0% { left: 4%; opacity: 0; }
-      12% { opacity: 1; }
-      42% { opacity: 1; }
-      55% { left: 78%; opacity: 0; }
-      100% { left: 78%; opacity: 0; }
-    }
-
     .marquee-track {
       display: flex;
       width: max-content;
@@ -140,19 +114,6 @@ const marqueeSpecs = [
 
   @media (prefers-reduced-motion: reduce) {
     .marquee-track { display: flex; width: max-content; }
-    .signal-dot { display: none; }
-  }
-
-  .signal-wire {
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      var(--c-rule) 12%,
-      var(--c-rule) 70%,
-      transparent 85%
-    );
-    z-index: 0;
   }
 
   .marquee {
