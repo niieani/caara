@@ -18,6 +18,12 @@ const steps = [
     note:
       "Follow-up turns resume the same agent session. caara status and caara doctor keep the service observable.",
   },
+  {
+    title: "Teach Codex to delegate (opt-in)",
+    command: "caara install-codex-roles --agents-md --panel-skill",
+    note:
+      "Maintains a marked guidance block in ~/.codex/AGENTS.md — reach for caara subagents when a different model family's take adds value: reviews, second opinions, contested design calls — and installs the panel skill globally as $panel. Never automatic; uninstall removes both.",
+  },
 ] as const;
 ---
 

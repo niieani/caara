@@ -11,6 +11,15 @@ import {
   type CaaraSettingsValue,
 } from "./caaraSettings.ts";
 import {
+  applyDelegationOptIns,
+  delegationTargetsFromHome,
+  optInHomeValidationFailure,
+  preflightDelegationCleanup,
+  preflightDelegationOptIns,
+  removeDelegationArtifacts,
+  type DelegationOptInTargets,
+} from "./codexDelegationOptIns.ts";
+import {
   safeCodexRoleDriverCatalogs,
   type CaaraCodexRoleDefinition,
   type CaaraCodexRoleDriverCatalog,
@@ -19,6 +28,7 @@ import { caaraCodexRoleInstallerError } from "./codexRoleInstallerError.ts";
 import {
   parseInstallCodexRolesOptions,
   yoloValidationFailure,
+  type InstallCodexRolesOptions,
 } from "./codexRoleInstallerOptions.ts";
 import {
   firstCollision,
@@ -55,6 +65,10 @@ export interface CaaraCodexRoleInstallResult {
   readonly message: string;
   readonly skippedDrivers: readonly CaaraCodexRoleSkippedDriver[];
   readonly targetDirectory: string;
+  /**
+   * Every file written by the run: generated role TOMLs, plus — when the delegation opt-ins
+   * are enabled — the installed panel skill files and the managed Codex AGENTS.md.
+   */
   readonly writtenFiles: readonly string[];
 }
 
@@ -103,6 +117,10 @@ type DetectedRoleDriver = AvailableRoleDriver | SkippedRoleDriver;
 export interface CaaraCodexRoleUninstallResult {
   readonly exitCode: 0 | 1;
   readonly message: string;
+  /**
+   * Every path removed by the run: marked role TOMLs, plus the Caara-owned panel skill
+   * directory and the managed Codex AGENTS.md (or its managed block) when present.
+   */
   readonly removedFiles: readonly string[];
   readonly targetDirectory: string;
 }
@@ -142,8 +160,8 @@ const codexRoleBaseUrlFromSettings = ({
 /** Returns true when an environment path value can be used. */
 const hasNonEmptyPath = (value: string): boolean => value.length > 0;
 
-/** Resolves the default Codex agents directory from CODEX_HOME or HOME. */
-export const defaultCodexAgentsDirectory = ({
+/** Resolves the Codex home directory from CODEX_HOME or HOME. */
+export const defaultCodexHomeDirectory = ({
   env,
 }: {
   readonly env: CaaraCodexRoleInstallerEnvironment;
@@ -152,8 +170,19 @@ export const defaultCodexAgentsDirectory = ({
     onNone: () =>
       Option.match(Option.fromUndefinedOr(env.HOME).pipe(Option.filter(hasNonEmptyPath)), {
         onNone: () => undefined,
-        onSome: (home) => path.join(home, ".codex", "agents"),
+        onSome: (home) => path.join(home, ".codex"),
       }),
+    onSome: (codexHome) => codexHome,
+  });
+
+/** Resolves the default Codex agents directory from CODEX_HOME or HOME. */
+export const defaultCodexAgentsDirectory = ({
+  env,
+}: {
+  readonly env: CaaraCodexRoleInstallerEnvironment;
+}): string | undefined =>
+  Option.match(Option.fromUndefinedOr(defaultCodexHomeDirectory({ env })), {
+    onNone: () => undefined,
     onSome: (codexHome) => path.join(codexHome, "agents"),
   });
 
@@ -311,20 +340,29 @@ const invalidUninstallResult = ({
 const successfulInstallResult = Effect.fnUntraced(function* ({
   baseUrl,
   detected,
+  optInTargets,
+  options,
   roles,
   targetDirectory,
   writePlans,
-  yolo,
 }: {
   readonly baseUrl: string;
   readonly detected: readonly DetectedRoleDriver[];
+  readonly optInTargets: DelegationOptInTargets | undefined;
+  readonly options: InstallCodexRolesOptions;
   readonly roles: readonly CaaraCodexRoleDefinition[];
   readonly targetDirectory: string;
   readonly writePlans: readonly RoleWritePlan[];
-  readonly yolo: boolean;
 }) {
+  yield* Effect.tryPromise({
+    try: () => fs.mkdir(targetDirectory, { recursive: true }),
+    catch: (cause) =>
+      caaraCodexRoleInstallerError(
+        `Failed to create Codex roles directory ${targetDirectory}: ${String(cause)}`,
+      ),
+  });
   yield* removeStaleMarkedRoles({ roles, targetDirectory });
-  const writtenFiles = yield* Effect.forEach(
+  const roleFiles = yield* Effect.forEach(
     writePlans,
     (plan) =>
       writeRoleFile({
@@ -332,61 +370,70 @@ const successfulInstallResult = Effect.fnUntraced(function* ({
         queryParams: plan.queryParams,
         role: plan.role,
         targetDirectory,
-        yolo,
+        yolo: options.yolo,
       }),
     { concurrency: 1 },
   );
+  const optInReport = yield* applyDelegationOptIns({ options, targets: optInTargets });
   const skippedDrivers = skippedDriversFromDetected(detected);
   return {
     exitCode: 0,
-    message: formatInstallResultMessage({
-      skippedDrivers,
-      targetDirectory,
-      writtenFiles,
-    }),
+    message: [
+      formatInstallResultMessage({
+        skippedDrivers,
+        targetDirectory,
+        writtenFiles: roleFiles,
+      }),
+      ...optInReport.messages,
+    ].join("\n"),
     skippedDrivers,
     targetDirectory,
-    writtenFiles,
+    writtenFiles: [...roleFiles, ...optInReport.writtenFiles],
   } satisfies CaaraCodexRoleInstallResult;
 });
 
-/** Builds an install result from managed role preflight output. */
+/** Builds an install result from managed role and opt-in preflight output. */
 const installResultFromPreflight = Effect.fnUntraced(function* ({
   baseUrl,
   collision,
   detected,
+  optInTargets,
+  options,
   roles,
   targetDirectory,
   writePlans,
-  yolo,
 }: {
   readonly baseUrl: string;
   readonly collision: RoleCollisionPlan | undefined;
   readonly detected: readonly DetectedRoleDriver[];
+  readonly optInTargets: DelegationOptInTargets | undefined;
+  readonly options: InstallCodexRolesOptions;
   readonly roles: readonly CaaraCodexRoleDefinition[];
   readonly targetDirectory: string;
   readonly writePlans: readonly RoleWritePlan[];
-  readonly yolo: boolean;
 }) {
-  return yield* Match.value(collision).pipe(
-    Match.when(undefined, () =>
+  const optInRefusal = yield* preflightDelegationOptIns({ options, targets: optInTargets });
+  const refusal =
+    Match.value(collision).pipe(
+      Match.when(undefined, () => optInRefusal),
+      Match.orElse(
+        ({ filePath }) =>
+          `caara install-codex-roles refused unmarked existing Codex role: ${filePath}`,
+      ),
+    );
+  return yield* Option.match(Option.fromUndefinedOr(refusal), {
+    onNone: () =>
       successfulInstallResult({
         baseUrl,
         detected,
+        optInTargets,
+        options,
         roles,
         targetDirectory,
         writePlans,
-        yolo,
       }),
-    ),
-    Match.orElse(({ filePath }) =>
-      Effect.succeed(
-        invalidInstallResult({
-          message: `caara install-codex-roles refused unmarked existing Codex role: ${filePath}`,
-        }),
-      ),
-    ),
-  );
+    onSome: (message) => Effect.succeed(invalidInstallResult({ message })),
+  });
 });
 
 /** Runs `caara install-codex-roles` without terminating the host process. */
@@ -396,7 +443,10 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
   env = processCodexRoleInstallerEnvironment(),
 }: RunCaaraInstallCodexRolesOptions) {
   const options = parseInstallCodexRolesOptions({ args });
-  const validationFailure = yield* yoloValidationFailure({ configLoader, env, options });
+  const yoloFailure = yield* yoloValidationFailure({ configLoader, env, options });
+  const codexHomeForOptIns = defaultCodexHomeDirectory({ env });
+  const validationFailure =
+    yoloFailure ?? optInHomeValidationFailure({ codexHome: codexHomeForOptIns, options });
   const settingsResolution = yield* resolveCaaraSettingsResolutionFromArgs({
     args: options.settingsArgs,
     configLoader,
@@ -404,6 +454,10 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
   });
   const baseUrl = codexRoleBaseUrlFromSettings({ settings: settingsResolution.settings });
   const targetDirectory = targetDirectoryFromArgs({ args: options.targetArgs, env });
+  const optInTargets = Option.match(Option.fromUndefinedOr(codexHomeForOptIns), {
+    onNone: () => undefined,
+    onSome: (resolvedHome) => delegationTargetsFromHome({ codexHome: resolvedHome }),
+  });
   return yield* Option.match(Option.fromUndefinedOr(validationFailure), {
     onNone: () =>
       Option.match(Option.fromUndefinedOr(targetDirectory), {
@@ -416,13 +470,6 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
           ),
         onSome: (resolvedTargetDirectory) =>
           Effect.gen(function* () {
-            yield* Effect.tryPromise({
-              try: () => fs.mkdir(resolvedTargetDirectory, { recursive: true }),
-              catch: (cause) =>
-                caaraCodexRoleInstallerError(
-                  `Failed to create Codex roles directory ${resolvedTargetDirectory}: ${String(cause)}`,
-                ),
-            });
             const detected = yield* detectRoleDrivers({ env });
             const roles = rolesFromAvailableDrivers(detected);
             const preflightPlans = yield* preflightRoleWrites({
@@ -435,15 +482,51 @@ export const runCaaraInstallCodexRoles = Effect.fnUntraced(function* ({
               baseUrl,
               collision,
               detected,
+              optInTargets,
+              options,
               roles,
               targetDirectory: resolvedTargetDirectory,
               writePlans,
-              yolo: options.yolo,
             });
           }),
       }),
     onSome: (message) => Effect.succeed(invalidInstallResult({ message })),
   });
+});
+
+/** Removes marked roles plus Caara-owned delegation artifacts after cleanup preflight passed. */
+const successfulUninstallResult = Effect.fnUntraced(function* ({
+  codexHome,
+  targetDirectory,
+}: {
+  readonly codexHome: string | undefined;
+  readonly targetDirectory: string;
+}) {
+  yield* Effect.tryPromise({
+    try: () => fs.mkdir(targetDirectory, { recursive: true }),
+    catch: (cause) =>
+      caaraCodexRoleInstallerError(
+        `Failed to create Codex roles directory ${targetDirectory}: ${String(cause)}`,
+      ),
+  });
+  const removedRoleFiles = yield* removeMarkedRoles({ targetDirectory });
+  const cleanupReports = yield* Effect.forEach(
+    [codexHome].filter((home) => home !== undefined),
+    (home) => removeDelegationArtifacts({ codexHome: home }),
+    { concurrency: 1 },
+  );
+  return {
+    exitCode: 0,
+    message: [
+      `removed ${removedRoleFiles.length} Codex roles from ${targetDirectory}`,
+      ...cleanupReports.flatMap((report) => report.messages),
+    ].join("\n"),
+    removedFiles: [
+      ...removedRoleFiles,
+      ...cleanupReports.flatMap((report) => report.removedPaths),
+    ],
+    targetDirectory,
+  } satisfies CaaraCodexRoleUninstallResult;
 });
 
 /** Runs `caara uninstall-codex-roles` without terminating the host process. */
@@ -452,6 +535,8 @@ export const runCaaraUninstallCodexRoles = Effect.fnUntraced(function* ({
   env = processCodexRoleInstallerEnvironment(),
 }: RunCaaraUninstallCodexRolesOptions) {
   const targetDirectory = targetDirectoryFromArgs({ args, env });
+  const codexHome = defaultCodexHomeDirectory({ env });
+  const cleanupRefusal = yield* preflightDelegationCleanup({ codexHome });
   return yield* Option.match(Option.fromUndefinedOr(targetDirectory), {
     onNone: () =>
       Effect.succeed(
@@ -461,21 +546,13 @@ export const runCaaraUninstallCodexRoles = Effect.fnUntraced(function* ({
         }),
       ),
     onSome: (resolvedTargetDirectory) =>
-      Effect.gen(function* () {
-        yield* Effect.tryPromise({
-          try: () => fs.mkdir(resolvedTargetDirectory, { recursive: true }),
-          catch: (cause) =>
-            caaraCodexRoleInstallerError(
-              `Failed to create Codex roles directory ${resolvedTargetDirectory}: ${String(cause)}`,
-            ),
-        });
-        const removedFiles = yield* removeMarkedRoles({ targetDirectory: resolvedTargetDirectory });
-        return {
-          exitCode: 0,
-          message: `removed ${removedFiles.length} Codex roles from ${resolvedTargetDirectory}`,
-          removedFiles,
-          targetDirectory: resolvedTargetDirectory,
-        } satisfies CaaraCodexRoleUninstallResult;
+      Option.match(Option.fromUndefinedOr(cleanupRefusal), {
+        onNone: () =>
+          successfulUninstallResult({
+            codexHome,
+            targetDirectory: resolvedTargetDirectory,
+          }),
+        onSome: (message) => Effect.succeed(invalidUninstallResult({ message })),
       }),
   });
 });

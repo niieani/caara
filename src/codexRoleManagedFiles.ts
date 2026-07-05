@@ -5,6 +5,7 @@ import { Effect, Match } from "effect";
 
 import { allSafeCodexRoleDefinitions, type CaaraCodexRoleDefinition } from "./codexRoleCatalog.ts";
 import { caaraCodexRoleInstallerError } from "./codexRoleInstallerError.ts";
+import { pathExists } from "./fsPathExists.ts";
 import {
   isCaaraGeneratedCodexRole,
   parseCodexRoleQueryParams,
@@ -120,14 +121,6 @@ const allManagedRoleFilenames = (): readonly string[] =>
 const isManagedRoleFilename = ({ filename }: { readonly filename: string }): boolean =>
   allManagedRoleFilenames().includes(filename);
 
-/** Returns whether one path exists. */
-const fileExists = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
-  return yield* Effect.tryPromise({
-    try: () => Bun.file(filePath).exists(),
-    catch: () => false,
-  });
-});
-
 /** Reads a managed role file as UTF-8 text. */
 const readRoleFile = Effect.fnUntraced(function* ({ filePath }: { readonly filePath: string }) {
   return yield* Effect.tryPromise({
@@ -237,7 +230,7 @@ const preflightRoleWrite = Effect.fnUntraced(function* ({
   readonly targetDirectory: string;
 }) {
   const filePath = roleFilePath({ role, targetDirectory });
-  const exists = yield* fileExists({ filePath });
+  const exists = yield* pathExists({ targetPath: filePath });
   const sources = yield* Effect.forEach(
     [filePath].filter(() => exists),
     (existingPath) => readRoleFile({ filePath: existingPath }),

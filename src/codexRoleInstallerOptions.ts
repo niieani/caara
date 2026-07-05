@@ -8,10 +8,15 @@ import {
 
 /** Parsed standalone install-codex-roles options. */
 export interface InstallCodexRolesOptions {
+  readonly agentsMd: boolean;
+  readonly panelSkill: boolean;
   readonly settingsArgs: readonly string[];
   readonly targetArgs: readonly string[];
   readonly yolo: boolean;
 }
+
+/** Boolean install-codex-roles flags excluded from the positional target directory args. */
+const booleanInstallFlags: readonly string[] = ["--agents-md", "--panel-skill", "--yolo"];
 
 /** Returns whether an arg is a config flag consumed by role yolo validation. */
 const isConfigArg = (arg: string): boolean => arg === "--config" || arg.startsWith("--config=");
@@ -31,12 +36,16 @@ export const parseInstallCodexRolesOptions = ({
 }: {
   readonly args: readonly string[];
 }): InstallCodexRolesOptions => ({
+  agentsMd: args.includes("--agents-md"),
+  panelSkill: args.includes("--panel-skill"),
   settingsArgs: args.filter(
     (arg, index) => isConfigArg(arg) || isSeparatedConfigValueIndex({ args, index }),
   ),
   targetArgs: args.filter(
     (arg, index) =>
-      arg !== "--yolo" && !isConfigArg(arg) && !isSeparatedConfigValueIndex({ args, index }),
+      !booleanInstallFlags.includes(arg) &&
+      !isConfigArg(arg) &&
+      !isSeparatedConfigValueIndex({ args, index }),
   ),
   yolo: args.includes("--yolo"),
 });

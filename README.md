@@ -70,6 +70,40 @@ brew uninstall --cask caara          # stop + remove service, keep data
 brew uninstall --cask --zap caara    # intentional full cleanup
 ```
 
+## Teach Codex to delegate
+
+Installing roles makes caara subagents *available* — it doesn't make Codex *reach for them*. Two
+opt-ins close that gap:
+
+```bash
+caara install-codex-roles --agents-md --panel-skill
+```
+
+- `--agents-md` maintains a marked guidance block in `~/.codex/AGENTS.md` telling Codex when a
+  caara subagent beats a native one: code review, second opinions, contested design calls —
+  anywhere a genuinely different model family's perspective adds value. Reruns update the block
+  in place; content outside the markers is never touched.
+- `--panel-skill` installs the [Panel skill](#the-panel-skill) globally to
+  `~/.codex/skills/panel`, so `$panel` works from any repo. The guidance block references
+  `$panel` only when the skill is actually installed.
+
+Both are strictly opt-in: plain installs (including the brew flow) never modify your AGENTS.md or
+skills, and `caara uninstall-codex-roles` removes exactly what was added. Prefer to write the
+guidance yourself? This is the block `--agents-md` maintains:
+
+```markdown
+## Cross-model subagents (Caara)
+
+`caara-*` subagent roles run external code agents (Claude Code, Antigravity) as native Codex
+subagents — a genuinely different model family, not another Codex seat. Prefer them over native
+subagents when a different model's perspective adds value: code review, second opinions,
+contested design calls, or tasks that play to another model's strengths. Follow-up turns resume
+the same external session, so treat them as persistent collaborators rather than one-shot tools.
+
+For structured multi-model work — ensemble attempts, debates, cross-review — invoke the global
+`$panel` skill.
+```
+
 ## The Panel skill
 
 Caara ships a repo-level Codex skill pack. **Panel** (`.agents/skills/panel/`) convenes a
@@ -195,7 +229,7 @@ caara status                     # service + health overview
 caara doctor [--fix]             # diagnose (and repair) the installation
 caara install-service            # install binary + service + Codex roles, verify health
 caara uninstall-service [--purge]
-caara install-codex-roles [target-dir]
+caara install-codex-roles [target-dir] [--agents-md] [--panel-skill]
 caara uninstall-codex-roles [target-dir]
 ```
 
@@ -207,7 +241,10 @@ enable `allowDangerousSkipPermissions` plus bypass roles (standalone
 `install-codex-roles --yolo --config <path>` fails unless that config already opts in).
 
 Generated role files are marked; updates preserve your `query_params` tweaks, unmarked same-name
-files cause a hard failure, and stale roles for missing drivers are removed. Claude Code and
+files cause a hard failure, and stale roles for missing drivers are removed. The same ownership
+rules apply to the [delegation opt-ins](#teach-codex-to-delegate): `--agents-md` and
+`--panel-skill` refuse unmarked user-owned files, and `uninstall-codex-roles` removes the managed
+AGENTS.md block and Caara-installed panel skill alongside the roles. Claude Code and
 Antigravity are optional capabilities: an install is healthy with at least one real driver, and
 turns targeting unavailable drivers fail explicitly.
 
