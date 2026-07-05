@@ -5,7 +5,7 @@
 
 **Run Claude Code and Antigravity as native Codex subagents.**
 
-Agents, relayed: one local bridge, every model you subscribe to.
+Every frontier mind, inside Codex: one local bridge for the agents you already subscribe to.
 
 [Website](https://niieani.github.io/caara/) · [Quickstart](#quickstart) ·
 [Spec](docs/caara.md) · [MIT License](LICENSE)
