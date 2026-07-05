@@ -1,0 +1,42 @@
+---
+const steps = [
+  {
+    title: "Install",
+    command: "brew install --cask niieani/tap/caara",
+    note:
+      "Installs the signed binary, starts the per-user service, runs the doctor, and verifies health. Linux tarballs live on GitHub Releases.",
+  },
+  {
+    title: "Check the generated roles",
+    command: "ls ~/.codex/agents/caara-*.toml",
+    note:
+      "The installer detects claude and agy on your machine and writes a Codex agent role for each available model. Updates keep your edits.",
+  },
+  {
+    title: "Delegate from Codex",
+    command: "spawn a caara-claude-fable subagent to redesign the settings page",
+    note:
+      "Follow-up turns resume the same agent session. caara status and caara doctor keep the service observable.",
+  },
+] as const;
+---
+
+<section id="start" class="scroll-mt-24 py-20">
+  <h2 class="reveal text-3xl font-medium tracking-tight sm:text-4xl">Running in two minutes</h2>
+  <ol class="mt-10 space-y-4">
+    {
+      steps.map((step, i) => (
+        <li class="reveal grid gap-x-6 gap-y-3 rounded-lg border border-rule bg-surface p-6 sm:grid-cols-[3rem_1fr] sm:p-7">
+          <span class="grid size-10 place-items-center rounded-md border border-mint/40 font-mono text-[15px] text-mint">
+            {i + 1}
+          </span>
+          <div>
+            <h3 class="text-lg font-medium tracking-tight">{step.title}</h3>
+            <pre class="code-panel mt-3 px-4 py-3"><code>{step.command}</code></pre>
+            <p class="mt-3 max-w-[70ch] text-[14.5px] leading-relaxed text-muted">{step.note}</p>
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+</section>

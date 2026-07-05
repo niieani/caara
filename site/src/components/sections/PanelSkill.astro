@@ -1,0 +1,67 @@
+---
+const strategies = [
+  {
+    name: "Ensemble",
+    line: "Isolated seats attempt the same task in parallel, then a synthesis seat merges the results.",
+    when: "For work where one model would miss things.",
+  },
+  {
+    name: "Debate",
+    line: "Seats argue across rounds and keep their disagreements on the record.",
+    when: "For contested calls between competing approaches.",
+  },
+  {
+    name: "Cross-review",
+    line: "One seat does the work and a seat from another model family reviews it.",
+    when: "For diffs, plans, and anything you just wrote.",
+  },
+] as const;
+
+const safeguards = [
+  "The orchestrator checks artifacts mechanically instead of reading them, which keeps its verdict unbiased.",
+  "Positions travel between seats as file paths. Paraphrasing would leak the orchestrator's lean.",
+  "A debate round counts only when a position changes for a stated reason. Two stalled rounds end the run.",
+  "Every seat works in a quarantined directory that git and search tools skip.",
+];
+---
+
+<section id="panel" class="scroll-mt-24 py-20">
+  <div class="grid gap-10 lg:grid-cols-[0.8fr_1.2fr]">
+    <div class="reveal">
+      <h2 class="text-3xl font-medium tracking-tight sm:text-4xl">
+        The Panel skill referees the room
+      </h2>
+      <p class="mt-4 leading-relaxed text-muted">
+        Caara ships with a Codex skill that convenes several subagents on one task and delivers a
+        single adjudicated result. It picks a strategy from the risk you describe, or you name one
+        yourself.
+      </p>
+      <p class="mt-4 leading-relaxed text-muted">
+        Group deliberation usually decays into agreement. The skill is built to prevent that:
+      </p>
+      <ul class="mt-4 space-y-3">
+        {
+          safeguards.map((safeguard) => (
+            <li class="flex items-start gap-3 text-[15px] leading-relaxed text-muted">
+              <span class="mt-2 size-1.5 shrink-0 rounded-full bg-copper" aria-hidden="true" />
+              {safeguard}
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+    <div class="space-y-4">
+      {
+        strategies.map((strategy) => (
+          <article class="reveal rounded-lg border border-rule bg-surface p-7">
+            <div class="flex items-baseline justify-between gap-4">
+              <h3 class="text-xl font-medium tracking-tight">{strategy.name}</h3>
+              <span class="hidden text-right font-mono text-xs text-muted sm:block">{strategy.when}</span>
+            </div>
+            <p class="mt-2 max-w-[52ch] text-[15px] leading-relaxed text-muted">{strategy.line}</p>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>

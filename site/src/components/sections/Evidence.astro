@@ -1,0 +1,83 @@
+---
+/**
+ * Fusion benchmark figure. Data from OpenRouter, "Fusion beats frontier"
+ * (DRACO deep-research benchmark, 100 tasks across 10 domains).
+ */
+const rows = [
+  { label: "Fable 5 + GPT-5.5", kind: "panel", value: 69.0 },
+  { label: "Opus 4.8 + GPT-5.5 + Gemini 3.1 Pro", kind: "panel", value: 68.3 },
+  { label: "Claude Fable 5, solo", kind: "solo", value: 65.3 },
+  { label: "Gemini 3 Flash + Kimi K2.6 + DeepSeek V4", kind: "panel", value: 64.7 },
+] as const;
+const max = 72;
+---
+
+<section id="evidence" class="scroll-mt-24 py-20">
+  <div class="reveal max-w-2xl">
+    <h2 class="text-3xl font-medium tracking-tight sm:text-4xl">
+      Panels of models outscore any model alone
+    </h2>
+    <p class="mt-4 leading-relaxed text-muted">
+      OpenRouter's <a
+        href="https://openrouter.ai/blog/announcements/fusion-beats-frontier/"
+        rel="noopener"
+        class="text-ink underline decoration-rule underline-offset-3 hover:decoration-mint">Fusion benchmark</a
+      > ran 100 deep-research tasks. Every multi-model panel beat every solo frontier model, and a
+      budget trio outscored solo GPT-5.5 and Opus 4.8 at half the cost.
+    </p>
+  </div>
+
+  <figure class="reveal mt-10 rounded-lg border border-rule bg-surface p-6 sm:p-8">
+    <figcaption class="font-mono text-[13px] font-medium text-muted">
+      DRACO deep-research score, higher is better
+    </figcaption>
+    <div class="mt-6 space-y-4">
+      {
+        rows.map((row) => (
+          <div class="grid items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(200px,320px)_1fr_3.5rem]">
+            <span class="text-sm text-muted">{row.label}</span>
+            <div class="h-3 overflow-hidden rounded-sm bg-surface-2">
+              <div
+                class:list={["bench-bar h-full rounded-sm", row.kind === "panel" ? "bg-bar-panel" : "bg-bar-solo"]}
+                style={`--w: ${(row.value / max) * 100}%`}
+              />
+            </div>
+            <span class="text-right font-mono text-sm">{row.value.toFixed(1)}%</span>
+          </div>
+        ))
+      }
+    </div>
+    <p class="mt-6 text-[13.5px] leading-relaxed text-muted">
+      Synthesis helps even without model diversity: Opus 4.8 paired with itself scored 65.5%
+      against 58.8% solo. Caara gives a Codex session the same structure. Codex orchestrates while
+      Claude Code, Antigravity, and native Codex seats work the task.
+    </p>
+  </figure>
+</section>
+
+<style>
+  /* bar hues validated against both surfaces with the dataviz six-checks script */
+  .bg-bar-panel {
+    background: var(--c-bar-panel, #1e9e7e);
+  }
+  .bg-bar-solo {
+    background: #788391;
+  }
+  :global([data-theme="dark"]) .bg-bar-panel {
+    background: var(--c-bar-panel-dark, #2ea183);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .bench-bar {
+      width: 0;
+      transition: width 900ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    :global(.reveal.in) .bench-bar {
+      width: var(--w);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bench-bar {
+      width: var(--w);
+    }
+  }
+</style>

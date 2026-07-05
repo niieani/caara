@@ -1,0 +1,36 @@
+---
+import Mark from "./Mark.astro";
+import ThemeToggle from "./ThemeToggle.astro";
+import githubIcon from "simple-icons/icons/github.svg?raw";
+
+const base = import.meta.env.BASE_URL;
+---
+
+<header
+  class="sticky top-0 z-30 border-b border-rule bg-bg/85 backdrop-blur-md"
+  style="backdrop-filter: blur(12px)"
+>
+  <div class="mx-auto flex h-16 w-full max-w-6xl items-center gap-8 px-5 sm:px-8">
+    <a href={base} class="flex items-center gap-2.5 font-mono text-lg font-medium tracking-wide">
+      <Mark size={26} />
+      caara
+    </a>
+    <nav class="ml-auto hidden items-center gap-7 text-[15px] text-muted md:flex" aria-label="Sections">
+      <a href="#evidence" class="transition-colors hover:text-ink">Why</a>
+      <a href="#how" class="transition-colors hover:text-ink">How it works</a>
+      <a href="#panel" class="transition-colors hover:text-ink">Panel</a>
+      <a href="#start" class="transition-colors hover:text-ink">Install</a>
+      <a href="#reference" class="transition-colors hover:text-ink">Reference</a>
+    </nav>
+    <div class="flex items-center gap-2 md:ml-0 ml-auto">
+      <a
+        href="https://github.com/niieani/caara"
+        rel="noopener"
+        aria-label="caara on GitHub"
+        class="grid size-9 place-items-center rounded-md border border-rule text-muted transition-colors hover:text-ink [&>svg]:size-4.5 [&>svg]:fill-current"
+        set:html={githubIcon}
+      />
+      <ThemeToggle />
+    </div>
+  </div>
+</header>

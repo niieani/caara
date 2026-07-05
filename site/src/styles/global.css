@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/*
+ * Caara brand tokens (see /DESIGN.md, "Relay Aperture" system).
+ * Dark is the primary product expression; light is the editorial expression.
+ * Semantic variables swap per theme; Tailwind reads them via @theme inline.
+ */
+
+:root {
+  /* light: warm paper */
+  --c-bg: #f3eee4;
+  --c-surface: #fbfaf6;
+  --c-surface-2: #ece6da;
+  --c-text: #15181c;
+  --c-text-muted: #5b636e;
+  --c-rule: #d8d0c4;
+  --c-mint: #109e7c;
+  --c-mint-soft: #22c9a3;
+  --c-copper: #b96b4f;
+  --c-code-bg: #eee8dc;
+}
+
+[data-theme="dark"] {
+  /* dark: layered graphite */
+  --c-bg: #090a0b;
+  --c-surface: #12151a;
+  --c-surface-2: #171a1f;
+  --c-text: #ede7da;
+  --c-text-muted: #8b95a1;
+  --c-rule: #262c33;
+  --c-mint: #63f6c9;
+  --c-mint-soft: #2ea183;
+  --c-copper: #c77854;
+  --c-code-bg: #0d1013;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-ink: var(--c-text);
+  --color-muted: var(--c-text-muted);
+  --color-rule: var(--c-rule);
+  --color-mint: var(--c-mint);
+  --color-mint-soft: var(--c-mint-soft);
+  --color-copper: var(--c-copper);
+  --color-code-bg: var(--c-code-bg);
+
+  --font-sans: "Satoshi", "Satoshi Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+html {
+  scroll-behavior: smooth;
+  background-color: var(--c-bg);
+}
+
+body {
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--c-mint) 30%, transparent);
+}
+
+/* fine paper grain (light) / graphite scanline (dark), fixed + pointer-safe */
+.texture-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* scroll reveal: gated behind no-preference so reduced-motion users get static content */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1), transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.in {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* code blocks */
+.code-panel {
+  background: var(--c-code-bg);
+  border: 1px solid var(--c-rule);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.tok-c { color: var(--c-text-muted); }
+.tok-k { color: var(--c-mint); }
+.tok-s { color: var(--c-copper); }

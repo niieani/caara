@@ -100,6 +100,7 @@ components:
     rounded: "{rounded.md}"
     padding: "{spacing.md}"
 ---
+
 # Caara Design
 
 ## Overview

@@ -31,6 +31,6 @@
       }
     ]
   },
-  "exclude": ["references/", "temp.local/"],
+  "exclude": ["references/", "temp.local/", "site/"],
   "$schema": "https://raw.githubusercontent.com/Effect-TS/tsgo/refs/heads/main/schema.json"
 }

@@ -1,0 +1,48 @@
+---
+const cells = [
+  {
+    title: "Your subscriptions do the work",
+    body:
+      "Caara drives the agent binaries you already have installed and signed in. It adds no API keys and no per-token bills.",
+    tone: "mint",
+  },
+  {
+    title: "Save Fable for the hard parts",
+    body:
+      "Route judgment-heavy work to Claude Fable and let cheaper seats handle execution. A panel with one Fable seat outscores Fable working alone.",
+    tone: "plain",
+  },
+  {
+    title: "A second model checks the diff",
+    body:
+      "Cross-family review catches what self-review keeps missing. Gemini reads Claude's work with different habits and different blind spots.",
+    tone: "plain",
+  },
+  {
+    title: "Local and open",
+    body:
+      "MIT licensed, served on 127.0.0.1, with every failure mode explicit. Read the source, build it yourself, or install from Homebrew.",
+    tone: "copper",
+  },
+] as const;
+---
+
+<section class="py-8">
+  <div class="grid gap-4 sm:grid-cols-2">
+    {
+      cells.map((cell) => (
+        <article
+          class:list={[
+            "reveal rounded-lg border p-7",
+            cell.tone === "mint" && "border-mint/25 bg-mint/8",
+            cell.tone === "copper" && "border-copper/30 bg-copper/8",
+            cell.tone === "plain" && "border-rule bg-surface",
+          ]}
+        >
+          <h3 class="text-lg font-medium tracking-tight">{cell.title}</h3>
+          <p class="mt-2.5 text-[15px] leading-relaxed text-muted">{cell.body}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>

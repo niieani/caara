@@ -1,0 +1,38 @@
+---
+import Mark from "./Mark.astro";
+---
+
+<footer class="mt-28 border-t border-rule">
+  <div
+    class="mx-auto flex w-full max-w-6xl flex-col items-start gap-6 px-5 py-12 sm:flex-row sm:items-center sm:justify-between sm:px-8"
+  >
+    <div class="flex items-center gap-3">
+      <Mark size={24} />
+      <span class="font-mono text-sm text-muted">Agents, relayed.</span>
+    </div>
+    <nav class="flex flex-wrap gap-x-7 gap-y-2 text-sm text-muted" aria-label="Footer">
+      <a href="https://github.com/niieani/caara" rel="noopener" class="transition-colors hover:text-ink">GitHub</a>
+      <a
+        href="https://github.com/niieani/caara/blob/main/docs/caara.md"
+        rel="noopener"
+        class="transition-colors hover:text-ink">Spec</a
+      >
+      <a
+        href="https://github.com/niieani/caara/blob/main/LICENSE"
+        rel="noopener"
+        class="transition-colors hover:text-ink">MIT license</a
+      >
+      <a
+        href="https://openrouter.ai/blog/announcements/fusion-beats-frontier/"
+        rel="noopener"
+        class="transition-colors hover:text-ink">Fusion benchmark</a
+      >
+    </nav>
+  </div>
+  <div class="mx-auto w-full max-w-6xl px-5 pb-10 sm:px-8">
+    <p class="text-xs text-muted">
+      Built by <a href="https://github.com/niieani" rel="noopener" class="underline decoration-rule underline-offset-2 hover:text-ink">@niieani</a>.
+      Independent project, unaffiliated with OpenAI, Anthropic, or Google.
+    </p>
+  </div>
+</footer>

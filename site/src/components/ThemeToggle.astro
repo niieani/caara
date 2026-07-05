@@ -1,0 +1,23 @@
+---
+import moonIcon from "@phosphor-icons/core/assets/regular/moon.svg?raw";
+import sunIcon from "@phosphor-icons/core/assets/regular/sun.svg?raw";
+---
+
+<button
+  id="theme-toggle"
+  type="button"
+  aria-label="Switch color theme"
+  class="grid size-9 cursor-pointer place-items-center rounded-md border border-rule text-muted transition-colors hover:text-ink"
+>
+  <span class="hidden dark:block [&>svg]:size-4.5 [&>svg]:fill-current" set:html={sunIcon} />
+  <span class="block dark:hidden [&>svg]:size-4.5 [&>svg]:fill-current" set:html={moonIcon} />
+</button>
+
+<script>
+  document.getElementById("theme-toggle")?.addEventListener("click", () => {
+    const root = document.documentElement;
+    const next = root.dataset.theme === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    localStorage.setItem("caara-theme", next);
+  });
+</script>

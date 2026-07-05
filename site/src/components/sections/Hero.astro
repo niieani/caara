@@ -1,0 +1,47 @@
+---
+import copyIcon from "@phosphor-icons/core/assets/regular/copy.svg?raw";
+import LiquidMark from "../LiquidMark.tsx";
+
+const base = import.meta.env.BASE_URL;
+const install = "brew install --cask niieani/tap/caara";
+---
+
+<section class="grid min-h-[calc(100dvh-4rem)] items-center gap-10 py-16 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
+  <div class="max-w-xl">
+    <h1 class="text-5xl font-medium leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
+      Agents, relayed<span class="text-copper">.</span>
+    </h1>
+    <p class="mt-6 max-w-[42ch] text-lg leading-relaxed text-muted">
+      Caara runs Claude Code and Antigravity as native Codex subagents, so one session can use
+      every model you subscribe to.
+    </p>
+    <div class="mt-9 flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        data-copy={install}
+        class="group flex cursor-pointer items-center gap-3 rounded-md border border-rule bg-surface px-4 py-3 font-mono text-[13.5px] transition-colors hover:border-mint/60 active:translate-y-px"
+      >
+        <span class="text-mint select-none">$</span>
+        {install}
+        <span
+          class="text-muted transition-colors group-hover:text-ink group-data-copied:text-mint [&>svg]:size-4 [&>svg]:fill-current"
+          set:html={copyIcon}
+        />
+      </button>
+      <a
+        href="https://github.com/niieani/caara"
+        rel="noopener"
+        class="rounded-md bg-ink px-5 py-3 text-[15px] font-medium text-bg transition-transform active:translate-y-px"
+      >
+        View on GitHub
+      </a>
+    </div>
+  </div>
+  <div class="relative mx-auto aspect-square w-full max-w-md lg:max-w-none">
+    <LiquidMark
+      client:only="react"
+      maskSrc={`${base}/mark-mask.svg`}
+      fallbackSrc={`${base}/mark-mask.svg`}
+    />
+  </div>
+</section>

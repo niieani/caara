@@ -1,0 +1,36 @@
+---
+/**
+ * The caara relay-aperture mark: two bracket rails with endpoint nodes,
+ * holding a negative-space path between them. Renders in currentColor.
+ */
+interface Props {
+  size?: number;
+  class?: string;
+}
+const { size = 28, class: className } = Astro.props;
+---
+
+<svg
+  width={size}
+  height={size}
+  viewBox="0 0 96 96"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-hidden="true"
+  class={className}
+>
+  <path
+    d="M 56 13 H 41 Q 30 13 30 24 V 55 L 36 61"
+    stroke="currentColor"
+    stroke-width="9"
+    stroke-linecap="round"
+  ></path>
+  <circle cx="41.5" cy="66.5" r="5.5" fill="currentColor"></circle>
+  <path
+    d="M 40 83 H 55 Q 66 83 66 72 V 41 L 60 35"
+    stroke="currentColor"
+    stroke-width="9"
+    stroke-linecap="round"
+  ></path>
+  <circle cx="54.5" cy="29.5" r="5.5" fill="currentColor"></circle>
+</svg>
