@@ -93,10 +93,7 @@ const locateMarkerSpan = ({ source }: { readonly source: string }): MarkerSpan =
     hasEnd: endIndex !== -1,
     ordered: endIndex > beginIndex,
   }).pipe(
-    Match.when(
-      { hasBegin: false, hasEnd: false },
-      () => ({ _tag: "Absent" }) satisfies MarkerSpan,
-    ),
+    Match.when({ hasBegin: false, hasEnd: false }, () => ({ _tag: "Absent" }) satisfies MarkerSpan),
     Match.when(
       { duplicated: true },
       () =>

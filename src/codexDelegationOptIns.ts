@@ -184,7 +184,8 @@ export const applyDelegationOptIns = Effect.fnUntraced(function* ({
   );
   const guidanceReports = yield* Effect.forEach(
     presentTargets.filter(() => options.agentsMd),
-    ({ agentsFilePath, skillsDirectory }) => applyAgentsMdOptIn({ agentsFilePath, skillsDirectory }),
+    ({ agentsFilePath, skillsDirectory }) =>
+      applyAgentsMdOptIn({ agentsFilePath, skillsDirectory }),
     { concurrency: 1 },
   );
   const reports = [emptyDelegationReport, ...skillReports, ...guidanceReports];

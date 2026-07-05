@@ -9,10 +9,7 @@ import {
   codexAgentsGuidanceBeginMarker,
   codexAgentsGuidanceEndMarker,
 } from "./codexAgentsGuidance.ts";
-import {
-  runCaaraInstallCodexRoles,
-  runCaaraUninstallCodexRoles,
-} from "./codexRoleInstaller.ts";
+import { runCaaraInstallCodexRoles, runCaaraUninstallCodexRoles } from "./codexRoleInstaller.ts";
 import { panelSkillAssets } from "./panelSkillAssets.ts";
 
 /** Builds one isolated opt-in installer test root under temp.local. */
@@ -178,7 +175,11 @@ describe("Codex role installer delegation opt-ins", () => {
       const fixture = yield* makeFixture();
       yield* Effect.tryPromise(() => fs.mkdir(fixture.codexHome, { recursive: true }));
       yield* Effect.tryPromise(() =>
-        fs.writeFile(fixture.agentsFilePath, `${codexAgentsGuidanceBeginMarker()}\norphan\n`, "utf8"),
+        fs.writeFile(
+          fixture.agentsFilePath,
+          `${codexAgentsGuidanceBeginMarker()}\norphan\n`,
+          "utf8",
+        ),
       );
 
       const result = yield* runCaaraInstallCodexRoles({
@@ -247,7 +248,11 @@ describe("Codex role installer delegation opt-ins", () => {
       const fixture = yield* makeFixture();
       yield* runCaaraInstallCodexRoles({ args: ["--panel-skill"], env: fixture.env });
       yield* Effect.tryPromise(() =>
-        fs.writeFile(fixture.agentsFilePath, `${codexAgentsGuidanceBeginMarker()}\norphan\n`, "utf8"),
+        fs.writeFile(
+          fixture.agentsFilePath,
+          `${codexAgentsGuidanceBeginMarker()}\norphan\n`,
+          "utf8",
+        ),
       );
 
       const result = yield* runCaaraUninstallCodexRoles({ args: [], env: fixture.env });
@@ -259,7 +264,9 @@ describe("Codex role installer delegation opt-ins", () => {
         true,
       );
       assert.strictEqual(
-        yield* pathExists({ filePath: path.join(fixture.rolesDirectory, "caara-claude-fable.toml") }),
+        yield* pathExists({
+          filePath: path.join(fixture.rolesDirectory, "caara-claude-fable.toml"),
+        }),
         true,
       );
     }),

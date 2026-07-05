@@ -5,13 +5,13 @@ import { Effect, Match } from "effect";
 
 import { allSafeCodexRoleDefinitions, type CaaraCodexRoleDefinition } from "./codexRoleCatalog.ts";
 import { caaraCodexRoleInstallerError } from "./codexRoleInstallerError.ts";
-import { pathExists } from "./fsPathExists.ts";
 import {
   isCaaraGeneratedCodexRole,
   parseCodexRoleQueryParams,
   renderCodexRoleToml,
   type CodexRoleQueryParams,
 } from "./codexRoleToml.ts";
+import { pathExists } from "./fsPathExists.ts";
 
 /** One managed role file write decision after preflight. */
 export interface RoleWritePlan {

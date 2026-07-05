@@ -413,14 +413,13 @@ const installResultFromPreflight = Effect.fnUntraced(function* ({
   readonly writePlans: readonly RoleWritePlan[];
 }) {
   const optInRefusal = yield* preflightDelegationOptIns({ options, targets: optInTargets });
-  const refusal =
-    Match.value(collision).pipe(
-      Match.when(undefined, () => optInRefusal),
-      Match.orElse(
-        ({ filePath }) =>
-          `caara install-codex-roles refused unmarked existing Codex role: ${filePath}`,
-      ),
-    );
+  const refusal = Match.value(collision).pipe(
+    Match.when(undefined, () => optInRefusal),
+    Match.orElse(
+      ({ filePath }) =>
+        `caara install-codex-roles refused unmarked existing Codex role: ${filePath}`,
+    ),
+  );
   return yield* Option.match(Option.fromUndefinedOr(refusal), {
     onNone: () =>
       successfulInstallResult({
@@ -521,10 +520,7 @@ const successfulUninstallResult = Effect.fnUntraced(function* ({
       `removed ${removedRoleFiles.length} Codex roles from ${targetDirectory}`,
       ...cleanupReports.flatMap((report) => report.messages),
     ].join("\n"),
-    removedFiles: [
-      ...removedRoleFiles,
-      ...cleanupReports.flatMap((report) => report.removedPaths),
-    ],
+    removedFiles: [...removedRoleFiles, ...cleanupReports.flatMap((report) => report.removedPaths)],
     targetDirectory,
   } satisfies CaaraCodexRoleUninstallResult;
 });

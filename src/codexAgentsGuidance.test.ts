@@ -187,9 +187,7 @@ describe("Codex AGENTS.md guidance block", () => {
       const root = testRoot();
       const agentsFilePath = path.join(root, "AGENTS.md");
       yield* Effect.tryPromise(() => fs.mkdir(root, { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        fs.writeFile(agentsFilePath, `# Mine\n\nKeep me.\n`, "utf8"),
-      );
+      yield* Effect.tryPromise(() => fs.writeFile(agentsFilePath, `# Mine\n\nKeep me.\n`, "utf8"));
 
       yield* writeCodexAgentsGuidanceFile({ agentsFilePath, panelSkillInstalled: false });
       yield* removeCodexAgentsGuidanceFile({ agentsFilePath });

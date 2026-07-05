@@ -63,6 +63,17 @@ Then, inside Codex:
 Follow-up turns resume the same external agent session. Linux tarballs (and the macOS one) are on
 [GitHub Releases](https://github.com/niieani/caara/releases).
 
+Already running your agents inside a sandbox (container, VM) with flags like
+`--allow-dangerous-skip-permissions`? Install with `--yolo` so subagents skip permission prompts
+too:
+
+```bash
+caara install-service --yolo
+```
+
+Subagent turns have no approval loop, so this is the recommended posture for sandboxed setups —
+details and an important safety caveat in [Permissions](#permissions).
+
 Uninstall keeps your config, state, and logs; zap removes them too:
 
 ```bash
@@ -72,7 +83,7 @@ brew uninstall --cask --zap caara    # intentional full cleanup
 
 ## Teach Codex to delegate
 
-Installing roles makes caara subagents *available* — it doesn't make Codex *reach for them*. Two
+Installing roles makes caara subagents _available_ — it doesn't make Codex _reach for them_. Two
 opt-ins close that gap:
 
 ```bash
@@ -182,6 +193,7 @@ zero-data-retention organizations.
 | `effort`                   | `low`, `medium`, `high`, `xhigh`, `max`             |
 | `max_budget_usd`           | positive number                                     |
 | `tools`                    | `default`, `disabled`, or comma-delimited tool list |
+| `additional_directories`   | comma-delimited absolute paths                      |
 | `allowed_tools`            | comma-delimited tool list                           |
 | `disallowed_tools`         | comma-delimited tool list                           |
 | `include_partial_messages` | `true` or `false`; defaults to `true`               |
@@ -189,9 +201,10 @@ zero-data-retention organizations.
 | `activity`                 | `on` or `off`; defaults to `on`                     |
 
 `permission_mode` defaults to `dontAsk`. Interactive permission modes are rejected because Codex
-subagent turns have no approval loop. `bypassPermissions` additionally requires the server to run
-with `--allow-dangerous-skip-permissions`. `AskUserQuestion` is always disallowed. Claude activity
-events stream as commentary by default; `activity=off` keeps them in relay logs only.
+subagent turns have no approval loop — see [Permissions](#permissions). `bypassPermissions`
+additionally requires the server to run with `--allow-dangerous-skip-permissions`.
+`AskUserQuestion` is always disallowed. Claude activity events stream as commentary by default;
+`activity=off` keeps them in relay logs only.
 
 ### Antigravity (`agy/*`)
 
@@ -222,6 +235,41 @@ In-process scenarios for smoke-testing Caara without an external agent: `basic`,
 Tune them with `diagnostic_answer_text`, `diagnostic_chunk_count`, `diagnostic_delay_ms`,
 `diagnostic_cancel`, `diagnostic_resume`, `diagnostic_fresh_start`, and `diagnostic_activity`.
 
+## Permissions
+
+Caara subagents run non-interactively: when an external agent wants to run a tool, there is
+nobody to click "allow". Every install therefore picks one of two postures.
+
+**Default — `dontAsk`.** The Claude driver runs `permission_mode=dontAsk`: any tool call that is
+not already pre-approved is denied instead of prompting. Pre-approval comes from the permission
+rules configured in your repo (`.claude` settings) or from `allowed_tools` / `disallowed_tools`
+query params on the role. `permission_mode=auto` swaps the flat deny for a model classifier that
+approves or denies each prompt. The Antigravity driver similarly defaults `sandbox` from Codex's
+sandbox posture and keeps `dangerously_skip_permissions=false`. This is safe by default, but
+curating allowlists per repo is tedious and error-prone, and a missing rule surfaces as the
+subagent silently losing a tool mid-task.
+
+**Sandboxed — `--yolo`.** If you already run your agents inside a sandboxed environment
+(container, VM, throwaway checkout) with flags like `--allow-dangerous-skip-permissions`, install
+Caara the same way:
+
+```bash
+caara install-service --yolo
+```
+
+This enables `allowDangerousSkipPermissions` in the service config and installs bypass roles
+(`permission_mode=bypassPermissions` for Claude, `dangerously_skip_permissions=true` for
+Antigravity). The sandbox is the security boundary; the subagents stop tripping over permission
+denials. For sandboxed setups this is the recommended posture.
+
+> [!CAUTION]
+> Caara's permission posture is its own, not Codex's. If Caara is installed with `--yolo` — or
+> any role is configured with a security posture looser than your harness — a sandboxed or
+> non-permissive Codex **will** be able to get around its own restrictions by spawning a Caara
+> subagent: the subagent runs with Caara's posture, not the caller's. Keep Caara at least as
+> strict as the strictest Codex setup that can reach it, or make sure the sandbox itself contains
+> both.
+
 ## Operating the service
 
 ```bash
@@ -237,8 +285,8 @@ caara uninstall-codex-roles [target-dir]
 writes the service config and launchd/systemd user unit, runs `doctor --fix`, installs Codex roles
 for available drivers, starts the service, and verifies `/health`. Use `--no-start` to write
 artifacts without starting, `--no-install-codex-roles` to skip role generation, and `--yolo` to
-enable `allowDangerousSkipPermissions` plus bypass roles (standalone
-`install-codex-roles --yolo --config <path>` fails unless that config already opts in).
+enable `allowDangerousSkipPermissions` plus bypass roles (see [Permissions](#permissions);
+standalone `install-codex-roles --yolo --config <path>` fails unless that config already opts in).
 
 Generated role files are marked; updates preserve your `query_params` tweaks, unmarked same-name
 files cause a hard failure, and stale roles for missing drivers are removed. The same ownership

@@ -37,21 +37,24 @@
       <summary>Claude driver options</summary>
       <div class="ref-body">
         <table>
-          <thead><tr><th>param</th><th>values</th></tr></thead>
+          <thead><tr><th>param</th><th>values</th><th>default when unset</th></tr></thead>
           <tbody>
-            <tr><td>effort</td><td>low, medium, high, xhigh, max</td></tr>
-            <tr><td>max_budget_usd</td><td>positive number</td></tr>
-            <tr><td>tools</td><td>default, disabled, or a comma-separated list</td></tr>
-            <tr><td>allowed_tools, disallowed_tools</td><td>comma-separated tool lists</td></tr>
-            <tr><td>permission_mode</td><td>auto, dontAsk, bypassPermissions</td></tr>
-            <tr><td>include_partial_messages</td><td>true, false</td></tr>
-            <tr><td>activity</td><td>on, off</td></tr>
+            <tr><td>effort</td><td>low, medium, high, xhigh, max</td><td>Codex's advisory effort for the turn</td></tr>
+            <tr><td>max_budget_usd</td><td>positive number</td><td>no budget cap</td></tr>
+            <tr><td>tools</td><td>default, disabled, or a comma-separated list</td><td>the Claude Code tool preset</td></tr>
+            <tr><td>additional_directories</td><td>comma-separated absolute paths</td><td>none</td></tr>
+            <tr><td>allowed_tools, disallowed_tools</td><td>comma-separated tool lists</td><td>none beyond your repo's rules</td></tr>
+            <tr><td>permission_mode</td><td>auto, dontAsk, bypassPermissions</td><td>dontAsk</td></tr>
+            <tr><td>include_partial_messages</td><td>true, false</td><td>true</td></tr>
+            <tr><td>activity</td><td>on, off</td><td>on</td></tr>
           </tbody>
         </table>
         <p>
-          Interactive permission modes are rejected because subagent turns have no approval loop.
+          Interactive permission modes are rejected because subagent turns have no approval loop —
+          see <a href="#permissions" class="text-ink underline decoration-rule underline-offset-3 hover:decoration-mint">Permissions</a>.
           <span class="font-mono text-[0.92em]">bypassPermissions</span> also requires starting the
-          server with <span class="font-mono text-[0.92em]">--allow-dangerous-skip-permissions</span>.
+          server with <span class="font-mono text-[0.92em]">--allow-dangerous-skip-permissions</span>
+          (what <span class="font-mono text-[0.92em]">install-service --yolo</span> sets up).
         </p>
       </div>
     </details>
@@ -60,15 +63,15 @@
       <summary>Antigravity driver options</summary>
       <div class="ref-body">
         <table>
-          <thead><tr><th>param</th><th>values</th></tr></thead>
+          <thead><tr><th>param</th><th>values</th><th>default when unset</th></tr></thead>
           <tbody>
-            <tr><td>model</td><td>model override</td></tr>
-            <tr><td>effort</td><td>low, medium, high, xhigh</td></tr>
-            <tr><td>sandbox</td><td>true, false (defaults from the Codex sandbox posture)</td></tr>
-            <tr><td>print_timeout_seconds</td><td>1 to 86400, default 7200</td></tr>
-            <tr><td>add_dirs</td><td>JSON array of absolute paths</td></tr>
-            <tr><td>reasoning, activity</td><td>on, off</td></tr>
-            <tr><td>dangerously_skip_permissions</td><td>true, false (server-gated)</td></tr>
+            <tr><td>model</td><td>model override</td><td>the role's model suffix</td></tr>
+            <tr><td>effort</td><td>low, medium, high, xhigh</td><td>Codex's advisory effort, else medium</td></tr>
+            <tr><td>sandbox</td><td>true, false</td><td>follows the Codex sandbox posture</td></tr>
+            <tr><td>print_timeout_seconds</td><td>1 to 86400</td><td>7200</td></tr>
+            <tr><td>add_dirs</td><td>JSON array of absolute paths</td><td>none</td></tr>
+            <tr><td>reasoning, activity</td><td>on, off</td><td>on</td></tr>
+            <tr><td>dangerously_skip_permissions</td><td>true, false (server-gated)</td><td>false</td></tr>
           </tbody>
         </table>
       </div>
