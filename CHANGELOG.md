@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/niieani/caara/compare/v1.1.0...v1.2.0) (2026-07-05)
+
+
+### Features
+
+* teach codex to delegate ([8fc1d0e](https://github.com/niieani/caara/commit/8fc1d0e20f8d1e821b3fa156c99ffe9b6f22873c))
+
+
+### Bug Fixes
+
+* **site:** remove hero signal wire ([3098127](https://github.com/niieani/caara/commit/3098127d512eca4a61d108a635ddae4fb183bd8d))
+* stop idle logger CPU spin ([af5cf0f](https://github.com/niieani/caara/commit/af5cf0f313e90ef9ba8a006b4dec015f13232334))
+
 ## [1.1.0](https://github.com/niieani/caara/compare/v1.0.0...v1.1.0) (2026-07-03)
 
 ### Features
