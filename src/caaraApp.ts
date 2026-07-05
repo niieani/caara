@@ -59,7 +59,7 @@ const caaraAppLoggingLayerFromFile = ({ logFile }: { readonly logFile: string })
   ).pipe(Layer.provideMerge(appLogWriterLayer));
   const effectLoggerLayer = Logger.layer([
     Logger.defaultLogger,
-    Logger.formatJson.pipe(Logger.toFile(logFile, { batchWindow: "0 millis" })),
+    Logger.formatJson.pipe(Logger.toFile(logFile)),
   ]).pipe(Layer.provide(BunServices.layer));
 
   return Layer.mergeAll(providerLoggerLayer, effectLoggerLayer);

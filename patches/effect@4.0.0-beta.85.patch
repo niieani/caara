@@ -1,51 +1,66 @@
+diff --git a/dist/Logger.js b/dist/Logger.js
+index 043ee3d..51d3ef7 100644
+--- a/dist/Logger.js
++++ b/dist/Logger.js
+@@ -12,0 +13 @@ import * as Array from "./Array.js";
++import * as Duration from "./Duration.js";
+@@ -21,0 +23,2 @@ const TypeId = "~effect/Logger";
++const defaultLoggerBatchWindow = 1000;
++const safeLoggerBatchWindow = window => Duration.isPositive(Duration.fromInputUnsafe(window)) ? window : defaultLoggerBatchWindow;
+@@ -630,0 +634 @@ export const batched = /*#__PURE__*/dual(2, (self, options) => effect.flatMap(ef
++  const window = safeLoggerBatchWindow(options.window);
+@@ -639 +643 @@ export const batched = /*#__PURE__*/dual(2, (self, options) => effect.flatMap(ef
+-  return effect.uninterruptibleMask(restore => restore(effect.sleep(options.window).pipe(effect.andThen(flush), effect.forever)).pipe(effect.forkDetach, effect.flatMap(fiber => effect.scopeAddFinalizerExit(scope, () => effect.fiberInterrupt(fiber))), effect.andThen(effect.addFinalizer(() => flush)), effect.as(effect.loggerMake(options => {
++  return effect.uninterruptibleMask(restore => restore(effect.sleep(window).pipe(effect.andThen(flush), effect.forever)).pipe(effect.forkDetach, effect.flatMap(fiber => effect.scopeAddFinalizerExit(scope, () => effect.fiberInterrupt(fiber))), effect.andThen(effect.addFinalizer(() => flush)), effect.as(effect.loggerMake(options => {
+@@ -1059 +1063 @@ export const toFile = /*#__PURE__*/dual(args => isLogger(args[0]), (self, path,
+-    window: options?.batchWindow ?? 1000,
++    window: options?.batchWindow ?? defaultLoggerBatchWindow,
 diff --git a/dist/unstable/rpc/RpcServer.js b/dist/unstable/rpc/RpcServer.js
-index d7e022f20895fe7bb29d7d7d121577d0b740680f..d764957790ab09f0abcd3adb3892e5c9d45d59f6 100644
+index d7e022f..c3e0937 100644
 --- a/dist/unstable/rpc/RpcServer.js
 +++ b/dist/unstable/rpc/RpcServer.js
-@@ -695,12 +695,22 @@ export const makeProtocolWithHttpEffect = /*#__PURE__*/Effect.gen(function* () {
-     yield* writeRequest(id, constEof);
-     if (!includesFraming) {
-       const responses = yield* Queue.collect(queue);
+@@ -697,0 +698,5 @@ export const makeProtocolWithHttpEffect = /*#__PURE__*/Effect.gen(function* () {
 +      if (responses.length === 0) {
 +        return HttpServerResponse.empty({
 +          status: 204
 +        });
 +      }
-       return HttpServerResponse.text(parser.encode(responses), {
-         contentType: serialization.contentType
-       });
-     }
-     const initialChunk = yield* Queue.takeAll(queue);
-     if (queue.state._tag === "Done") {
+@@ -703,0 +709,5 @@ export const makeProtocolWithHttpEffect = /*#__PURE__*/Effect.gen(function* () {
 +      if (initialChunk.length === 0) {
 +        return HttpServerResponse.empty({
 +          status: 204
 +        });
 +      }
-       return HttpServerResponse.uint8Array(mergeUint8Arrays(initialChunk), {
-         contentType: serialization.contentType
-       });
+diff --git a/src/Logger.ts b/src/Logger.ts
+index ff32c79..7c94c47 100644
+--- a/src/Logger.ts
++++ b/src/Logger.ts
+@@ -15 +15 @@ import type * as Context from "./Context.ts"
+-import type * as Duration from "./Duration.ts"
++import * as Duration from "./Duration.ts"
+@@ -32,0 +33,5 @@ const TypeId = "~effect/Logger"
++const defaultLoggerBatchWindow = 1000
++
++const safeLoggerBatchWindow = (window: Duration.Input): Duration.Input =>
++  Duration.isPositive(Duration.fromInputUnsafe(window)) ? window : defaultLoggerBatchWindow
++
+@@ -961,0 +967 @@ export const batched = dual<
++    const window = safeLoggerBatchWindow(options.window)
+@@ -973 +979 @@ export const batched = dual<
+-        effect.sleep(options.window).pipe(
++        effect.sleep(window).pipe(
+@@ -1651 +1657 @@ export const toFile = dual<
+-        window: options?.batchWindow ?? 1000,
++        window: options?.batchWindow ?? defaultLoggerBatchWindow,
 diff --git a/src/unstable/rpc/RpcServer.ts b/src/unstable/rpc/RpcServer.ts
-index b45c87119bafb9ac56a1b06eed01af339ac18d3f..f91097f77b2f1eddcb2df5866e6bdb4335819d38 100644
+index b45c871..f91097f 100644
 --- a/src/unstable/rpc/RpcServer.ts
 +++ b/src/unstable/rpc/RpcServer.ts
-@@ -1062,6 +1062,9 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
- 
-     if (!includesFraming) {
-       const responses = yield* Queue.collect(queue)
+@@ -1064,0 +1065,3 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
 +      if (responses.length === 0) {
 +        return HttpServerResponse.empty({ status: 204 })
 +      }
-       return HttpServerResponse.text(parser.encode(responses) as string, {
-         contentType: serialization.contentType
-       })
-@@ -1069,6 +1072,9 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
- 
-     const initialChunk = yield* Queue.takeAll(queue) as any as Effect.Effect<NonEmptyReadonlyArray<Uint8Array>>
-     if (queue.state._tag === "Done") {
+@@ -1071,0 +1075,3 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
 +      if (initialChunk.length === 0) {
 +        return HttpServerResponse.empty({ status: 204 })
 +      }
-       return HttpServerResponse.uint8Array(mergeUint8Arrays(initialChunk), {
-         contentType: serialization.contentType
-       })
