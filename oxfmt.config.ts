@@ -14,6 +14,7 @@ export default defineConfig({
     "docs/",
     "node_modules/",
     "references/",
+    "site/",
     "src/**/__experiments__/**",
     "temp.local/",
   ],

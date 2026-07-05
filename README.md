@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="site/assets/caara-mark.png" alt="caara" width="180" />
+  <img src="site/public/favicon.svg" alt="caara" width="88" />
 
 # caara
 
 **Run Claude Code and Antigravity as native Codex subagents.**
 
-One OpenAI Responses–compatible bridge · every frontier model you subscribe to, on the same task
+Agents, relayed: one local bridge, every model you subscribe to.
 
 [Website](https://niieani.github.io/caara/) · [Quickstart](#quickstart) ·
 [Spec](docs/caara.md) · [MIT License](LICENSE)
@@ -14,29 +14,28 @@ One OpenAI Responses–compatible bridge · every frontier model you subscribe t
 
 ---
 
-Caara is a local-first bridge that lets [Codex](https://openai.com/codex/) spawn **external code
-agents** — Claude Code, Antigravity — as first-class subagents. Codex sends its normal streaming
-`POST /v1/responses` request; Caara resolves the `model` string to a driver, starts or resumes the
+Caara is a local-first bridge that lets [Codex](https://openai.com/codex/) spawn external code
+agents (Claude Code, Antigravity) as first-class subagents. Codex sends its normal streaming
+`POST /v1/responses` request. Caara resolves the `model` string to a driver, starts or resumes the
 real agent behind it, and relays text, reasoning, and activity back as Responses SSE frames. To
 Codex, `claude/fable` is just another model.
 
 ## Why
 
-- **Panels beat frontier.** OpenRouter's
-  [Fusion experiment](https://openrouter.ai/blog/announcements/fusion-beats-frontier/) showed that
-  synthesizing multiple models outscores every single frontier model — a Fable 5 + GPT‑5.5 panel hit
-  69.0% on deep-research tasks vs. 65.3% for solo Fable 5, and a budget trio beat solo GPT‑5.5 and
-  Opus at half the cost. Caara turns your Codex session into that orchestrator.
-- **Right model, right job.** Claude for frontend and judgment-heavy work, GPT‑5.5 for execution and
-  orchestration, Gemini (or a mix) for breadth-first code review.
-- **Cross-model validation.** Have an agent from a *different model family* review your diff —
-  self-review is biased by construction.
-- **Fable without the sticker shock.** Reserve Claude Fable for the moments that need it; delegate
-  execution to cheaper seats.
-- **Use every subscription you pay for.** Caara drives the agent binaries you already have — no new
-  API keys, no per-token metering, no middleman cloud.
-- **Open source, local-first, explicit.** MIT, runs on `127.0.0.1`, and every failure mode is loud:
-  no silent fallbacks anywhere.
+- **Panels of models outscore any model alone.** OpenRouter's
+  [Fusion benchmark](https://openrouter.ai/blog/announcements/fusion-beats-frontier/) ran 100
+  deep-research tasks: a Fable 5 + GPT-5.5 panel scored 69.0% where solo Fable 5 scored 65.3%, and
+  a budget trio beat solo GPT-5.5 and Opus 4.8 at half the cost. Caara turns your Codex session
+  into that orchestrator.
+- **Each model does what it handles best.** Claude for frontend and judgment-heavy work, GPT-5.5
+  for execution and orchestration, Gemini or a mixed panel for breadth-first code review.
+- **A second model checks the diff.** Cross-family review catches what self-review keeps missing.
+- **Fable where it counts.** Route the hard parts to Claude Fable and let cheaper seats handle
+  execution, which costs less than Fable doing everything itself.
+- **Your subscriptions do the work.** Caara drives the agent binaries you already have installed
+  and signed in. It adds no API keys and no per-token bills.
+- **Local, open, and explicit.** MIT licensed, served on `127.0.0.1`, with loud typed failures
+  instead of silent fallbacks.
 
 ## Quickstart
 
@@ -50,7 +49,7 @@ your machine (`claude`, `agy`):
 
 ```bash
 ls ~/.codex/agents/caara-*.toml
-# caara-claude-fable · caara-claude-sonnet · caara-agy-gemini-3-5-flash · …
+# caara-claude-fable, caara-claude-sonnet, caara-agy-gemini-3-5-flash, ...
 ```
 
 Then, inside Codex:
@@ -63,7 +62,7 @@ Then, inside Codex:
 Follow-up turns resume the same external agent session. Linux tarballs (and the macOS one) are on
 [GitHub Releases](https://github.com/niieani/caara/releases).
 
-Uninstall keeps your config/state/logs; zap removes them too:
+Uninstall keeps your config, state, and logs; zap removes them too:
 
 ```bash
 brew uninstall --cask caara          # stop + remove service, keep data
@@ -75,14 +74,14 @@ brew uninstall --cask --zap caara    # intentional full cleanup
 Caara ships a repo-level Codex skill pack. **Panel** (`.agents/skills/panel/`) convenes a
 cross-model panel of Caara-backed subagents plus the native Codex seat, then adjudicates:
 
-| Strategy | Insures against | Shape |
-| --- | --- | --- |
-| **Ensemble** | omission | isolated panelists attempt the task in parallel; a synthesis seat consolidates |
-| **Debate** | contested direction | panelists argue across rounds; dissent is preserved |
-| **Cross-review** | self-bias | one panelist works, a different model family reviews |
+| Strategy         | Use it when                       | Shape                                                                          |
+| ---------------- | --------------------------------- | ------------------------------------------------------------------------------ |
+| **Ensemble**     | one model would miss things       | isolated panelists attempt the task in parallel; a synthesis seat consolidates |
+| **Debate**       | the direction itself is contested | panelists argue across rounds; dissent stays on the record                     |
+| **Cross-review** | the work already exists           | one panelist works, a different model family reviews                           |
 
-The skill is engineered against sycophantic convergence: the orchestrator never reads panelist
-artifacts (mechanical verification only), forwards positions as artifact paths rather than
+The skill is engineered against sycophantic convergence: the orchestrator verifies panelist
+artifacts mechanically instead of reading them, forwards positions as artifact paths rather than
 paraphrase, quarantines per-seat run directories from git and search, and applies a stall test
 instead of a round cap. The Caara service itself stays unaware of the skill pack.
 
@@ -94,7 +93,7 @@ Codex ──POST /v1/responses (SSE)──▶ caara ──▶ Claude Agent SDK  
                                          └──▶ Diagnostic driver  (diagnostic/*)
 ```
 
-The model prefix selects the driver; the suffix is driver-owned:
+The model prefix selects the driver; the suffix belongs to the driver:
 
 ```text
 claude/fable
@@ -140,7 +139,7 @@ driver rejects unknown option names.
 
 Runs Claude Code through the Claude Agent SDK. Model suffixes pass through as-is: `claude/fable`
 selects Claude Code's Fable alias; `claude/claude-fable-5` selects the full API model name when the
-configured provider supports it. Fable requires Claude Code `v2.1.170+` and is not available to
+configured provider supports it. Fable requires Claude Code `v2.1.170+` and is unavailable to
 zero-data-retention organizations.
 
 | Query param                | Values / shape                                      |
@@ -154,10 +153,10 @@ zero-data-retention organizations.
 | `permission_mode`          | `auto`, `dontAsk`, `bypassPermissions`              |
 | `activity`                 | `on` or `off`; defaults to `on`                     |
 
-`permission_mode` defaults to `dontAsk`. Interactive permission modes are rejected — Codex subagent
-turns have no approval loop. `bypassPermissions` additionally requires the server to run with
-`--allow-dangerous-skip-permissions`. `AskUserQuestion` is always disallowed. Claude activity events
-stream as commentary by default; `activity=off` keeps them in relay logs only.
+`permission_mode` defaults to `dontAsk`. Interactive permission modes are rejected because Codex
+subagent turns have no approval loop. `bypassPermissions` additionally requires the server to run
+with `--allow-dangerous-skip-permissions`. `AskUserQuestion` is always disallowed. Claude activity
+events stream as commentary by default; `activity=off` keeps them in relay logs only.
 
 ### Antigravity (`agy/*`)
 
@@ -208,18 +207,18 @@ enable `allowDangerousSkipPermissions` plus bypass roles (standalone
 
 Generated role files are marked; updates preserve your `query_params` tweaks, unmarked same-name
 files cause a hard failure, and stale roles for missing drivers are removed. Claude Code and
-Antigravity are optional capabilities — an install is healthy with at least one real driver, and
+Antigravity are optional capabilities: an install is healthy with at least one real driver, and
 turns targeting unavailable drivers fail explicitly.
 
 ### Defaults
 
-| What | Where |
-| --- | --- |
-| config | `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml` |
-| state / receipts / sessions | `${XDG_STATE_HOME:-$HOME/.local/state}/caara` (or `CAARA_STATE_DIR`) |
-| app log | `<state>/logs/caara.log`, rotated at 10 MiB, 3 files retained |
-| macOS service | `dev.caara` → `~/Library/LaunchAgents/dev.caara.plist` |
-| Linux service | `caara.service` → `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service` |
+| What                        | Where                                                                             |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| config                      | `${XDG_CONFIG_HOME:-$HOME/.config}/caara/config.yaml`                             |
+| state / receipts / sessions | `${XDG_STATE_HOME:-$HOME/.local/state}/caara` (or `CAARA_STATE_DIR`)              |
+| app log                     | `<state>/logs/caara.log`, rotated at 10 MiB, 3 files retained                     |
+| macOS service               | `dev.caara` in `~/Library/LaunchAgents/dev.caara.plist`                           |
+| Linux service               | `caara.service` in `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service` |
 
 Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, `logFile`.
 CLI flags override YAML; YAML overrides built-in defaults. Foreground runs prepend config `path`
@@ -241,11 +240,11 @@ bun run build:service            # compile the single-file executable to dist/ca
 
 ## Sessions and state
 
-Session bindings are keyed by external agent kind + Codex thread id and hold resume metadata only —
-the external agent remains the source of truth for its own conversation. Changing the requested
-model or driver options on an existing thread updates that binding's desired state; it does not
-create a new session identity. If a session cannot be resumed, the agent asks the managing agent to
-restate context — never a silent reset.
+Session bindings are keyed by external agent kind plus Codex thread id and hold resume metadata
+only; the external agent remains the source of truth for its own conversation. Changing the
+requested model or driver options on an existing thread updates that binding's desired state
+rather than creating a new session identity. If a session cannot be resumed, the agent asks the
+managing agent to restate context instead of silently starting over.
 
 ## Releases
 
@@ -253,6 +252,15 @@ Release Please owns version bumps, tags, changelog, and GitHub releases. The pub
 uploads `caara_<version>_{darwin_arm64,linux_amd64,linux_arm64}.tar.gz` plus `checksums.txt`
 (SHA-256), and updates the Homebrew tap. The macOS binary is Developer ID signed and notarized;
 macOS is Apple Silicon only.
+
+## Website
+
+The marketing and reference site lives in [`site/`](site/) (Astro + Tailwind, deployed to GitHub
+Pages by `.github/workflows/pages.yml`). Local development:
+
+```bash
+cd site && bun install && bun run dev
+```
 
 ## Development
 

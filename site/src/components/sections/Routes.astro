@@ -1,0 +1,66 @@
+---
+const routes = [
+  {
+    spec: "claude/*",
+    driver: "Claude Code, via the Claude Agent SDK",
+    fit: "Frontend work, design judgment, careful refactors.",
+    models: ["fable", "sonnet", "haiku", "opus"],
+  },
+  {
+    spec: "native",
+    driver: "Codex itself, no bridge involved",
+    fit: "Orchestration, execution, long tool chains.",
+    models: ["gpt-5.5"],
+  },
+  {
+    spec: "agy/*",
+    driver: "Antigravity CLI",
+    fit: "Code review and large-context sweeps.",
+    models: ["gemini-3.5-flash", "gemini-3.1-pro", "gpt-oss-120b"],
+  },
+  {
+    spec: "diagnostic/*",
+    driver: "Built-in test driver, runs in-process",
+    fit: "Smoke tests for transport, recovery, and cancellation.",
+    models: ["basic", "recovery", "echo"],
+  },
+] as const;
+---
+
+<section class="py-20">
+  <div class="reveal max-w-2xl">
+    <h2 class="text-3xl font-medium tracking-tight sm:text-4xl">
+      Send each task to the model that fits it
+    </h2>
+    <p class="mt-4 leading-relaxed text-muted">
+      The prefix of the Codex <span class="font-mono text-[0.92em]">model</span> string picks the
+      driver. Everything after it belongs to the agent.
+    </p>
+  </div>
+
+  <div class="reveal mt-10 overflow-hidden rounded-lg border border-rule">
+    {
+      routes.map((route, i) => (
+        <div
+          class:list={[
+            "grid gap-x-8 gap-y-2 bg-surface px-6 py-5 sm:grid-cols-[9.5rem_1fr] lg:grid-cols-[9.5rem_1.2fr_1fr]",
+            i > 0 && "border-t border-rule",
+          ]}
+        >
+          <span class="font-mono text-[15px] font-medium text-mint">{route.spec}</span>
+          <div>
+            <p class="text-[15px]">{route.driver}</p>
+            <p class="mt-1 text-sm text-muted">{route.fit}</p>
+          </div>
+          <div class="flex flex-wrap content-start items-start gap-1.5 lg:justify-end">
+            {route.models.map((model) => (
+              <span class="rounded-sm border border-rule px-2 py-0.5 font-mono text-xs text-muted">
+                {model}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>

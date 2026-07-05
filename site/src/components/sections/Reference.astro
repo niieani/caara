@@ -1,0 +1,179 @@
+---
+/**
+ * Condensed reference. The full protocol spec lives in docs/caara.md; this
+ * section maps the surface area so readers know what exists.
+ */
+---
+
+<section id="reference" class="scroll-mt-24 py-20">
+  <div class="reveal max-w-2xl">
+    <h2 class="text-3xl font-medium tracking-tight sm:text-4xl">Reference, the short version</h2>
+    <p class="mt-4 leading-relaxed text-muted">
+      The full protocol and design spec lives in <a
+        href="https://github.com/niieani/caara/blob/main/docs/caara.md"
+        rel="noopener"
+        class="text-ink underline decoration-rule underline-offset-3 hover:decoration-mint"
+        >docs/caara.md</a
+      >. This is the map.
+    </p>
+  </div>
+
+  <div class="reveal mt-10 space-y-3">
+    <details class="ref-item" open>
+      <summary>Endpoints and drivers</summary>
+      <div class="ref-body">
+        <p>
+          Caara serves <span class="font-mono text-[0.92em]">POST /v1/responses</span> (streaming
+          only, Responses SSE out) and a shallow <span class="font-mono text-[0.92em]">GET /health</span>
+          on <span class="font-mono text-[0.92em]">127.0.0.1:8787</span>. Model prefixes
+          <span class="font-mono text-[0.92em]">claude/</span>, <span class="font-mono text-[0.92em]">agy/</span>,
+          and <span class="font-mono text-[0.92em]">diagnostic/</span> select the driver. Provider
+          query parameters become driver options, and unknown option names are rejected.
+        </p>
+      </div>
+    </details>
+
+    <details class="ref-item">
+      <summary>Claude driver options</summary>
+      <div class="ref-body">
+        <table>
+          <thead><tr><th>param</th><th>values</th></tr></thead>
+          <tbody>
+            <tr><td>effort</td><td>low, medium, high, xhigh, max</td></tr>
+            <tr><td>max_budget_usd</td><td>positive number</td></tr>
+            <tr><td>tools</td><td>default, disabled, or a comma-separated list</td></tr>
+            <tr><td>allowed_tools, disallowed_tools</td><td>comma-separated tool lists</td></tr>
+            <tr><td>permission_mode</td><td>auto, dontAsk, bypassPermissions</td></tr>
+            <tr><td>include_partial_messages</td><td>true, false</td></tr>
+            <tr><td>activity</td><td>on, off</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Interactive permission modes are rejected because subagent turns have no approval loop.
+          <span class="font-mono text-[0.92em]">bypassPermissions</span> also requires starting the
+          server with <span class="font-mono text-[0.92em]">--allow-dangerous-skip-permissions</span>.
+        </p>
+      </div>
+    </details>
+
+    <details class="ref-item">
+      <summary>Antigravity driver options</summary>
+      <div class="ref-body">
+        <table>
+          <thead><tr><th>param</th><th>values</th></tr></thead>
+          <tbody>
+            <tr><td>model</td><td>model override</td></tr>
+            <tr><td>effort</td><td>low, medium, high, xhigh</td></tr>
+            <tr><td>sandbox</td><td>true, false (defaults from the Codex sandbox posture)</td></tr>
+            <tr><td>print_timeout_seconds</td><td>1 to 86400, default 7200</td></tr>
+            <tr><td>add_dirs</td><td>JSON array of absolute paths</td></tr>
+            <tr><td>reasoning, activity</td><td>on, off</td></tr>
+            <tr><td>dangerously_skip_permissions</td><td>true, false (server-gated)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="ref-item">
+      <summary>CLI</summary>
+      <div class="ref-body">
+        <table>
+          <thead><tr><th>command</th><th>does</th></tr></thead>
+          <tbody>
+            <tr><td>caara</td><td>run the bridge in the foreground</td></tr>
+            <tr><td>caara install-service</td><td>install the binary, service, and Codex roles, then verify health</td></tr>
+            <tr><td>caara status, caara doctor --fix</td><td>inspect and repair the installation</td></tr>
+            <tr><td>caara install-codex-roles</td><td>regenerate Codex agent roles for available drivers</td></tr>
+            <tr><td>caara uninstall-service --purge</td><td>remove the service, and state only when asked</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Config is strict YAML at <span class="font-mono text-[0.92em]">~/.config/caara/config.yaml</span>.
+          State and logs live under <span class="font-mono text-[0.92em]">~/.local/state/caara</span>.
+        </p>
+      </div>
+    </details>
+
+    <details class="ref-item">
+      <summary>Sessions and state</summary>
+      <div class="ref-body">
+        <p>
+          Session bindings are keyed by agent kind plus Codex thread id, and they hold resume
+          metadata only. The external agent stays the source of truth for its own conversation.
+          When a session can no longer be resumed, the agent asks the managing session to restate
+          context instead of silently starting over.
+        </p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<style>
+  .ref-item {
+    border: 1px solid var(--c-rule);
+    border-radius: 8px;
+    background: var(--c-surface);
+  }
+  .ref-item summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 1.1rem 1.5rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .ref-item summary::-webkit-details-marker {
+    display: none;
+  }
+  .ref-item summary::before {
+    content: "+";
+    font-family: var(--font-mono);
+    color: var(--c-mint);
+    width: 1rem;
+  }
+  .ref-item[open] summary::before {
+    content: "-";
+  }
+  .ref-body {
+    padding: 0 1.5rem 1.4rem;
+  }
+  .ref-body p {
+    color: var(--c-text-muted);
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 75ch;
+  }
+  .ref-body table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin-bottom: 0.9rem;
+  }
+  .ref-body th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--c-text-muted);
+    padding: 0.4rem 1rem 0.4rem 0;
+    border-bottom: 1px solid var(--c-rule);
+  }
+  .ref-body td {
+    padding: 0.55rem 1rem 0.55rem 0;
+    color: var(--c-text-muted);
+    vertical-align: top;
+  }
+  .ref-body td:first-child {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--c-text);
+    white-space: nowrap;
+  }
+  .ref-body tr + tr td {
+    border-top: 1px solid color-mix(in oklab, var(--c-rule) 55%, transparent);
+  }
+</style>
