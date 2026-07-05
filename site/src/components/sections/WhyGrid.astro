@@ -1,9 +1,9 @@
 ---
 const cells = [
   {
-    title: "Your subscriptions do the work",
+    title: "Every subscription, used to the max",
     body:
-      "Caara drives the agent binaries you already have installed and signed in. It adds no API keys and no per-token bills.",
+      "Your Claude and Antigravity plans carry subsidized usage that idles while you work in Codex. Spawning those agents as subagents spends it, without ever leaving your harness.",
     tone: "mint",
   },
   {
@@ -33,10 +33,10 @@ const cells = [
       cells.map((cell) => (
         <article
           class:list={[
-            "reveal rounded-lg border p-7",
-            cell.tone === "mint" && "border-mint/25 bg-mint/8",
-            cell.tone === "copper" && "border-copper/30 bg-copper/8",
-            cell.tone === "plain" && "border-rule bg-surface",
+            "reveal rounded-lg border p-7 transition-all hover:-translate-y-1",
+            cell.tone === "mint" && "border-mint/25 bg-mint/8 hover:border-mint/50",
+            cell.tone === "copper" && "border-copper/30 bg-copper/8 hover:border-copper/60",
+            cell.tone === "plain" && "border-rule bg-surface hover:border-mint/40",
           ]}
         >
           <h3 class="text-lg font-medium tracking-tight">{cell.title}</h3>

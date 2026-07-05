@@ -8,13 +8,13 @@ colors:
   tertiary: "#63F6C9"
   neutral: "#EDE7DA"
   surfaceDark: "#171A1F"
-  surfaceLight: "#FBFAF6"
-  backgroundLight: "#F3EEE4"
-  textDark: "#15181C"
+  surfaceLight: "#F8FAFC"
+  backgroundLight: "#EEF1F5"
+  textDark: "#13171C"
   copper: "#C77854"
   copperLight: "#B96B4F"
   ruleDark: "#2A3036"
-  ruleLight: "#D8D0C4"
+  ruleLight: "#D2D9E0"
 typography:
   headline-display:
     fontFamily: "Satoshi Variable"
@@ -119,11 +119,13 @@ Brand assets:
 Use a two-mode system. Dark mode is the primary product expression; light mode is the editorial and documentation expression.
 
 - **Primary / Ink Black (#090A0B):** Core dark canvas and high-contrast product surfaces.
-- **Neutral / Bone (#EDE7DA):** Warm text and identity surfaces; softer than white.
+- **Neutral / Bone (#EDE7DA):** Dark-mode text and identity surfaces; softer than white. Light mode
+  uses cool ink (#13171C) instead.
 - **Tertiary / Relay Mint (#63F6C9):** The active relay signal. Use sparingly for live states, endpoints, primary action, and route highlights.
 - **Copper (#C77854):** Human warmth and physical detail. Use for edge accents, punctuation, and secondary emphasis.
 - **Secondary / Slate (#788391):** Metadata, disabled states, rules, and quiet system structure.
-- **Light surfaces (#F3EEE4, #FBFAF6):** Warm white mode with paper grain and fine graphite lines.
+- **Light surfaces (#EEF1F5, #F8FAFC):** Cool porcelain mode with the same graphite structure and
+  temperature as dark mode; never warm cream or beige.
 
 Do not introduce additional accent colors unless a new semantic state requires one. Error states may use a restrained red, but it should not compete with relay mint.
 
@@ -148,7 +150,7 @@ Spacing follows a 4px base with 8px, 16px, 24px, 40px, and 64px steps. Use 16px 
 
 ## Elevation & Depth
 
-Depth comes from tonal layers, fine rules, and restrained tactile shadows. Dark mode should feel like layered graphite surfaces with faint scanline or grain texture. Light mode should feel like warm paper, porcelain panels, and blind-embossed physical material.
+Depth comes from tonal layers, fine rules, and restrained tactile shadows. Dark mode should feel like layered graphite surfaces with faint scanline or grain texture. Light mode should feel like cool porcelain and brushed aluminum over the same graphite skeleton; it is dark mode with the lights on, never a warm paper world of its own.
 
 Avoid heavy glassmorphism, glowing blobs, generic neon halos, and large drop shadows.
 

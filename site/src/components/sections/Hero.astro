@@ -4,44 +4,163 @@ import LiquidMark from "../LiquidMark.tsx";
 
 const base = import.meta.env.BASE_URL;
 const install = "brew install --cask niieani/tap/caara";
+
+const marqueeSpecs = [
+  "claude/fable",
+  "claude/sonnet",
+  "agy/gemini-3.5-flash",
+  "claude/haiku",
+  "agy/gemini-3.1-pro",
+  "claude/opus",
+  "agy/gpt-oss-120b",
+  "diagnostic/echo",
+];
 ---
 
-<section class="grid min-h-[calc(100dvh-4rem)] items-center gap-10 py-16 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
-  <div class="max-w-xl">
-    <h1 class="text-5xl font-medium leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
-      Agents, relayed<span class="text-copper">.</span>
-    </h1>
-    <p class="mt-6 max-w-[42ch] text-lg leading-relaxed text-muted">
-      Caara runs Claude Code and Antigravity as native Codex subagents, so one session can use
-      every model you subscribe to.
-    </p>
-    <div class="mt-9 flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        data-copy={install}
-        class="group flex cursor-pointer items-center gap-3 rounded-md border border-rule bg-surface px-4 py-3 font-mono text-[13.5px] transition-colors hover:border-mint/60 active:translate-y-px"
-      >
-        <span class="text-mint select-none">$</span>
-        {install}
-        <span
-          class="text-muted transition-colors group-hover:text-ink group-data-copied:text-mint [&>svg]:size-4 [&>svg]:fill-current"
-          set:html={copyIcon}
+<section class="relative">
+  <div class="grid min-h-[calc(100dvh-8rem)] items-center gap-10 py-14 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
+    <div class="relative z-10 max-w-xl">
+      <h1 class="enter text-5xl font-medium leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
+        Agents, relayed<span class="text-copper">.</span>
+      </h1>
+      <p class="enter enter-1 mt-6 max-w-[42ch] text-lg leading-relaxed text-muted">
+        Caara runs Claude Code and Antigravity as native Codex subagents, so one session can use
+        every model you subscribe to.
+      </p>
+      <div class="enter enter-2 mt-9 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          data-copy={install}
+          class="group flex cursor-pointer items-center gap-3 rounded-md border border-rule bg-surface px-4 py-3 font-mono text-[13.5px] transition-all hover:-translate-y-0.5 hover:border-mint/60 active:translate-y-0"
+        >
+          <span class="text-mint select-none">$</span>
+          {install}
+          <span
+            class="text-muted transition-colors group-hover:text-ink group-data-copied:text-mint [&>svg]:size-4 [&>svg]:fill-current"
+            set:html={copyIcon}
+          />
+        </button>
+        <a
+          href="https://github.com/niieani/caara"
+          rel="noopener"
+          class="rounded-md bg-ink px-5 py-3 text-[15px] font-medium text-bg transition-all hover:-translate-y-0.5 active:translate-y-0"
+        >
+          View on GitHub
+        </a>
+      </div>
+    </div>
+
+    <!-- relay signal: a mint pulse crossing from the copy to the mark -->
+    <div class="signal-wire absolute top-1/2 right-0 left-0 hidden lg:block" aria-hidden="true">
+      <span class="signal-dot"></span>
+    </div>
+
+    <div class="enter enter-3 relative mx-auto aspect-square w-full max-w-md lg:max-w-none">
+      <div class="mark-float size-full">
+        <LiquidMark
+          client:only="react"
+          maskSrc={`${base}/mark-mask.svg`}
+          fallbackSrc={`${base}/mark-mask.svg`}
         />
-      </button>
-      <a
-        href="https://github.com/niieani/caara"
-        rel="noopener"
-        class="rounded-md bg-ink px-5 py-3 text-[15px] font-medium text-bg transition-transform active:translate-y-px"
-      >
-        View on GitHub
-      </a>
+      </div>
     </div>
   </div>
-  <div class="relative mx-auto aspect-square w-full max-w-md lg:max-w-none">
-    <LiquidMark
-      client:only="react"
-      maskSrc={`${base}/mark-mask.svg`}
-      fallbackSrc={`${base}/mark-mask.svg`}
-    />
+
+  <!-- installed routes ticker -->
+  <div class="marquee border-y border-rule" aria-hidden="true">
+    <div class="marquee-track py-3">
+      {
+        [0, 1].map(() => (
+          <span class="marquee-group">
+            {marqueeSpecs.map((spec) => (
+              <span class="mx-7 font-mono text-[13px] text-muted">
+                <span class="text-mint">~</span> {spec}
+              </span>
+            ))}
+          </span>
+        ))
+      }
+    </div>
   </div>
 </section>
+
+<style>
+  /* entrance stagger on load */
+  @media (prefers-reduced-motion: no-preference) {
+    .enter {
+      opacity: 0;
+      transform: translateY(16px);
+      animation: enter 700ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .enter-1 { animation-delay: 90ms; }
+    .enter-2 { animation-delay: 180ms; }
+    .enter-3 { animation-delay: 120ms; }
+    @keyframes enter {
+      to { opacity: 1; transform: none; }
+    }
+
+    .mark-float {
+      animation: mark-float 9s ease-in-out infinite;
+    }
+    @keyframes mark-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-12px); }
+    }
+
+    .signal-dot {
+      position: absolute;
+      top: -2px;
+      left: 0;
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--c-mint);
+      box-shadow: 0 0 10px 1px color-mix(in oklab, var(--c-mint) 70%, transparent);
+      opacity: 0;
+      animation: signal 4.5s ease-in-out infinite;
+      animation-delay: 1.2s;
+    }
+    @keyframes signal {
+      0% { left: 4%; opacity: 0; }
+      12% { opacity: 1; }
+      42% { opacity: 1; }
+      55% { left: 78%; opacity: 0; }
+      100% { left: 78%; opacity: 0; }
+    }
+
+    .marquee-track {
+      display: flex;
+      width: max-content;
+      animation: marquee 36s linear infinite;
+    }
+    @keyframes marquee {
+      to { transform: translateX(-50%); }
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marquee-track { display: flex; width: max-content; }
+    .signal-dot { display: none; }
+  }
+
+  .signal-wire {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--c-rule) 12%,
+      var(--c-rule) 70%,
+      transparent 85%
+    );
+    z-index: 0;
+  }
+
+  .marquee {
+    overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent, black 12%, black 88%, transparent);
+  }
+  .marquee-group {
+    display: inline-flex;
+    white-space: nowrap;
+  }
+</style>

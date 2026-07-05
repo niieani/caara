@@ -53,7 +53,7 @@ const safeguards = [
     <div class="space-y-4">
       {
         strategies.map((strategy) => (
-          <article class="reveal rounded-lg border border-rule bg-surface p-7">
+          <article class="reveal rounded-lg border border-rule bg-surface p-7 transition-all hover:-translate-y-1 hover:border-mint/40">
             <div class="flex items-baseline justify-between gap-4">
               <h3 class="text-xl font-medium tracking-tight">{strategy.name}</h3>
               <span class="hidden text-right font-mono text-xs text-muted sm:block">{strategy.when}</span>

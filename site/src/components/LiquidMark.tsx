@@ -28,12 +28,14 @@ export default function LiquidMark({ maskSrc, fallbackSrc }: { maskSrc: string; 
       image={maskSrc}
       colorBack="#00000000"
       colorTint="#ffffff"
-      speed={reducedMotion ? 0 : 0.55}
+      // slow drift instead of a full stop under reduced motion: the flow is
+      // small-area and low-contrast, and a frozen hero reads as broken
+      speed={reducedMotion ? 0.15 : 1.1}
       repetition={2.4}
       softness={0.25}
       shiftRed={0.25}
       shiftBlue={0.35}
-      distortion={0.1}
+      distortion={0.12}
       contour={0.9}
       angle={72}
       scale={1}
