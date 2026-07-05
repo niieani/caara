@@ -32,8 +32,9 @@ Codex, `claude/fable` is just another model.
 - **A second model checks the diff.** Cross-family review catches what self-review keeps missing.
 - **Fable where it counts.** Route the hard parts to Claude Fable and let cheaper seats handle
   execution, which costs less than Fable doing everything itself.
-- **Your subscriptions do the work.** Caara drives the agent binaries you already have installed
-  and signed in. It adds no API keys and no per-token bills.
+- **Every subscription, used to the max.** Your Claude and Antigravity plans carry subsidized
+  usage that idles while you work in Codex. Spawning those agents as Codex subagents spends it
+  without switching harnesses, and adds no API keys or per-token bills.
 - **Local, open, and explicit.** MIT licensed, served on `127.0.0.1`, with loud typed failures
   instead of silent fallbacks.
 

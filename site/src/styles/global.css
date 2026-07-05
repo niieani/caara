@@ -7,17 +7,17 @@
  */
 
 :root {
-  /* light: warm paper */
-  --c-bg: #f3eee4;
-  --c-surface: #fbfaf6;
-  --c-surface-2: #ece6da;
-  --c-text: #15181c;
-  --c-text-muted: #5b636e;
-  --c-rule: #d8d0c4;
-  --c-mint: #109e7c;
-  --c-mint-soft: #22c9a3;
+  /* light: cool porcelain, same graphite vibe as dark */
+  --c-bg: #eef1f5;
+  --c-surface: #f8fafc;
+  --c-surface-2: #e3e8ee;
+  --c-text: #13171c;
+  --c-text-muted: #57626e;
+  --c-rule: #d2d9e0;
+  --c-mint: #0b9877;
+  --c-mint-soft: #1e9e7e;
   --c-copper: #b96b4f;
-  --c-code-bg: #eee8dc;
+  --c-code-bg: #e8edf2;
 }
 
 [data-theme="dark"] {
@@ -90,6 +90,26 @@ body {
     opacity: 1;
     transform: none;
   }
+}
+
+/* nav links: mint underline slides in from the left */
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -5px;
+  height: 1px;
+  width: 100%;
+  background: var(--c-mint);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav-link:hover::after {
+  transform: scaleX(1);
 }
 
 /* code blocks */
