@@ -146,7 +146,7 @@ jobs:
         run: tar -czf "dist/caara_${VERSION}_darwin_arm64.tar.gz" -C "dist/release/caara_${VERSION}_darwin_arm64" caara README.md LICENSE
 
       - name: Write macOS checksum
-        run: shasum -a 256 "dist/caara_${VERSION}_darwin_arm64.tar.gz" > "dist/checksums-darwin_arm64.txt"
+        run: (cd dist && shasum -a 256 "caara_${VERSION}_darwin_arm64.tar.gz") > "dist/checksums-darwin_arm64.txt"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -186,7 +186,7 @@ jobs:
         run: bun run build:service:all
 
       - name: Write Linux checksum
-        run: shasum -a 256 "dist/caara_${VERSION}_${{ matrix.asset }}.tar.gz" > "dist/checksums-${{ matrix.asset }}.txt"
+        run: (cd dist && shasum -a 256 "caara_${VERSION}_${{ matrix.asset }}.tar.gz") > "dist/checksums-${{ matrix.asset }}.txt"
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4

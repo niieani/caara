@@ -74,6 +74,19 @@ describe("release publish workflow", () => {
     assert.ok(!/codesign|notarytool/u.test(linuxJob));
   });
 
+  it("writes release checksum manifests with asset-local filenames", () => {
+    const workflow = readWorkflow();
+
+    assert.match(
+      workflow,
+      /\(cd dist && shasum -a 256 "caara_\$\{VERSION\}_darwin_arm64\.tar\.gz"\) > "dist\/checksums-darwin_arm64\.txt"/u,
+    );
+    assert.match(
+      workflow,
+      /\(cd dist && shasum -a 256 "caara_\$\{VERSION\}_\$\{\{ matrix\.asset \}\}\.tar\.gz"\) > "dist\/checksums-\$\{\{ matrix\.asset \}\}\.txt"/u,
+    );
+  });
+
   it("uploads release assets and updates the Homebrew tap cask directly", () => {
     const workflow = readWorkflow();
 
