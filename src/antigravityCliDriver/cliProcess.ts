@@ -155,7 +155,6 @@ const isAntigravityAuthenticationRequiredError = (error: AgentDriverError): bool
 
 /** Antigravity CLI log fragments that indicate an interactive authentication prompt. */
 const antigravityAuthenticationLogMarkers = [
-  "You are not logged into Antigravity",
   "Authentication required",
   "silent auth failed",
   "Waiting for authentication",

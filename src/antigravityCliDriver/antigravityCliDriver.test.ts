@@ -802,6 +802,24 @@ describe("Antigravity CLI driver", () => {
     10_000,
   );
 
+  it.live(
+    "waits through transient Antigravity silent auth logs during startup",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const relayEvents: Array<RelayLogEvent> = [];
+        const result = yield* runTurn({
+          ...fixture,
+          fakeMode: "transient-auth-recovery",
+          relayEvents,
+        });
+
+        assert.deepStrictEqual(result, { _tag: "Success", text: fakeAgyFixture.finalAnswer });
+        assert.deepStrictEqual(turnFailedMessages(relayEvents), []);
+      }),
+    10_000,
+  );
+
   it.effect("surfaces accepted Antigravity process failures as response.failed", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();

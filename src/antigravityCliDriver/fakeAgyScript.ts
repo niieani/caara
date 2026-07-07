@@ -89,7 +89,24 @@ if (mode === "auth-required" && logFile) {
   await waitForCancellation();
 }
 
-if (mode !== "missing-log" && logFile) {
+if (mode === "transient-auth-recovery" && logFile) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, [
+    "E0707 07:48:58.951804 log.go:398] failed to get load code assist response: error getting token source: You are not logged into Antigravity.",
+    "I0707 07:48:58.961742 printmode.go:223] Print mode: not authenticated, trying silent auth",
+    "",
+  ].join("\\n"));
+  await delay(100);
+  fs.appendFileSync(logFile, [
+    "I0707 07:48:59.132521 auth.go:132] ChainedAuth: authenticated via keyring (effective: keyring)",
+    "I0707 07:48:59.689149 printmode.go:225] Print mode: silent auth succeeded",
+    "I0707 07:48:59.831410 conversation_manager.go:306] Starting new conversation (agent=false)",
+    "I0707 07:48:59.831590 server.go:789] Created conversation " + conversationId,
+    "",
+  ].join("\\n"));
+}
+
+if (mode !== "missing-log" && mode !== "transient-auth-recovery" && logFile) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, "I0622 20:09:01.708030 server.go:789] Created conversation " + conversationId + "\\n");
 }
