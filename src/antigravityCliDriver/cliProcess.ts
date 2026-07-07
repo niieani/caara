@@ -39,6 +39,59 @@ export const antigravityLogFilePath = ({
     `${turn.context.identity.turnId}.log`,
   );
 
+/** Builds the user-facing Antigravity startup diagnostic for OAuth login prompts. */
+const antigravityAuthenticationRequiredMessage = (): string =>
+  "Antigravity CLI did not create a conversation before startup timeout because Antigravity authentication is required. Run `agy` interactively and complete OAuth login, then retry.";
+
+/** Returns whether a driver failure is the non-transient Antigravity authentication prompt. */
+const isAntigravityAuthenticationRequiredError = (error: AgentDriverError): boolean =>
+  error.message === antigravityAuthenticationRequiredMessage();
+
+/** Antigravity CLI log fragments that indicate an interactive authentication prompt. */
+const antigravityAuthenticationLogMarkers = [
+  "You are not logged into Antigravity",
+  "Authentication required",
+  "silent auth failed",
+  "Waiting for authentication",
+  "authentication interrupted",
+] as const;
+
+/** Returns whether one Antigravity CLI log snapshot indicates missing local authentication. */
+const logIndicatesAntigravityAuthentication = (content: string): boolean =>
+  antigravityAuthenticationLogMarkers.some((marker) => content.includes(marker));
+
+/** Builds the generic safe failure text for an Antigravity log that lacks a conversation id. */
+const missingConversationIdMessage = (startupTimedOut: boolean): string =>
+  Match.value(startupTimedOut).pipe(
+    Match.when(
+      true,
+      () =>
+        "Antigravity CLI log was created but did not contain a created conversation id before startup timeout.",
+    ),
+    Match.orElse(() => "Antigravity CLI log did not contain a created conversation id."),
+  );
+
+/** Builds the most specific safe failure for an Antigravity log that lacks a conversation id. */
+const missingConversationIdErrorFromLogContent = ({
+  content,
+  startupTimedOut,
+}: {
+  readonly content: string;
+  readonly startupTimedOut: boolean;
+}): AgentDriverError =>
+  Match.value(logIndicatesAntigravityAuthentication(content)).pipe(
+    Match.when(true, () =>
+      createServerErrorAgentDriverError({
+        message: antigravityAuthenticationRequiredMessage(),
+      }),
+    ),
+    Match.orElse(() =>
+      createServerErrorAgentDriverError({
+        message: missingConversationIdMessage(startupTimedOut),
+      }),
+    ),
+  );
+
 /** Extracts the Antigravity conversation id from the CLI log content. */
 const conversationIdFromLog = Effect.fnUntraced(function* (content: string) {
   const match =
@@ -49,8 +102,9 @@ const conversationIdFromLog = Effect.fnUntraced(function* (content: string) {
   return yield* Match.value(conversationId).pipe(
     Match.when(undefined, () =>
       Effect.fail(
-        createServerErrorAgentDriverError({
-          message: "Antigravity CLI log did not contain a created conversation id.",
+        missingConversationIdErrorFromLogContent({
+          content,
+          startupTimedOut: false,
         }),
       ),
     ),
@@ -85,6 +139,32 @@ const readConversationIdFromLogFile = Effect.fnUntraced(function* ({
 }) {
   const logContent = yield* readAntigravityLogFile({ fileSystem, logFilePath });
   return yield* conversationIdFromLog(logContent);
+});
+
+/** Re-reads the Antigravity startup log after timeout and returns the best available failure. */
+const failFromStartupConversationIdTimeout = Effect.fnUntraced(function* ({
+  fileSystem,
+  logFilePath,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly logFilePath: string;
+}) {
+  const logContent = yield* fileSystem.readFileString(logFilePath).pipe(Effect.option);
+  return yield* Option.match(logContent, {
+    onNone: () =>
+      Effect.fail(
+        createServerErrorAgentDriverError({
+          message: "Antigravity CLI log file was not created.",
+        }),
+      ),
+    onSome: (content) =>
+      Effect.fail(
+        missingConversationIdErrorFromLogContent({
+          content,
+          startupTimedOut: true,
+        }),
+      ),
+  });
 });
 
 /** Creates the parent directory for one driver-owned Antigravity diagnostic log file. */
@@ -254,16 +334,14 @@ const waitForFreshConversationId = ({
   readonly processExit: EffectContract<void, AgentDriverError>;
 }) => {
   const waitForLog = readConversationIdFromLogFile({ fileSystem, logFilePath }).pipe(
-    Effect.retry(Schedule.spaced("20 millis")),
+    Effect.retry({
+      schedule: Schedule.spaced("20 millis"),
+      while: (error) => !isAntigravityAuthenticationRequiredError(error),
+    }),
     Effect.timeoutOption("5 seconds"),
     Effect.flatMap((conversationId) =>
       Option.match(conversationId, {
-        onNone: () =>
-          Effect.fail(
-            createServerErrorAgentDriverError({
-              message: "Antigravity CLI log file was not created.",
-            }),
-          ),
+        onNone: () => failFromStartupConversationIdTimeout({ fileSystem, logFilePath }),
         onSome: Effect.succeed,
       }),
     ),

@@ -76,6 +76,19 @@ if (mode === "fresh-recovery-failure" && !conversationArg) {
   process.exit(42);
 }
 
+if (mode === "auth-required" && logFile) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, [
+    "E0707 07:48:58.951804 log.go:398] failed to get load code assist response: error getting token source: You are not logged into Antigravity.",
+    "I0707 07:48:58.961742 auth_manager.go:107] Starting OAuth authentication flow",
+    "Authentication required. Please visit the URL to log in:",
+    "Waiting for authentication (timeout 30s)...",
+    "Or, paste the authorization code here and press Enter:",
+    "",
+  ].join("\\n"));
+  await waitForCancellation();
+}
+
 if (mode !== "missing-log" && logFile) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, "I0622 20:09:01.708030 server.go:789] Created conversation " + conversationId + "\\n");

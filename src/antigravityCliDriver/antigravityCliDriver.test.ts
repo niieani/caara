@@ -216,6 +216,10 @@ const turnFailedEvents = (
       event._tag === "TurnFailed",
   );
 
+/** Builds the expected safe startup failure when fake `agy` waits for OAuth login. */
+const expectedAntigravityAuthenticationStartupFailure = (): string =>
+  "Antigravity CLI did not create a conversation before startup timeout because Antigravity authentication is required. Run `agy` interactively and complete OAuth login, then retry.";
+
 /** Returns decoded SSE event names in order. */
 const frameEventNames = (
   frames: readonly Pick<ResponseFrameWithData, "event">[],
@@ -717,6 +721,36 @@ describe("Antigravity CLI driver", () => {
       }),
     );
   }
+
+  it.live(
+    "classifies Antigravity authentication prompts during startup",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const relayEvents: Array<RelayLogEvent> = [];
+        const expected = expectedAntigravityAuthenticationStartupFailure();
+        const failed = yield* executeTurnRawFrames({
+          turnId: "turn-antigravity-auth-required",
+        }).pipe(
+          Effect.provide(providerLayer({ ...fixture, fakeMode: "auth-required", relayEvents })),
+        );
+
+        assert.strictEqual(failed.status, 200);
+        assert.strictEqual(failed.contentType, "text/event-stream");
+        assert.deepStrictEqual(frameEventNames(failed.frames), [
+          "response.created",
+          "response.failed",
+        ]);
+        assert.strictEqual(
+          failedErrorMessageFromResponseFrames(failed.frames),
+          `Caara driver failed: ${expected}`,
+        );
+        assert.deepStrictEqual(assistantMessageDoneFrames(failed.frames), []);
+        assert.strictEqual(frameEventNames(failed.frames).includes("response.completed"), false);
+        assert.deepStrictEqual(turnFailedMessages(relayEvents), [expected]);
+      }),
+    10_000,
+  );
 
   it.effect("surfaces accepted Antigravity process failures as response.failed", () =>
     Effect.gen(function* () {
