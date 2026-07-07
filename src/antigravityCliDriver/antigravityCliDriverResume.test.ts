@@ -304,6 +304,7 @@ describe("Antigravity CLI driver resume", () => {
         "--conversation",
         fakeAgyFixture.conversationId,
       ]);
+      assert.strictEqual(resumeInvocation.args.includes("--new-project"), false);
       assert.match(argValue(resumeInvocation.args, "--log-file") ?? "", /turn-resume-followup/u);
     }),
   );
@@ -364,6 +365,7 @@ describe("Antigravity CLI driver resume", () => {
       const invocation = invocations.at(0);
       assert.ok(invocation, "missing recovery invocation");
       assert.strictEqual(invocation.prompt, lostSessionRecoveryDriverPrompt);
+      assert.strictEqual(invocation.args.includes("--new-project"), true);
       assert.strictEqual(invocation.args.includes("--conversation"), false);
     }),
   );
@@ -410,6 +412,7 @@ describe("Antigravity CLI driver resume", () => {
         fakeAgyFixture.conversationId,
       );
       assert.strictEqual(freshRecovery.prompt, lostSessionRecoveryDriverPrompt);
+      assert.strictEqual(freshRecovery.args.includes("--new-project"), true);
       assert.strictEqual(freshRecovery.args.includes("--conversation"), false);
     }),
   );

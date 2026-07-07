@@ -1,4 +1,6 @@
-import { Effect, Exit, Match, Option, Schedule, Scope } from "effect";
+import { pathToFileURL } from "node:url";
+
+import { Effect, Exit, Match, Option, Schedule, Schema, Scope } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
@@ -38,6 +40,110 @@ export const antigravityLogFilePath = ({
     "logs",
     `${turn.context.identity.turnId}.log`,
   );
+
+/** Validates the subset of Antigravity project config needed for cwd project selection. */
+const AntigravityProjectConfig = Schema.Struct({
+  id: Schema.NonEmptyString,
+  projectResources: Schema.Struct({
+    resources: Schema.Array(
+      Schema.Struct({
+        folderUri: Schema.NonEmptyString,
+      }),
+    ),
+  }),
+});
+
+/** Parsed Antigravity project config subset used for CLI project selection. */
+type AntigravityProjectConfig = typeof AntigravityProjectConfig.Type;
+
+/** Builds the Antigravity CLI project config directory for one driver home. */
+const antigravityProjectConfigDirectory = ({
+  pathService,
+  homeDir,
+}: {
+  readonly pathService: Path.Path;
+  readonly homeDir: string;
+}): string => pathService.join(homeDir, ".gemini", "config", "projects");
+
+/** Returns the canonical file URI Antigravity stores for one workspace directory. */
+const workspaceFolderUri = ({ cwd }: { readonly cwd: string }): string => pathToFileURL(cwd).href;
+
+/** Decodes one Antigravity project config file, ignoring unrelated or malformed files. */
+const decodeAntigravityProjectConfigOption = (content: string) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(AntigravityProjectConfig))(content).pipe(
+    Effect.option,
+  );
+
+/** Returns whether one Antigravity project config includes the requested workspace folder. */
+const projectConfigIncludesWorkspace = ({
+  project,
+  folderUri,
+}: {
+  readonly project: AntigravityProjectConfig;
+  readonly folderUri: string;
+}): boolean =>
+  project.projectResources.resources.some((resource) => resource.folderUri === folderUri);
+
+/** Reads one Antigravity project id when its config includes the requested workspace folder. */
+const readMatchingAntigravityProjectId = Effect.fnUntraced(function* ({
+  fileSystem,
+  filePath,
+  folderUri,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly filePath: string;
+  readonly folderUri: string;
+}) {
+  const content = yield* fileSystem.readFileString(filePath, "utf8").pipe(Effect.option);
+  return yield* Option.match(content, {
+    onNone: () => Effect.succeed(Option.none<string>()),
+    onSome: (text) =>
+      Effect.map(
+        decodeAntigravityProjectConfigOption(text),
+        Option.flatMap((project) =>
+          Option.fromUndefinedOr(
+            [project.id].filter(() => projectConfigIncludesWorkspace({ project, folderUri })).at(0),
+          ),
+        ),
+      ),
+  });
+});
+
+/** Finds an existing Antigravity project id whose resources include the Codex turn cwd. */
+const matchingAntigravityProjectId = Effect.fnUntraced(function* ({
+  fileSystem,
+  pathService,
+  settings,
+  turn,
+}: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly pathService: Path.Path;
+  readonly settings: AntigravityCliSettingsValue;
+  readonly turn: AgentDriverTurn;
+}) {
+  const projectDirectory = antigravityProjectConfigDirectory({
+    pathService,
+    homeDir: settings.homeDir,
+  });
+  const entries = yield* fileSystem.readDirectory(projectDirectory).pipe(Effect.option);
+  return yield* Option.match(entries, {
+    onNone: () => Effect.map(Effect.void, (): string | undefined => undefined),
+    onSome: (directoryEntries) =>
+      Effect.gen(function* () {
+        const folderUri = workspaceFolderUri({ cwd: turn.cwd });
+        const projectIds = yield* Effect.forEach(
+          directoryEntries.toSorted().filter((entry) => entry.endsWith(".json")),
+          (entry) =>
+            readMatchingAntigravityProjectId({
+              fileSystem,
+              filePath: pathService.join(projectDirectory, entry),
+              folderUri,
+            }),
+        );
+        return projectIds.find(Option.isSome)?.value;
+      }),
+  });
+});
 
 /** Builds the user-facing Antigravity startup diagnostic for OAuth login prompts. */
 const antigravityAuthenticationRequiredMessage = (): string =>
@@ -376,10 +482,14 @@ export const startAntigravityTurnProcess = Effect.fnUntraced(function* ({
 }) {
   yield* makeAntigravityLogDirectory({ fileSystem, pathService, logFilePath });
   yield* ensureAntigravityCommandAvailable({ fileSystem, pathService, settings });
+  const projectId = yield* Option.match(Option.fromUndefinedOr(conversationId), {
+    onNone: () => matchingAntigravityProjectId({ fileSystem, pathService, settings, turn }),
+    onSome: () => Effect.map(Effect.void, (): string | undefined => undefined),
+  });
   const command = antigravityProcessCommand({
     settings,
     turn,
-    argv: buildAntigravityCliArgv({ prompt, options, logFilePath, conversationId }),
+    argv: buildAntigravityCliArgv({ prompt, options, logFilePath, conversationId, projectId }),
   });
   const scope = yield* Scope.make();
   const close = closeAntigravityProcessScope(scope);

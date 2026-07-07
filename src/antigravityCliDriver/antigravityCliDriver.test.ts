@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import * as OpenAiSchema from "@effect/ai-openai/OpenAiSchema";
 import { BunHttpServer, BunServices } from "@effect/platform-bun";
@@ -451,6 +452,34 @@ const makeFixture = Effect.fnUntraced(function* () {
   return { fakeAgyPath, fakeHomeDir, invocationLogPath, stateDir };
 });
 
+/** Writes a fake Antigravity project config whose resources include the test project root. */
+const writeAntigravityProjectConfig = Effect.fnUntraced(function* ({
+  fakeHomeDir,
+  projectId,
+}: {
+  readonly fakeHomeDir: string;
+  readonly projectId: string;
+}) {
+  const projectDirectory = path.join(fakeHomeDir, ".gemini", "config", "projects");
+  const projectPath = path.join(projectDirectory, `${projectId}.json`);
+  const projectConfig = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)({
+    id: projectId,
+    name: "code-agents-as-responses-api",
+    projectResources: {
+      resources: [{ folderUri: pathToFileURL(projectRoot).href }],
+    },
+  });
+  yield* Effect.tryPromise({
+    try: () => fs.mkdir(projectDirectory, { recursive: true }),
+    catch: testError,
+  });
+  yield* Effect.tryPromise({
+    try: () => fs.writeFile(projectPath, projectConfig),
+    catch: testError,
+  });
+  return projectId;
+});
+
 /** Reads the first fake `agy` invocation recorded by the fixture executable. */
 const readFakeInvocation = Effect.fnUntraced(function* ({
   invocationLogPath,
@@ -566,8 +595,9 @@ describe("Antigravity CLI driver", () => {
       });
       assert.deepStrictEqual(invocation.args.slice(0, 2), ["--prompt", "turn turn-1"]);
       assert.ok(!invocation.args.includes("--print"));
-      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "Gemini 3.5 Flash (Medium)"]);
-      assert.deepStrictEqual(invocation.args.slice(4, 6), ["--print-timeout", "7200s"]);
+      assert.strictEqual(invocation.args.includes("--new-project"), true);
+      assert.deepStrictEqual(invocation.args.slice(3, 5), ["--model", "Gemini 3.5 Flash (Medium)"]);
+      assert.deepStrictEqual(invocation.args.slice(5, 7), ["--print-timeout", "7200s"]);
       assert.ok(invocation.args.includes("--log-file"));
       assert.strictEqual(invocation.cwd, projectRoot);
 
@@ -577,6 +607,25 @@ describe("Antigravity CLI driver", () => {
         decoded.externalSession.driverResumeCursor.conversationId,
         fakeAgyFixture.conversationId,
       );
+    }),
+  );
+
+  it.effect("selects an existing Antigravity project for the turn cwd", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const projectId = yield* writeAntigravityProjectConfig({
+        fakeHomeDir: fixture.fakeHomeDir,
+        projectId: "project-for-cwd",
+      });
+      const relayEvents: Array<RelayLogEvent> = [];
+      const result = yield* runTurn({ ...fixture, fakeMode: "success", relayEvents });
+
+      assert.deepStrictEqual(result, { _tag: "Success", text: fakeAgyFixture.finalAnswer });
+      const invocation = yield* readFakeInvocation({
+        invocationLogPath: fixture.invocationLogPath,
+      });
+      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--project", projectId]);
+      assert.strictEqual(invocation.args.includes("--new-project"), false);
     }),
   );
 
@@ -643,6 +692,7 @@ describe("Antigravity CLI driver", () => {
       assert.deepStrictEqual(invocation.args, [
         "--prompt",
         "turn turn-1",
+        "--new-project",
         "--model",
         "gemini-3.5-pro",
         "--print-timeout",
@@ -673,7 +723,7 @@ describe("Antigravity CLI driver", () => {
       const invocation = yield* readFakeInvocation({
         invocationLogPath: fixture.invocationLogPath,
       });
-      assert.deepStrictEqual(invocation.args.slice(2, 4), ["--model", "Gemini 3.5 Flash (High)"]);
+      assert.deepStrictEqual(invocation.args.slice(3, 5), ["--model", "Gemini 3.5 Flash (High)"]);
     }),
   );
 

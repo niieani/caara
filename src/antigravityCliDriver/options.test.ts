@@ -221,6 +221,7 @@ describe("Antigravity CLI options", () => {
         [
           "--prompt",
           "turn turn-1",
+          "--new-project",
           "--model",
           "gemini-3.5-pro",
           "--print-timeout",
@@ -235,6 +236,40 @@ describe("Antigravity CLI options", () => {
           "/tmp/agy-driver.log",
         ],
       );
+    }),
+  );
+
+  it.effect("selects an existing Antigravity project before creating a new one", () =>
+    Effect.gen(function* () {
+      const options = yield* parseOptions({
+        rawDriverOptions: {},
+      });
+
+      const freshArgv = buildAntigravityCliArgv({
+        prompt: "turn turn-1",
+        options,
+        logFilePath: "/tmp/default.log",
+      });
+      const freshWithProjectArgv = buildAntigravityCliArgv({
+        prompt: "turn turn-1",
+        options,
+        logFilePath: "/tmp/default.log",
+        projectId: "project-1",
+      });
+      const resumedArgv = buildAntigravityCliArgv({
+        prompt: "turn turn-2",
+        options,
+        logFilePath: "/tmp/default.log",
+        conversationId: "conversation-1",
+        projectId: "project-1",
+      });
+
+      assert.strictEqual(freshArgv.includes("--new-project"), true);
+      assert.deepStrictEqual(freshWithProjectArgv.slice(2, 4), ["--project", "project-1"]);
+      assert.strictEqual(freshWithProjectArgv.includes("--new-project"), false);
+      assert.deepStrictEqual(resumedArgv.slice(2, 4), ["--conversation", "conversation-1"]);
+      assert.strictEqual(resumedArgv.includes("--project"), false);
+      assert.strictEqual(resumedArgv.includes("--new-project"), false);
     }),
   );
 
@@ -253,7 +288,7 @@ describe("Antigravity CLI options", () => {
           prompt: "turn turn-1",
           options: defaultOptions,
           logFilePath: "/tmp/default.log",
-        }).slice(4, 6),
+        }).slice(5, 7),
         ["--print-timeout", "7200s"],
       );
       assert.strictEqual(maximumOptions.printTimeoutSeconds, 86400);
@@ -262,7 +297,7 @@ describe("Antigravity CLI options", () => {
           prompt: "turn turn-1",
           options: maximumOptions,
           logFilePath: "/tmp/default.log",
-        }).slice(4, 6),
+        }).slice(5, 7),
         ["--print-timeout", "86400s"],
       );
     }),
@@ -282,7 +317,7 @@ describe("Antigravity CLI options", () => {
             prompt: "turn turn-1",
             options,
             logFilePath: "/tmp/default.log",
-          }).slice(2, 4),
+          }).slice(3, 5),
           ["--model", testCase.expectedModel],
         );
       }),
@@ -302,7 +337,7 @@ describe("Antigravity CLI options", () => {
           prompt: "turn turn-1",
           options,
           logFilePath: "/tmp/default.log",
-        }).slice(2, 4),
+        }).slice(3, 5),
         ["--model", "Gemini 3.5 Flash (Low)"],
       );
     }),
