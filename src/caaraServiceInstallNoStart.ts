@@ -201,6 +201,44 @@ const configOutcomeText = (outcome: ConfigInstallOutcome): string =>
     Updated: () => "config updated",
   });
 
+/** Reads executable file identity for installed-binary copy decisions. */
+const installedBinaryIdentity = Effect.fnUntraced(function* ({
+  filePath,
+}: {
+  readonly filePath: string;
+}) {
+  return yield* Effect.tryPromise({
+    try: () => fs.stat(filePath),
+    catch: (cause) =>
+      caaraServiceLifecycleError(`Failed to inspect Caara binary ${filePath}: ${String(cause)}`),
+  });
+});
+
+/** Returns whether installation requires copying rather than reusing the same inode in place. */
+export const installedBinaryCopyRequired = Effect.fnUntraced(function* ({
+  from,
+  to,
+}: {
+  readonly from: string;
+  readonly to: string;
+}) {
+  const sourceIdentity = yield* installedBinaryIdentity({ filePath: from });
+  const destinationExists = yield* Effect.tryPromise({
+    try: () => Bun.file(to).exists(),
+    catch: (cause) =>
+      caaraServiceLifecycleError(`Failed to inspect Caara binary ${to}: ${String(cause)}`),
+  });
+  const destinationExistsEffect = Effect.succeed(destinationExists);
+  const destinationIdentity = yield* installedBinaryIdentity({ filePath: to }).pipe(
+    Effect.when(destinationExistsEffect),
+  );
+  return Option.match(destinationIdentity, {
+    onNone: () => true,
+    onSome: (identity) =>
+      sourceIdentity.dev !== identity.dev || sourceIdentity.ino !== identity.ino,
+  });
+});
+
 /** Copies the current compiled executable to the installer-managed user bin path. */
 const copyInstalledBinary = Effect.fnUntraced(function* ({
   from,
@@ -214,11 +252,17 @@ const copyInstalledBinary = Effect.fnUntraced(function* ({
     catch: (cause) =>
       caaraServiceLifecycleError(`Failed to create Caara bin directory: ${String(cause)}`),
   });
-  yield* Effect.tryPromise({
-    try: () => fs.copyFile(from, to),
-    catch: (cause) =>
-      caaraServiceLifecycleError(`Failed to install Caara binary: ${String(cause)}`),
-  });
+  const copyRequired = yield* installedBinaryCopyRequired({ from, to });
+  yield* Effect.forEach(
+    [{ from, to }].filter(() => copyRequired),
+    (copy) =>
+      Effect.tryPromise({
+        try: () => fs.copyFile(copy.from, copy.to),
+        catch: (cause) =>
+          caaraServiceLifecycleError(`Failed to install Caara binary: ${String(cause)}`),
+      }),
+    { discard: true },
+  );
   yield* Effect.tryPromise({
     try: () => fs.chmod(to, 0o755),
     catch: (cause) =>

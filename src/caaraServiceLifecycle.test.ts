@@ -7,6 +7,7 @@ import { Effect } from "effect";
 import { TestClock } from "effect/testing";
 
 import type { CaaraDoctorResult } from "./caaraDoctor.ts";
+import { installedBinaryCopyRequired } from "./caaraServiceInstallNoStart.ts";
 import {
   runCaaraInstallService,
   runCaaraUninstallService,
@@ -127,6 +128,37 @@ const failingHealthProbe = ({ attempts }: { readonly attempts: string[] }): Caar
 });
 
 describe("Caara service lifecycle", () => {
+  it.effect("skips redundant self-copy through exact, symlink, and hard-link paths", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const installedBinary = path.join(root, "bin", "caara");
+      const symlink = path.join(root, "links", "caara");
+      const hardLink = path.join(root, "links", "caara-hard-link");
+      const differentBinary = path.join(root, "dist", "caara");
+      yield* writeFile({ filePath: installedBinary, content: "compiled-caara" });
+      yield* writeFile({ filePath: differentBinary, content: "different-caara" });
+      yield* Effect.tryPromise(() => fs.mkdir(path.dirname(symlink), { recursive: true }));
+      yield* Effect.tryPromise(() => fs.symlink(installedBinary, symlink));
+      yield* Effect.tryPromise(() => fs.link(installedBinary, hardLink));
+
+      assert.strictEqual(
+        yield* installedBinaryCopyRequired({ from: installedBinary, to: installedBinary }),
+        false,
+      );
+      assert.strictEqual(
+        yield* installedBinaryCopyRequired({ from: symlink, to: installedBinary }),
+        false,
+      );
+      assert.strictEqual(
+        yield* installedBinaryCopyRequired({ from: hardLink, to: installedBinary }),
+        false,
+      );
+      assert.strictEqual(
+        yield* installedBinaryCopyRequired({ from: differentBinary, to: installedBinary }),
+        true,
+      );
+    }),
+  );
   it.effect("fails install-service --no-start from source mode with build guidance", () =>
     Effect.gen(function* () {
       const root = testRoot();
@@ -167,6 +199,26 @@ describe("Caara service lifecycle", () => {
       assert.match(yield* readFile({ filePath: serviceFile }), /CAARA_SERVICE/u);
       assert.match(yield* readFile({ filePath: receiptPath }), /dev\.caara/u);
       assert.match(yield* readFile({ filePath: receiptPath }), new RegExp(installedBinary, "u"));
+    }),
+  );
+
+  it.effect("reinstalls from the managed binary without copying the file onto itself", () =>
+    Effect.gen(function* () {
+      const root = testRoot();
+      const env = serviceEnv({ root });
+      const installedBinary = path.join(env.XDG_BIN_HOME, "caara");
+      yield* writeFile({ filePath: installedBinary, content: "compiled-caara" });
+
+      const result = yield* runCaaraInstallService({
+        args: ["--no-start", "--no-install-codex-roles", "--yolo"],
+        env,
+        platform: "darwin",
+        runtime: compiledRuntime({ executablePath: installedBinary }),
+      });
+
+      assert.strictEqual(result.exitCode, 0);
+      assert.strictEqual(yield* readFile({ filePath: installedBinary }), "compiled-caara");
+      assert.match(result.message, /install-service --no-start complete/u);
     }),
   );
 

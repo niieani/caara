@@ -15,6 +15,13 @@ index 043ee3d..51d3ef7 100644
 @@ -1059 +1063 @@ export const toFile = /*#__PURE__*/dual(args => isLogger(args[0]), (self, path,
 -    window: options?.batchWindow ?? 1000,
 +    window: options?.batchWindow ?? defaultLoggerBatchWindow,
+diff --git a/dist/unstable/cli/CliOutput.js b/dist/unstable/cli/CliOutput.js
+index ee4124a..cf59405 100644
+--- a/dist/unstable/cli/CliOutput.js
++++ b/dist/unstable/cli/CliOutput.js
+@@ -214 +214 @@ const renderTable = (rows, widthCap) => {
+-  }) => `  ${pad(left, col)}${right}`).join("\n");
++  }) => `  ${pad(left, col)}${visualLength(left) >= col ? " " : ""}${right}`).join("\n");
 diff --git a/dist/unstable/rpc/RpcServer.js b/dist/unstable/rpc/RpcServer.js
 index d7e022f..c3e0937 100644
 --- a/dist/unstable/rpc/RpcServer.js
@@ -52,6 +59,14 @@ index ff32c79..7c94c47 100644
 @@ -1651 +1657 @@ export const toFile = dual<
 -        window: options?.batchWindow ?? 1000,
 +        window: options?.batchWindow ?? defaultLoggerBatchWindow,
+diff --git a/src/unstable/cli/CliOutput.ts b/src/unstable/cli/CliOutput.ts
+index 82c49e5..f05e245 100644
+--- a/src/unstable/cli/CliOutput.ts
++++ b/src/unstable/cli/CliOutput.ts
+@@ -428 +428,2 @@ const renderTable = (rows: ReadonlyArray<Row>, widthCap?: number) => {
+-  return rows.map(({ left, right }) => `  ${pad(left, col)}${right}`).join("\n")
++  return rows.map(({ left, right }) =>
++    `  ${pad(left, col)}${visualLength(left) >= col ? " " : ""}${right}`).join("\n")
 diff --git a/src/unstable/rpc/RpcServer.ts b/src/unstable/rpc/RpcServer.ts
 index b45c871..f91097f 100644
 --- a/src/unstable/rpc/RpcServer.ts

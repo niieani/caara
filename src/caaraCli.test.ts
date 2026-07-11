@@ -1,36 +1,149 @@
+import { BunServices } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+import { TestConsole } from "effect/testing";
+import { CliOutput, Command } from "effect/unstable/cli";
 
-import { selectCaaraCommand } from "./caaraCli.ts";
+import packageMetadata from "../package.json" with { type: "json" };
+import {
+  caaraCommand,
+  caaraVersion,
+  createCaaraCommand,
+  type CaaraCliHandlers,
+} from "./caaraCli.ts";
 
-describe("Caara CLI dispatch", () => {
-  it("selects status subcommand without changing default server startup args", () => {
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["status", "--port", "8799"] }), {
-      _tag: "Status",
-      args: ["--port", "8799"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["--port", "8799"] }), {
-      _tag: "Server",
-      args: ["--port", "8799"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["doctor", "--fix"] }), {
-      _tag: "Doctor",
-      args: ["--fix"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["install-service", "--no-start"] }), {
-      _tag: "InstallService",
-      args: ["--no-start"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["uninstall-service", "--purge"] }), {
-      _tag: "UninstallService",
-      args: ["--purge"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["install-codex-roles", "./agents"] }), {
-      _tag: "InstallCodexRoles",
-      args: ["./agents"],
-    });
-    assert.deepStrictEqual(selectCaaraCommand({ args: ["uninstall-codex-roles", "./agents"] }), {
-      _tag: "UninstallCodexRoles",
-      args: ["./agents"],
-    });
-  });
+/** Deterministic platform and output services used by Caara CLI rendering tests. */
+const cliTestLayer = Layer.mergeAll(
+  BunServices.layer,
+  TestConsole.layer,
+  CliOutput.layer(CliOutput.defaultFormatter({ colors: false })),
+);
+
+/** Runs the root Caara command and returns rendered standard output. */
+const runCaaraCommand = Effect.fnUntraced(function* ({
+  args,
+}: {
+  readonly args: readonly string[];
+}) {
+  yield* Command.runWith(caaraCommand, { version: caaraVersion })(args);
+  return (yield* TestConsole.logLines).join("\n");
+});
+
+/** Builds one recording command handler for typed root dispatch tests. */
+const recordingHandler = ({ name, events }: { readonly name: string; readonly events: string[] }) =>
+  ({
+    run: Effect.fnUntraced(function* ({ args }: { readonly args: readonly string[] }) {
+      events.push(`${name}:${args.join(" ")}`);
+      yield* Effect.void;
+    }),
+  }) satisfies CaaraCliHandlers["server"];
+
+/** Builds a complete recording handler set for every public root command. */
+const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliHandlers => ({
+  server: recordingHandler({ name: "server", events }),
+  status: recordingHandler({ name: "status", events }),
+  doctor: recordingHandler({ name: "doctor", events }),
+  installService: recordingHandler({ name: "install-service", events }),
+  uninstallService: recordingHandler({ name: "uninstall-service", events }),
+  installCodexRoles: recordingHandler({ name: "install-codex-roles", events }),
+  uninstallCodexRoles: recordingHandler({ name: "uninstall-codex-roles", events }),
+});
+
+describe("Caara root CLI", () => {
+  it.effect("renders successful root help with every supported subcommand", () =>
+    Effect.gen(function* () {
+      const output = yield* runCaaraCommand({ args: ["--help"] });
+
+      assert.match(output, /USAGE\s+caara <subcommand> \[flags\]/u);
+      assert.match(output, /SUBCOMMANDS/u);
+      for (const subcommand of [
+        "status",
+        "doctor",
+        "install-service",
+        "uninstall-service",
+        "install-codex-roles",
+        "uninstall-codex-roles",
+      ]) {
+        assert.match(output, new RegExp(`\\n  ${subcommand}`, "u"));
+      }
+      assert.match(output, /uninstall-codex-roles Remove Caara-managed/u);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("renders the package version without executing the server handler", () =>
+    Effect.gen(function* () {
+      const output = yield* runCaaraCommand({ args: ["--version"] });
+
+      assert.strictEqual(caaraVersion, packageMetadata.version);
+      assert.strictEqual(output, `caara v${caaraVersion}`);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("renders command-specific help from the same command tree", () =>
+    Effect.gen(function* () {
+      const output = yield* runCaaraCommand({ args: ["install-service", "--help"] });
+
+      assert.match(output, /USAGE\s+caara install-service \[flags\]/u);
+      assert.match(output, /--no-start/u);
+      assert.match(output, /--no-install-codex-roles/u);
+      assert.match(output, /--yolo/u);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("dispatches typed root and subcommand input through canonical argv boundaries", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const command = createCaaraCommand({ handlers: recordingHandlers({ events }) });
+      const run = Command.runWith(command, { version: caaraVersion });
+
+      yield* run(["--config", "/tmp/caara.yaml", "--no-allow-dangerous-skip-permissions"]);
+      yield* run(["status", "--port", "8799"]);
+      yield* run(["doctor", "--config", "/tmp/caara.yaml", "--fix"]);
+      yield* run([
+        "install-service",
+        "--host",
+        "127.0.0.2",
+        "--no-start",
+        "--no-install-codex-roles",
+        "--yolo",
+      ]);
+      yield* run(["uninstall-service", "--purge"]);
+      yield* run([
+        "install-codex-roles",
+        "--config",
+        "/tmp/caara.yaml",
+        "--agents-md",
+        "--panel-skill",
+        "--yolo",
+        "/tmp/agents",
+      ]);
+      yield* run(["uninstall-codex-roles", "/tmp/agents"]);
+
+      assert.deepStrictEqual(events, [
+        "server:--config /tmp/caara.yaml --no-allow-dangerous-skip-permissions",
+        "status:--port 8799",
+        "doctor:--config /tmp/caara.yaml --fix",
+        "install-service:--host 127.0.0.2 --no-install-codex-roles --no-start --yolo",
+        "uninstall-service:--purge",
+        "install-codex-roles:--config /tmp/caara.yaml --agents-md --panel-skill --yolo /tmp/agents",
+        "uninstall-codex-roles:/tmp/agents",
+      ]);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("handles completions and log-level help without invoking a command handler", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const command = createCaaraCommand({ handlers: recordingHandlers({ events }) });
+      const run = Command.runWith(command, { version: caaraVersion });
+
+      yield* run(["--completions", "zsh"]);
+      yield* run(["--log-level", "warning", "--help"]);
+      const output = (yield* TestConsole.logLines).join("\n");
+
+      assert.deepStrictEqual(events, []);
+      assert.match(output, /#compdef caara/u);
+      assert.match(output, /SUBCOMMANDS/u);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
 });

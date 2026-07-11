@@ -273,6 +273,8 @@ denials. For sandboxed setups this is the recommended posture.
 ## Operating the service
 
 ```bash
+caara --help                       # root flags and all supported subcommands
+caara <subcommand> --help          # command-specific flags and arguments
 caara status                     # service + health overview
 caara doctor [--fix]             # diagnose (and repair) the installation
 caara install-service            # install binary + service + Codex roles, verify health
@@ -280,6 +282,8 @@ caara uninstall-service [--purge]
 caara install-codex-roles [target-dir] [--agents-md] [--panel-skill]
 caara uninstall-codex-roles [target-dir]
 ```
+
+Shell completion scripts are available through `caara --completions bash|zsh|fish|sh`.
 
 `install-service` copies the compiled executable to `${XDG_BIN_HOME:-$HOME/.local/bin}/caara`,
 writes the service config and launchd/systemd user unit, runs `doctor --fix`, installs Codex roles
