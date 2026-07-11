@@ -7,6 +7,7 @@ export const serviceBuildPaths = {
   entrypoint: "src/caara.ts",
   currentHostOutput: "dist/caara",
   checksumsOutput: "dist/checksums.txt",
+  macosEntitlements: "config/caara.entitlements.plist",
   releaseLicense: "LICENSE",
   releaseReadme: "README.md",
 } as const;
@@ -164,7 +165,16 @@ const codesignStepFromReleaseArtifact = ({
   readonly artifact: ServiceArtifact;
   readonly codesignIdentity: string;
 }): ServiceCommandStep => ({
-  command: ["codesign", "--force", "--deep", "--sign", codesignIdentity, artifact.binaryOutputPath],
+  command: [
+    "codesign",
+    "--force",
+    "--deep",
+    "--sign",
+    codesignIdentity,
+    "--entitlements",
+    serviceBuildPaths.macosEntitlements,
+    artifact.binaryOutputPath,
+  ],
 });
 
 /** Builds all macOS codesign steps selected by the requested release artifacts. */

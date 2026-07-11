@@ -190,6 +190,8 @@ describe("Caara service build artifacts", () => {
           "--deep",
           "--sign",
           "Developer ID Application: Example",
+          "--entitlements",
+          "config/caara.entitlements.plist",
           "dist/release/caara_1.2.3_darwin_arm64/caara",
         ],
       ],

@@ -48,11 +48,32 @@ describe("release publish workflow", () => {
 
   it("signs, verifies, notarizes, and repackages the Apple Silicon macOS tarball", () => {
     const workflow = readWorkflow();
+    const entitlements = fs.readFileSync(
+      path.join(process.cwd(), "config/caara.entitlements.plist"),
+      "utf8",
+    );
 
     assert.match(workflow, /runs-on: macos-14/u);
     assert.match(workflow, /caara_\$\{VERSION\}_darwin_arm64/u);
-    assert.match(workflow, /codesign --force --deep --sign/u);
+    assert.match(
+      workflow,
+      /codesign --force --deep --sign "\$identity" --timestamp --options runtime --entitlements config\/caara\.entitlements\.plist/u,
+    );
     assert.match(workflow, /codesign --verify --deep --strict/u);
+    assert.match(workflow, /version_output="\$\("\$BINARY_PATH" --version 2>&1 \|\| true\)"/u);
+    assert.match(workflow, /grep -q '\^caara v' <<< "\$version_output"/u);
+    for (const entitlement of [
+      "allow-jit",
+      "allow-unsigned-executable-memory",
+      "disable-executable-page-protection",
+      "allow-dyld-environment-variables",
+      "disable-library-validation",
+    ]) {
+      assert.match(
+        entitlements,
+        new RegExp(`<key>com\\.apple\\.security\\.cs\\.${entitlement}</key>\\s*<true/>`, "u"),
+      );
+    }
     assert.match(
       workflow,
       /op read 'op:\/\/Automation\/Apple Developer App Store Connect AuthKey Github Releases\/AuthKey\.p8'/u,

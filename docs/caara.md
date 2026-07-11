@@ -240,7 +240,9 @@ dist/checksums.txt
 ```
 
 `--codesign-identity` is optional and applies only to macOS release artifacts in the `--all` build.
-Linux artifacts are never codesigned by this script.
+Linux artifacts are never codesigned by this script. macOS signing uses
+`config/caara.entitlements.plist`; these Bun-required JIT entitlements must also be retained by any
+external signing pipeline so the compiled JavaScript runtime exposes `SharedArrayBuffer`.
 
 Release Please owns `package.json` version bumps, changelog, tags, GitHub releases, and release
 notes. `package.json` remains `private: true`; npm publishing is intentionally deferred.

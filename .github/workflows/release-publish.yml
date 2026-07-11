@@ -133,8 +133,14 @@ jobs:
             exit 1
           fi
 
-          codesign --force --deep --sign "$identity" --timestamp --options runtime "$BINARY_PATH"
+          codesign --force --deep --sign "$identity" --timestamp --options runtime --entitlements config/caara.entitlements.plist "$BINARY_PATH"
           codesign --verify --deep --strict --verbose=2 "$BINARY_PATH"
+          version_output="$("$BINARY_PATH" --version 2>&1 || true)"
+          if ! grep -q '^caara v' <<< "$version_output"; then
+            echo "$version_output" >&2
+            echo "Signed macOS binary failed its startup smoke check" >&2
+            exit 1
+          fi
           ditto -c -k --keepParent "$BINARY_PATH" "dist/caara_${VERSION}_darwin_arm64-notary.zip"
           xcrun notarytool submit "dist/caara_${VERSION}_darwin_arm64-notary.zip" \
             --key "$temp_dir/AuthKey.p8" \
