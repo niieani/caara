@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/niieani/caara/compare/v1.2.0...v1.2.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* publish basename checksum manifests ([4164da3](https://github.com/niieani/caara/commit/4164da3233ac7abd80020b6010ff2174eb9bd575))
+* **release:** preserve Bun JIT entitlements ([28854a7](https://github.com/niieani/caara/commit/28854a789c7127283d58d01cbd22a858b750059c))
+
 ## [1.2.0](https://github.com/niieani/caara/compare/v1.1.0...v1.2.0) (2026-07-05)
 
 
