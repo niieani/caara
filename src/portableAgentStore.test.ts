@@ -82,7 +82,7 @@ describe("PortableAgentStore", () => {
           { _tag: "Working" } as const,
           { _tag: "Completed", finalAnswer: "other" } as const,
           { _tag: "Failed" } as const,
-          { _tag: "Cancelled" } as const,
+          { _tag: "Cancelled", outcome: "Terminated", sessionReusable: false } as const,
         ],
         (state) => Effect.result(store.saveTurn({ ...accepted, state, updatedAtMillis: 30 })),
       );

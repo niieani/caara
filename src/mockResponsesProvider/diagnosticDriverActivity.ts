@@ -36,6 +36,10 @@ export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(func
   readonly turn: AgentDriverTurn;
 }) {
   const transportVisibility = yield* diagnosticActivityVisibility(rawDriverOptions);
+  const answerText = Match.value(turn.externalSession).pipe(
+    Match.when(undefined, () => diagnosticDriverFixture.activityAnswerText),
+    Match.orElse(() => diagnosticDriverFixture.resumedActivityAnswerText),
+  );
   const sentinelEvents = Option.toArray(
     Option.fromUndefinedOr(rawDriverOptions.diagnostic_activity_sentinel),
   ).flatMap((sentinel) => [
@@ -76,10 +80,7 @@ export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(func
     }),
     ...createChunkedAssistantTextRuntimeEvents({
       itemId: diagnosticDriverFixture.activityAnswerItemId,
-      text:
-        turn.externalSession === undefined
-          ? diagnosticDriverFixture.activityAnswerText
-          : diagnosticDriverFixture.resumedActivityAnswerText,
+      text: answerText,
       chunkCount: 1,
       messagePhase: "final_answer",
     }),

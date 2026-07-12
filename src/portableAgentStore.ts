@@ -18,9 +18,13 @@ export const DurablePortableTurn = Schema.Struct({
   state: Schema.Union([
     Schema.TaggedStruct("Accepted", {}),
     Schema.TaggedStruct("Working", {}),
+    Schema.TaggedStruct("Cancelling", {}),
     Schema.TaggedStruct("Completed", { finalAnswer: Schema.String }),
     Schema.TaggedStruct("Failed", {}),
-    Schema.TaggedStruct("Cancelled", {}),
+    Schema.TaggedStruct("Cancelled", {
+      outcome: Schema.Literals(["Interrupted", "Abandoned", "Terminated"]),
+      sessionReusable: Schema.Boolean,
+    }),
   ]),
   createdAtMillis: Schema.Finite,
   updatedAtMillis: Schema.Finite,
@@ -38,6 +42,12 @@ export const DurablePortableObservation = Schema.Struct({
   status: Schema.Literals(["working", "completed", "failed", "cancelled"]),
   activity: Schema.String,
   finalAnswer: Schema.optional(Schema.String),
+  cancellation: Schema.optional(
+    Schema.Struct({
+      outcome: Schema.Literals(["Interrupted", "Abandoned", "Terminated"]),
+      sessionReusable: Schema.Boolean,
+    }),
+  ),
   createdAtMillis: Schema.Finite,
   updatedAtMillis: Schema.Finite,
   expiresAtMillis: Schema.Finite,
@@ -63,6 +73,10 @@ const isAllowedTurnTransition = ({
       Match.value(current._tag).pipe(
         Match.when("Accepted", () => next._tag === "Working"),
         Match.when("Working", () => next._tag !== "Accepted"),
+        Match.when(
+          "Cancelling",
+          () => next._tag === "Cancelling" || next._tag === "Cancelled" || next._tag === "Failed",
+        ),
         Match.orElse(() => false),
       ),
   });

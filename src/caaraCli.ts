@@ -3,7 +3,11 @@ import { Effect, Layer, Match, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import packageMetadata from "../package.json" with { type: "json" };
-import { runCaaraAgentStartCli, runCaaraAgentWaitCli } from "./caaraAgentCli.ts";
+import {
+  runCaaraAgentCancelCli,
+  runCaaraAgentStartCli,
+  runCaaraAgentWaitCli,
+} from "./caaraAgentCli.ts";
 import { mainLayerFromArgs } from "./caaraApp.ts";
 import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
@@ -108,6 +112,7 @@ export interface CaaraCliHandlers {
   readonly uninstallCodexRoles: { readonly run: typeof runCaaraUninstallCodexRolesCli };
   readonly agentStart: { readonly run: typeof runCaaraAgentStartCli };
   readonly agentWait: { readonly run: typeof runCaaraAgentWaitCli };
+  readonly agentCancel: { readonly run: typeof runCaaraAgentCancelCli };
 }
 
 /** Live command handlers backed by Caara's application and lifecycle operations. */
@@ -123,6 +128,7 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
   uninstallCodexRoles: { run: runCaaraUninstallCodexRolesCli },
   agentStart: { run: runCaaraAgentStartCli },
   agentWait: { run: runCaaraAgentWaitCli },
+  agentCancel: { run: runCaaraAgentCancelCli },
 };
 
 /** Builds the public command tree around injectable typed-to-domain handler seams. */
@@ -279,10 +285,20 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
       }),
   ).pipe(Command.withDescription("Read one portable Agent turn result"));
 
+  /** Cancels one working portable Agent turn. */
+  const agentCancelCommand = Command.make(
+    "cancel",
+    {
+      ...settingsFlags(),
+      turnId: Argument.string("turn-id").pipe(Argument.withDescription("Portable turn ID")),
+    },
+    (input) => handlers.agentCancel.run({ args: settingsArgs(input), turnId: input.turnId }),
+  ).pipe(Command.withDescription("Cancel one portable Agent turn"));
+
   /** Groups portable Agent commands under one stable namespace. */
   const agentCommand = Command.make("agent").pipe(
     Command.withDescription("Delegate portable Agent turns"),
-    Command.withSubcommands([agentStartCommand, agentWaitCommand]),
+    Command.withSubcommands([agentStartCommand, agentWaitCommand, agentCancelCommand]),
   );
 
   return serverCommand.pipe(

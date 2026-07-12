@@ -59,6 +59,12 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
       yield* Effect.void;
     }),
   },
+  agentCancel: {
+    run: Effect.fnUntraced(function* ({ args, turnId }) {
+      events.push(`agent-cancel:${args.join(" ")}:${turnId}`);
+      yield* Effect.void;
+    }),
+  },
 });
 
 describe("Caara root CLI", () => {

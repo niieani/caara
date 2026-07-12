@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { type CaaraAgentApi, runCaaraAgentStart, runCaaraAgentWait } from "./caaraAgentCli.ts";
+import {
+  type CaaraAgentApi,
+  runCaaraAgentCancel,
+  runCaaraAgentStart,
+  runCaaraAgentWait,
+} from "./caaraAgentCli.ts";
 
 /** Minimal environment used to keep command settings deterministic. */
 const env = { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp", XDG_STATE_HOME: "/tmp" };
@@ -83,6 +88,37 @@ describe("portable Agent CLI commands", () => {
         }),
         { status: "completed", finalAnswer: "safe final" },
       );
+    }),
+  );
+
+  it.effect("cancels by turn identity and returns only outcome plus session reusability", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ readonly url: string; readonly body: unknown }> = [];
+      const api: CaaraAgentApi = {
+        post: ({ url, body }) =>
+          Effect.sync(() => requests.push({ url, body })).pipe(
+            Effect.map(() => ({
+              status: "cancelled",
+              outcome: "Interrupted",
+              sessionReusable: true,
+              activity: "SENTINEL must be discarded",
+            })),
+          ),
+        get: () => Effect.die("unused"),
+      };
+
+      assert.deepStrictEqual(
+        yield* runCaaraAgentCancel({
+          args: ["--port", "8799"],
+          turnId: "turn-1",
+          api,
+          env,
+        }),
+        { status: "cancelled", outcome: "Interrupted", sessionReusable: true },
+      );
+      assert.deepStrictEqual(requests, [
+        { url: "http://127.0.0.1:8799/agent/turns/turn-1/cancel", body: {} },
+      ]);
     }),
   );
 });

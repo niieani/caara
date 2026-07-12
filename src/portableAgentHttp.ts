@@ -24,6 +24,9 @@ import {
 export const PortableAgentStartRequest = Schema.Struct({
   prompt: Schema.NonEmptyString,
   sessionId: Schema.optional(Schema.NonEmptyString),
+  diagnosticCancellationMode: Schema.optional(
+    Schema.Literals(["interrupted", "abandoned_reusable", "abandoned_nonreusable", "terminated"]),
+  ),
 });
 
 /** Service-internal response returned immediately after a portable turn is accepted. */
@@ -47,7 +50,19 @@ export const PortableAgentWaitResponse = Schema.Union([
   Schema.Struct({ status: Schema.Literal("working") }),
   Schema.Struct({ status: Schema.Literal("completed"), finalAnswer: Schema.String }),
   Schema.Struct({ status: Schema.Literal("failed") }),
+  Schema.Struct({
+    status: Schema.Literal("cancelled"),
+    outcome: Schema.Literals(["Interrupted", "Abandoned", "Terminated"]),
+    sessionReusable: Schema.Boolean,
+  }),
 ]);
+
+/** Agent-safe cancellation result containing no prior runtime activity. */
+export const PortableAgentCancelResponse = Schema.Struct({
+  status: Schema.Literal("cancelled"),
+  outcome: Schema.Literals(["Interrupted", "Abandoned", "Terminated"]),
+  sessionReusable: Schema.Boolean,
+});
 
 /** Maximum one-request wait duration accepted by the portable service. */
 export const portableAgentWaitMaximumMillis = 30_000;
@@ -72,11 +87,16 @@ export const renderPortableObservationHtml = ({
     onNone: () => "",
     onSome: (finalAnswer) => `<h2>Final answer</h2><pre>${escapeHtml(finalAnswer)}</pre>`,
   });
+  const cancellationHtml = Option.match(Option.fromUndefinedOr(observation.cancellation), {
+    onNone: () => "",
+    onSome: ({ outcome, sessionReusable }) =>
+      `<h2>Cancellation</h2><p>Outcome: ${outcome}</p><p>Session reusable: ${sessionReusable}</p>`,
+  });
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="1">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Caara turn</title>
 <style>body{font:16px system-ui;max-width:72ch;margin:3rem auto;padding:0 1rem;color:#18181b}pre{white-space:pre-wrap;background:#f4f4f5;padding:1rem;border-radius:.5rem}</style></head>
-<body><h1>Agent turn</h1><p>Status: ${observation.status}</p><h2>Activity</h2><pre>${escapeHtml(observation.activity)}</pre>${finalAnswerHtml}</body></html>`;
+<body><h1>Agent turn</h1><p>Status: ${observation.status}</p><h2>Activity</h2><pre>${escapeHtml(observation.activity)}</pre>${finalAnswerHtml}${cancellationHtml}</body></html>`;
 };
 
 /** Reads and validates one portable diagnostic start body. */
@@ -96,11 +116,23 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
   const sessionId = input.sessionId ?? `portable-session-${randomUUID()}`;
   const turnId = PortableTurnId.make(`portable-turn-${randomUUID()}`);
   const capability = ObservationCapability.make(randomUUID());
+  const diagnosticScenario = Match.value(
+    Option.isSome(Option.fromUndefinedOr(input.diagnosticCancellationMode)),
+  ).pipe(
+    Match.when(true, () => "hangs-until-cancel" as const),
+    Match.orElse(() => "activity" as const),
+  );
   const target = new AgentTarget({
-    requestedModel: "diagnostic/activity",
+    requestedModel: `diagnostic/${diagnosticScenario}`,
     externalAgentKind: "diagnostic",
-    externalModelSpecifier: "activity",
-    rawDriverOptions: { diagnostic_activity_sentinel: input.prompt },
+    externalModelSpecifier: diagnosticScenario,
+    rawDriverOptions: {
+      diagnostic_activity_sentinel: input.prompt,
+      ...Option.match(Option.fromUndefinedOr(input.diagnosticCancellationMode), {
+        onNone: () => ({}),
+        onSome: (mode) => ({ diagnostic_cancel: mode }),
+      }),
+    },
   });
   const turnRequest = {
     identity: { sessionId, parentSessionId: sessionId, turnId },
@@ -141,6 +173,7 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
     sessionId,
     capability,
     runtimeEvents,
+    cancel: execution.cancel,
     onRegistrationFailure: execution.cancel.pipe(Effect.ignore),
   });
   return HttpServerResponse.jsonUnsafe({
@@ -174,8 +207,25 @@ export const handlePortableAgentWait = Effect.fnUntraced(function* ({
           Working: () => ({ status: "working" }) as const,
           Completed: ({ finalAnswer }) => ({ status: "completed", finalAnswer }) as const,
           Failed: () => ({ status: "failed" }) as const,
+          Cancelled: ({ outcome, sessionReusable }) =>
+            ({ status: "cancelled", outcome, sessionReusable }) as const,
         }),
       ),
+  });
+});
+
+/** Cancels one live portable turn through the transport-neutral lifecycle seam. */
+export const handlePortableAgentCancel = Effect.fnUntraced(function* ({
+  turnId,
+}: {
+  readonly turnId: string | undefined;
+}) {
+  const turns = yield* PortableAgentTurns;
+  const outcome = yield* turns.cancel(PortableTurnId.make(turnId ?? "missing"));
+  return HttpServerResponse.jsonUnsafe({
+    status: "cancelled",
+    outcome: outcome._tag,
+    sessionReusable: outcome.sessionReusable,
   });
 });
 
@@ -209,7 +259,7 @@ const portableStateDir =
   );
 
 /** Durable portable turn service assembled at the HTTP boundary. */
-const durablePortableAgentTurnsLayer = portableAgentTurnsDurableLive.pipe(
+const durablePortableAgentTurnsLayer = portableAgentTurnsDurableLive({ records: new Map() }).pipe(
   Layer.provide(portableAgentStoreLive({ stateDir: portableStateDir })),
   Layer.provide(BunServices.layer),
 );
@@ -220,6 +270,28 @@ const portableWaitTimeoutMillisFromUrl = (url: string): number => {
   return Option.fromNullishOr(rawTimeout).pipe(
     Option.map(Number),
     Option.getOrElse(() => 0),
+  );
+};
+
+/** Selects a wait response or explicit timeout validation failure. */
+const portableWaitRequest = ({
+  turnId,
+  timeoutMillis,
+}: {
+  readonly turnId: string | undefined;
+  readonly timeoutMillis: number;
+}) => {
+  const validTimeout =
+    Number.isSafeInteger(timeoutMillis) &&
+    timeoutMillis >= 0 &&
+    timeoutMillis <= portableAgentWaitMaximumMillis;
+  return Match.value(validTimeout).pipe(
+    Match.when(true, () => handlePortableAgentWait({ turnId, timeoutMillis })),
+    Match.orElse(() =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe({ error: "invalid timeoutMillis" }, { status: 400 }),
+      ),
+    ),
   );
 };
 
@@ -243,20 +315,28 @@ export const portableAgentRoutesLayer = Layer.mergeAll(
     HttpRouter.params.pipe(
       Effect.flatMap(({ turnId }) => {
         const timeoutMillis = portableWaitTimeoutMillisFromUrl(request.url);
-        const validTimeout =
-          Number.isSafeInteger(timeoutMillis) &&
-          timeoutMillis >= 0 &&
-          timeoutMillis <= portableAgentWaitMaximumMillis;
-        return Match.value(validTimeout).pipe(
-          Match.when(true, () => handlePortableAgentWait({ turnId, timeoutMillis })),
-          Match.orElse(() =>
-            Effect.succeed(
-              HttpServerResponse.jsonUnsafe({ error: "invalid timeoutMillis" }, { status: 400 }),
-            ),
-          ),
-        );
+        return portableWaitRequest({ turnId, timeoutMillis });
       }),
       Effect.provide(durablePortableAgentTurnsLayer),
+    ),
+  ),
+  HttpRouter.add("POST", "/agent/turns/:turnId/cancel", () =>
+    HttpRouter.params.pipe(
+      Effect.flatMap(({ turnId }) => handlePortableAgentCancel({ turnId })),
+      Effect.provide(durablePortableAgentTurnsLayer),
+      Effect.catchTags({
+        PortableTurnNotFound: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 404 })),
+        PortableTurnCancellationConflict: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+        PortableTurnCancellationUnavailable: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+        AgentTurnCancellationConflict: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+      }),
+      Effect.orElseSucceed(() =>
+        HttpServerResponse.jsonUnsafe({ error: "cancellation failed" }, { status: 500 }),
+      ),
     ),
   ),
   HttpRouter.add("GET", "/observe/:capability", () =>

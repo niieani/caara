@@ -12,6 +12,7 @@ import {
   makeDriverResumeCursor,
 } from "./mockResponsesProvider/sessionDirectory.ts";
 import {
+  PortableAgentCancelResponse,
   PortableAgentStartResponse,
   PortableAgentStartRequest,
   PortableAgentStartServiceResponse,
@@ -139,6 +140,147 @@ const runCliProcess = Effect.fnUntraced(function* ({
 
 describe("portable Agent service process", () => {
   it.live(
+    "cancels every diagnostic outcome without exposing activity and applies binding policy",
+    () => {
+      const port = allocatePort();
+      const stateRoot = path.join(
+        process.cwd(),
+        "temp.local",
+        "2026-07-12",
+        `portable-cancel-${randomUUID()}`,
+      );
+      return withServiceProcess({
+        port,
+        stateRoot,
+        use: ({ executable, origin }) =>
+          Effect.gen(function* () {
+            const cases = [
+              { mode: "interrupted", outcome: "Interrupted", reusable: true },
+              { mode: "abandoned_reusable", outcome: "Abandoned", reusable: true },
+              { mode: "abandoned_nonreusable", outcome: "Abandoned", reusable: false },
+              { mode: "terminated", outcome: "Terminated", reusable: false },
+            ] as const;
+            const expectedSessionBindings = new Map<string, boolean>();
+            for (const cancellationCase of cases) {
+              const prompt = `PRIVATE-ACTIVITY-${cancellationCase.mode}`;
+              const encoded = yield* Schema.encodeEffect(
+                Schema.fromJsonString(PortableAgentStartRequest),
+              )({
+                prompt,
+                sessionId: undefined,
+                diagnosticCancellationMode: cancellationCase.mode,
+              });
+              const response = yield* Effect.tryPromise({
+                try: () =>
+                  fetch(`${origin}/agent/turns`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: encoded,
+                  }),
+                catch: String,
+              });
+              const started = yield* Effect.tryPromise({
+                try: () => response.json(),
+                catch: String,
+              }).pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(PortableAgentStartServiceResponse)),
+              );
+              expectedSessionBindings.set(started.sessionId, cancellationCase.reusable);
+              const liveObservation = yield* fetchText({
+                url: `${origin}${started.observationPath}`,
+              }).pipe(
+                Effect.filterOrFail((html) => html.includes(prompt)),
+                Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+              );
+              assert.ok(liveObservation.includes(prompt));
+              const cancelled = yield* runCliProcess({
+                executable,
+                args: [
+                  "agent",
+                  "cancel",
+                  "--host",
+                  "127.0.0.1",
+                  "--port",
+                  String(port),
+                  started.turnId,
+                ],
+              });
+              assert.strictEqual(cancelled.exitCode, 0, cancelled.stderr);
+              assert.notMatch(`${cancelled.stdout}${cancelled.stderr}`, new RegExp(prompt, "u"));
+              assert.deepStrictEqual(
+                yield* Schema.decodeUnknownEffect(
+                  Schema.fromJsonString(PortableAgentCancelResponse),
+                )(cancelled.stdout.trim()),
+                {
+                  status: "cancelled",
+                  outcome: cancellationCase.outcome,
+                  sessionReusable: cancellationCase.reusable,
+                },
+              );
+              const waited = yield* runCaaraAgentWait({
+                args: ["--host", "127.0.0.1", "--port", String(port)],
+                turnId: started.turnId,
+                env: process.env,
+              });
+              assert.deepStrictEqual(waited, {
+                status: "cancelled",
+                outcome: cancellationCase.outcome,
+                sessionReusable: cancellationCase.reusable,
+              });
+              const observation = yield* fetchText({ url: `${origin}${started.observationPath}` });
+              assert.match(observation, /Status: cancelled/u);
+              assert.match(observation, new RegExp(`Outcome: ${cancellationCase.outcome}`, "u"));
+              assert.match(
+                observation,
+                new RegExp(`Session reusable: ${cancellationCase.reusable}`, "u"),
+              );
+              const repeated = yield* runCliProcess({
+                executable,
+                args: [
+                  "agent",
+                  "cancel",
+                  "--host",
+                  "127.0.0.1",
+                  "--port",
+                  String(port),
+                  started.turnId,
+                ],
+              });
+              assert.notStrictEqual(repeated.exitCode, 0);
+              assert.match(`${repeated.stdout}${repeated.stderr}`, /HTTP 409/u);
+            }
+
+            const sessionDirectory = path.join(
+              stateRoot,
+              "caara",
+              "sessions",
+              "diagnostic",
+              "diagnostic",
+            );
+            const bindingFiles = yield* Effect.promise(() =>
+              Array.fromAsync(new Bun.Glob("*.json").scan(sessionDirectory)),
+            );
+            assert.strictEqual(bindingFiles.length, 2);
+            const bindings = yield* Effect.forEach(bindingFiles, (file) =>
+              Effect.promise(() => Bun.file(path.join(sessionDirectory, file)).text()).pipe(
+                Effect.flatMap(
+                  Schema.decodeUnknownEffect(Schema.fromJsonString(CaaraSessionBinding)),
+                ),
+              ),
+            );
+            for (const [sessionId, expected] of expectedSessionBindings) {
+              assert.strictEqual(
+                bindings.some((binding) => binding.bindingKey.codexThreadId === sessionId),
+                expected,
+              );
+            }
+          }),
+      });
+    },
+    15_000,
+  );
+
+  it.live(
     "resumes explicit sessions, rejects overlap, and leaves bounded waits non-cancelling",
     () => {
       const port = allocatePort();
@@ -222,7 +364,10 @@ describe("portable Agent service process", () => {
             assert.strictEqual(resumedAccepted.sessionId, accepted.sessionId);
             const resumedOverlap = yield* start(accepted.sessionId);
             assert.strictEqual(resumedOverlap.response.status, 409);
-            assert.match(JSON.stringify(resumedOverlap.body), /in-flight turn/iu);
+            const resumedOverlapError = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({ error: Schema.String }),
+            )(resumedOverlap.body);
+            assert.match(resumedOverlapError.error, /in-flight turn/iu);
 
             const concurrentIndependent = yield* start();
             assert.strictEqual(concurrentIndependent.response.status, 200);
@@ -320,9 +465,13 @@ describe("portable Agent service process", () => {
               ),
             );
             assert.strictEqual(
-              persistedAfterFailure.externalSession._tag === "Durable"
-                ? persistedAfterFailure.externalSession.driverResumeCursor
-                : "ephemeral",
+              Match.value(persistedAfterFailure.externalSession).pipe(
+                Match.tags({
+                  Durable: ({ driverResumeCursor }) => driverResumeCursor,
+                  Ephemeral: () => "ephemeral",
+                }),
+                Match.exhaustive,
+              ),
               "invalid-opaque-cursor",
             );
           }),
@@ -635,6 +784,23 @@ describe("portable Agent service process", () => {
                   { status: "working" },
                 );
                 assert.match(yield* fetchText({ url: start.observationUrl }), /Status: working/u);
+                const cancelledAfterRestart = yield* runCliProcess({
+                  executable,
+                  args: [
+                    "agent",
+                    "cancel",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    String(port),
+                    start.turnId,
+                  ],
+                });
+                assert.notStrictEqual(cancelledAfterRestart.exitCode, 0);
+                assert.match(
+                  `${cancelledAfterRestart.stdout}${cancelledAfterRestart.stderr}`,
+                  /HTTP 409/u,
+                );
               }),
           }),
         ),

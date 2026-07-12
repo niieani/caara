@@ -2,9 +2,15 @@ import { Clock, Context, Effect, Layer, Match, Option, Ref, Schema, Stream } fro
 import type { Effect as EffectContract } from "effect/Effect";
 
 import type {
+  AgentCancellationOutcome,
   AgentRuntimeEvent,
   AgentRuntimeEventStream,
 } from "./mockResponsesProvider/agentDriver.ts";
+import type { AgentTurnExecution } from "./mockResponsesProvider/agentTurn.ts";
+import {
+  cancelPortableTurn,
+  type PortableTurnCancellationError,
+} from "./portableAgentCancellation.ts";
 import type {
   ObservationCapability as ObservationCapabilityType,
   PortableTurnId as PortableTurnIdType,
@@ -15,6 +21,10 @@ import {
   PortableAgentStoreError,
   portableAgentRetentionMillis,
 } from "./portableAgentStore.ts";
+import {
+  type PortableTurnProjectionState as ProjectionState,
+  type PortableTurnRecord,
+} from "./portableAgentTurnInternal.ts";
 
 /** Agent-facing coarse state while a portable turn remains active. */
 export interface PortableTurnWorking {
@@ -32,33 +42,29 @@ export interface PortableTurnFailed {
   readonly _tag: "Failed";
 }
 
+/** Agent-facing cancelled state containing only the driver outcome and session policy. */
+export interface PortableTurnCancelled {
+  readonly _tag: "Cancelled";
+  readonly outcome: AgentCancellationOutcome["_tag"];
+  readonly sessionReusable: boolean;
+}
+
 /** Agent-facing projection intentionally excluding runtime observations. */
 export type PortableTurnTerminalProjection =
   | PortableTurnWorking
   | PortableTurnCompleted
-  | PortableTurnFailed;
+  | PortableTurnFailed
+  | PortableTurnCancelled;
 
 /** Human-only observation projection containing live normalized activity. */
 export interface PortableTurnObservation {
-  readonly status: "working" | "completed" | "failed";
+  readonly status: "working" | "completed" | "failed" | "cancelled";
   readonly activity: string;
   readonly finalAnswer: string | undefined;
-}
-
-/** Mutable projection state owned by the service's single runtime-stream consumer. */
-interface ProjectionState {
-  readonly itemPhases: ReadonlyMap<string, "commentary" | "final_answer" | undefined>;
-  readonly terminal: PortableTurnTerminalProjection;
-  readonly observation: PortableTurnObservation;
-}
-
-/** Registered in-memory portable turn projections for this tracer-bullet slice. */
-interface PortableTurnRecord {
-  readonly capability: ObservationCapabilityType;
-  readonly sessionId: string;
-  readonly createdAtMillis: number;
-  readonly expiresAtMillis: number;
-  readonly state: Ref.Ref<ProjectionState>;
+  readonly cancellation?: {
+    readonly outcome: AgentCancellationOutcome["_tag"];
+    readonly sessionReusable: boolean;
+  };
 }
 
 /** Service exposing agent-safe terminal reads and capability-protected human observations. */
@@ -70,6 +76,7 @@ export class PortableAgentTurns extends Context.Service<
       readonly sessionId: string;
       readonly capability: ObservationCapabilityType;
       readonly runtimeEvents: AgentRuntimeEventStream;
+      readonly cancel: AgentTurnExecution["cancel"];
       readonly onRegistrationFailure: EffectContract<void>;
     }) => EffectContract<void, PortableAgentStoreError>;
     readonly wait: (
@@ -78,6 +85,9 @@ export class PortableAgentTurns extends Context.Service<
     readonly observe: (
       capability: ObservationCapabilityType,
     ) => EffectContract<Option.Option<PortableTurnObservation>, PortableAgentStoreError>;
+    readonly cancel: (
+      turnId: PortableTurnIdType,
+    ) => EffectContract<AgentCancellationOutcome, PortableTurnCancellationError>;
   }
 >()("@caara/PortableAgentTurns") {}
 
@@ -86,10 +96,16 @@ const initialProjectionState = (): ProjectionState => ({
   itemPhases: new Map(),
   terminal: { _tag: "Working" },
   observation: { status: "working", activity: "", finalAnswer: undefined },
+  finalization: "open",
+  durableCancellationCommitted: false,
+  observationCancellationCommitted: false,
 });
 
-/** Applies one runtime event to terminal and human projections without leaking activity. */
-const projectRuntimeEvent = (state: ProjectionState, event: AgentRuntimeEvent): ProjectionState =>
+/** Applies one runtime event while terminal finalization remains open. */
+const projectOpenRuntimeEvent = (
+  state: ProjectionState,
+  event: AgentRuntimeEvent,
+): ProjectionState =>
   Match.valueTags(event, {
     ItemCreated: (created): ProjectionState => {
       const phase = Match.value({ kind: created.itemKind, phase: created.messagePhase }).pipe(
@@ -121,12 +137,14 @@ const projectRuntimeEvent = (state: ProjectionState, event: AgentRuntimeEvent): 
         ...state,
         terminal: { _tag: "Completed", finalAnswer },
         observation: { ...state.observation, status: "completed", finalAnswer },
+        finalization: "terminal",
       };
     },
     TurnFailed: (): ProjectionState => ({
       ...state,
       terminal: { _tag: "Failed" },
       observation: { ...state.observation, status: "failed" },
+      finalization: "terminal",
     }),
     ContentStarted: () => state,
     ContentCompleted: () => state,
@@ -140,33 +158,41 @@ const projectRuntimeEvent = (state: ProjectionState, event: AgentRuntimeEvent): 
     }),
   });
 
+/** Applies one runtime event without mutating a claimed or terminal projection. */
+const projectRuntimeEvent = (state: ProjectionState, event: AgentRuntimeEvent): ProjectionState =>
+  Match.value(state.finalization).pipe(
+    Match.when("open", () => projectOpenRuntimeEvent(state, event)),
+    Match.orElse(() => state),
+  );
+
 /** Persists both projections after one event without mixing capability data into turn state. */
 const persistProjection = Effect.fnUntraced(function* ({
   store,
   record,
   turnId,
   current,
-  event,
 }: {
   readonly store: typeof PortableAgentStore.Service | undefined;
   readonly record: PortableTurnRecord;
   readonly turnId: PortableTurnIdType;
   readonly current: ProjectionState;
-  readonly event: AgentRuntimeEvent;
 }) {
   return yield* Option.match(Option.fromUndefinedOr(store), {
     onNone: () => Effect.void,
     onSome: (durable) =>
       Effect.gen(function* () {
         const updatedAtMillis = yield* Clock.currentTimeMillis;
-        const durableState = Match.value(event._tag).pipe(
-          Match.when("TurnSucceeded", () => ({
-            _tag: "Completed" as const,
-            finalAnswer: current.observation.finalAnswer ?? "",
-          })),
-          Match.when("TurnFailed", () => ({ _tag: "Failed" as const })),
-          Match.orElse(() => ({ _tag: "Working" as const })),
-        );
+        const durableState = Match.valueTags(current.terminal, {
+          Working: () =>
+            Match.value(current.finalization).pipe(
+              Match.when("cancelling", () => ({ _tag: "Cancelling" }) as const),
+              Match.orElse(() => ({ _tag: "Working" }) as const),
+            ),
+          Completed: ({ finalAnswer }) => ({ _tag: "Completed", finalAnswer }) as const,
+          Failed: () => ({ _tag: "Failed" }) as const,
+          Cancelled: ({ outcome, sessionReusable }) =>
+            ({ _tag: "Cancelled", outcome, sessionReusable }) as const,
+        });
         yield* Effect.all(
           [
             durable.saveTurn({
@@ -252,28 +278,32 @@ const terminalProjectionFromDurableTurn = (
       ({ finalAnswer }) => ({ _tag: "Completed", finalAnswer }) as const,
     ),
     Match.when({ _tag: "Failed" }, () => ({ _tag: "Failed" }) as const),
-    Match.when({ _tag: "Cancelled" }, () => ({ _tag: "Failed" }) as const),
+    Match.when(
+      { _tag: "Cancelled" },
+      ({ outcome, sessionReusable }) => ({ _tag: "Cancelled", outcome, sessionReusable }) as const,
+    ),
     Match.orElse(() => ({ _tag: "Working" }) as const),
   );
 
-/** Maps durable cancellation into the viewer's failed terminal display. */
+/** Maps durable cancellation into the viewer's cancellation display. */
 const recoveredObservationStatus = (
   status: "working" | "completed" | "failed" | "cancelled",
 ): PortableTurnObservation["status"] =>
   Match.value(status).pipe(
-    Match.when("cancelled", () => "failed" as const),
+    Match.when("cancelled", () => "cancelled" as const),
     Match.orElse((value) => value),
   );
 
 /** Live process-local implementation; durability and retention are intentionally deferred. */
 const makePortableAgentTurns = ({
   store,
+  records,
   retentionMillis = portableAgentRetentionMillis,
 }: {
   readonly store: typeof PortableAgentStore.Service | undefined;
+  readonly records: Map<PortableTurnIdType, PortableTurnRecord>;
   readonly retentionMillis?: number;
 }): typeof PortableAgentTurns.Service => {
-  const records = new Map<PortableTurnIdType, PortableTurnRecord>();
   const cleanupDurableExpiry = Option.match(Option.fromUndefinedOr(store), {
     onNone: () => Effect.void,
     onSome: (durable) => durable.cleanupExpired,
@@ -316,6 +346,10 @@ const makePortableAgentTurns = ({
               status: recoveredObservationStatus(value.status),
               activity: value.activity,
               finalAnswer: value.finalAnswer,
+              ...Option.match(Option.fromUndefinedOr(value.cancellation), {
+                onNone: () => ({}),
+                onSome: (cancellation) => ({ cancellation }),
+              }),
             })),
           ),
         ),
@@ -326,18 +360,20 @@ const makePortableAgentTurns = ({
       sessionId,
       capability,
       runtimeEvents,
+      cancel,
       onRegistrationFailure,
     }: {
       readonly turnId: PortableTurnIdType;
       readonly sessionId: string;
       readonly capability: ObservationCapabilityType;
       readonly runtimeEvents: AgentRuntimeEventStream;
+      readonly cancel: AgentTurnExecution["cancel"];
       readonly onRegistrationFailure: EffectContract<void>;
     }) {
       const createdAtMillis = yield* Clock.currentTimeMillis;
       const expiresAtMillis = createdAtMillis + retentionMillis;
       const state = yield* Ref.make(initialProjectionState());
-      const record = { capability, sessionId, createdAtMillis, expiresAtMillis, state };
+      const record = { capability, sessionId, createdAtMillis, expiresAtMillis, state, cancel };
       yield* Effect.sync(() => records.set(turnId, record));
       const initializeDurableState = Option.match(Option.fromUndefinedOr(store), {
         onNone: () => Effect.void,
@@ -403,24 +439,35 @@ const makePortableAgentTurns = ({
         const current = yield* Ref.updateAndGet(state, (projection) =>
           projectRuntimeEvent(projection, event),
         );
-        yield* persistProjection({ store, record, turnId, current, event });
+        yield* persistProjection({ store, record, turnId, current });
       });
       const persistRuntimeFailure = Effect.fnUntraced(function* (error: {
         readonly message: string;
       }) {
-        const current = yield* Ref.updateAndGet(
+        const [shouldPersist, current] = yield* Ref.modify(
           state,
-          (projection): ProjectionState => ({
-            ...projection,
-            terminal: { _tag: "Failed" },
-            observation: {
-              ...projection.observation,
-              status: "failed",
-              activity: `${projection.observation.activity}${error.message}`,
-            },
-          }),
+          (projection): readonly [readonly [boolean, ProjectionState], ProjectionState] =>
+            Match.value(projection.finalization).pipe(
+              Match.when("open", () => {
+                const failed = {
+                  ...projection,
+                  terminal: { _tag: "Failed" },
+                  observation: {
+                    ...projection.observation,
+                    status: "failed",
+                    activity: `${projection.observation.activity}${error.message}`,
+                  },
+                  finalization: "terminal",
+                } satisfies ProjectionState;
+                return [[true, failed], failed] as const;
+              }),
+              Match.orElse(() => [[false, projection], projection] as const),
+            ),
         );
-        yield* persistStreamFailure({ store, record, turnId, current });
+        const persistEffects = [persistStreamFailure({ store, record, turnId, current })].filter(
+          () => shouldPersist,
+        );
+        yield* Effect.all(persistEffects, { discard: true });
       });
       yield* runtimeEvents.pipe(
         Stream.runForEach(consumeRuntimeEvent),
@@ -453,11 +500,20 @@ const makePortableAgentTurns = ({
           Ref.get(record.state).pipe(Effect.map((state) => Option.some(state.observation))),
       });
     }),
+    cancel: (turnId) =>
+      cancelPortableTurn({
+        turnId,
+        records,
+        store,
+      }),
   };
 };
 
 /** Process-local registry shared by the live HTTP start, wait, and viewer routes. */
-export const portableAgentTurnsProcessLocal = makePortableAgentTurns({ store: undefined });
+export const portableAgentTurnsProcessLocal = makePortableAgentTurns({
+  store: undefined,
+  records: new Map(),
+});
 
 /** Live process-local implementation; durability and retention are intentionally deferred. */
 export const portableAgentTurnsLive = Layer.succeed(
@@ -466,24 +522,30 @@ export const portableAgentTurnsLive = Layer.succeed(
 );
 
 /** Durable implementation backed by the configured portable Agent store. */
-export const portableAgentTurnsDurableLive = Layer.effect(
-  PortableAgentTurns,
-  Effect.gen(function* () {
-    const store = yield* PortableAgentStore;
-    const configured = process.env.CAARA_PORTABLE_RETENTION_MILLIS;
-    const retentionMillis = yield* Option.match(Option.fromUndefinedOr(configured), {
-      onNone: () => Effect.succeed(portableAgentRetentionMillis),
-      onSome: (value) =>
-        Schema.decodeUnknownEffect(Schema.FiniteFromString)(value).pipe(
-          Effect.filterOrFail((millis) => millis > 0),
-          Effect.mapError(
-            () =>
-              new PortableAgentStoreError({
-                message: "CAARA_PORTABLE_RETENTION_MILLIS must be a positive number.",
-              }),
+export const portableAgentTurnsDurableLive = ({
+  records,
+}: {
+  readonly records: Map<PortableTurnIdType, PortableTurnRecord>;
+}) => {
+  return Layer.effect(
+    PortableAgentTurns,
+    Effect.gen(function* () {
+      const store = yield* PortableAgentStore;
+      const configured = process.env.CAARA_PORTABLE_RETENTION_MILLIS;
+      const retentionMillis = yield* Option.match(Option.fromUndefinedOr(configured), {
+        onNone: () => Effect.succeed(portableAgentRetentionMillis),
+        onSome: (value) =>
+          Schema.decodeUnknownEffect(Schema.FiniteFromString)(value).pipe(
+            Effect.filterOrFail((millis) => millis > 0),
+            Effect.mapError(
+              () =>
+                new PortableAgentStoreError({
+                  message: "CAARA_PORTABLE_RETENTION_MILLIS must be a positive number.",
+                }),
+            ),
           ),
-        ),
-    });
-    return makePortableAgentTurns({ store, retentionMillis });
-  }),
-);
+      });
+      return makePortableAgentTurns({ store, records, retentionMillis });
+    }),
+  );
+};

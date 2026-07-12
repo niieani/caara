@@ -366,6 +366,21 @@ const diagnosticActivityTurnResult = Effect.fnUntraced(function* (turn: AgentDri
   } satisfies AgentDriverTurnResult;
 });
 
+/** Emits optional private commentary before remaining cancellable forever. */
+const diagnosticHangingRuntimeEventStream = (turn: AgentDriverTurn) => {
+  const prelude = Option.toArray(
+    Option.fromUndefinedOr(turn.target.rawDriverOptions.diagnostic_activity_sentinel),
+  ).flatMap((sentinel) =>
+    createChunkedAssistantTextRuntimeEvents({
+      itemId: "diagnostic-hanging-private-commentary",
+      text: sentinel,
+      chunkCount: 1,
+      messagePhase: "commentary",
+    }),
+  );
+  return Stream.concat(Stream.fromIterable(prelude), Stream.never);
+};
+
 /** Builds the Diagnostic recovery turn result after a failed durable resume. */
 const diagnosticRecoveryTurnResult = (turn: AgentDriverTurn): AgentDriverTurnResult => ({
   runtimeEvents: Stream.empty,
@@ -433,7 +448,10 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
       }),
     ),
     Match.when("hangs-until-cancel", () =>
-      diagnosticScenarioTurnResult({ turn, runtimeEvents: Stream.never }),
+      diagnosticScenarioTurnResult({
+        turn,
+        runtimeEvents: diagnosticHangingRuntimeEventStream(turn),
+      }),
     ),
     Match.when("recovery", () => recoverUnresumableDiagnosticSession(turn)),
     Match.orElse((scenario) =>

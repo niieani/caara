@@ -7,6 +7,7 @@ import type { CaaraConfigLoader, CaaraSettingsEnvironment } from "./caaraSetting
 import { resolveCaaraSettingsFromArgs } from "./caaraSettings.ts";
 import { caaraHealthProbeUrl } from "./caaraStatus.ts";
 import {
+  PortableAgentCancelResponse,
   PortableAgentStartResponse,
   PortableAgentStartServiceResponse,
   PortableAgentWaitResponse,
@@ -42,6 +43,15 @@ export interface RunCaaraAgentWaitOptions {
   readonly args: readonly string[];
   readonly turnId: string;
   readonly timeoutMillis?: number;
+  readonly api?: CaaraAgentApi;
+  readonly configLoader?: CaaraConfigLoader;
+  readonly env?: CaaraSettingsEnvironment;
+}
+
+/** Inputs accepted by the in-process portable Agent cancellation command. */
+export interface RunCaaraAgentCancelOptions {
+  readonly args: readonly string[];
+  readonly turnId: string;
   readonly api?: CaaraAgentApi;
   readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraSettingsEnvironment;
@@ -150,6 +160,24 @@ export const runCaaraAgentWait = Effect.fnUntraced(function* ({
   );
 });
 
+/** Cancels one working portable turn and returns its agent-safe terminal policy. */
+export const runCaaraAgentCancel = Effect.fnUntraced(function* ({
+  args,
+  turnId,
+  api = liveCaaraAgentApi,
+  configLoader,
+  env,
+}: RunCaaraAgentCancelOptions) {
+  const origin = yield* resolveAgentServiceOrigin({ args, configLoader, env });
+  const body = yield* api.post({
+    url: `${origin}/agent/turns/${encodeURIComponent(turnId)}/cancel`,
+    body: {},
+  });
+  return yield* Schema.decodeUnknownEffect(PortableAgentCancelResponse)(body).pipe(
+    Effect.mapError(agentCliError),
+  );
+});
+
 /** Runs live start and prints exactly one machine-readable JSON result. */
 export const runCaaraAgentStartCli = Effect.fnUntraced(function* ({
   args,
@@ -179,6 +207,21 @@ export const runCaaraAgentWaitCli = Effect.fnUntraced(function* ({
 }) {
   const result = yield* runCaaraAgentWait({ args, turnId, timeoutMillis });
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PortableAgentWaitResponse))(
+    result,
+  );
+  return yield* Console.log(encoded);
+});
+
+/** Runs live cancellation and prints exactly one agent-safe JSON result. */
+export const runCaaraAgentCancelCli = Effect.fnUntraced(function* ({
+  args,
+  turnId,
+}: {
+  readonly args: readonly string[];
+  readonly turnId: string;
+}) {
+  const result = yield* runCaaraAgentCancel({ args, turnId });
+  const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PortableAgentCancelResponse))(
     result,
   );
   return yield* Console.log(encoded);
