@@ -101,6 +101,7 @@ const contractStart: AgentDriverStart = (turn: AgentDriverTurn) => {
 
 /** Contract-test driver implementation using the explicit AgentDriver interface. */
 const contractDriver: AgentDriver = {
+  preflight: () => Effect.void,
   startOrResumeTurn: contractStart,
 };
 

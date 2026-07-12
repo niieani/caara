@@ -47,6 +47,7 @@ import {
   buildClaudeAgentSdkQueryOptions,
   parseClaudeAgentSdkActivityTransportVisibility,
   type ClaudeAgentSdkSessionStartup,
+  validateClaudeAgentSdkPreflight,
 } from "./options.ts";
 import { extractClaudeAgentSdkPrompt } from "./prompt.ts";
 import { ClaudeAgentSdkSettings, claudeAgentSdkSettingsFromEnvironment } from "./settings.ts";
@@ -500,6 +501,13 @@ const createClaudeAgentSdkAgentDriver = ({
   readonly generator: ClaudeAgentSdkSessionIdGenerator["Service"];
   readonly pathService: Path.Path;
 }): AgentDriver => ({
+  preflight: Effect.fnUntraced(function* ({ target }) {
+    yield* validateClaudeAgentSdkPreflight({
+      caaraSettings,
+      rawDriverOptions: target.rawDriverOptions,
+    });
+    yield* parseClaudeAgentSdkActivityTransportVisibility(target.rawDriverOptions);
+  }),
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     return yield* Match.value(requiresFreshSessionForCwdChange(turn)).pipe(
       Match.when(true, () =>

@@ -414,6 +414,16 @@ export const makeAntigravityCliAgentDriver = ({
   readonly pathService: Path.Path;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }): AgentDriver => ({
+  preflight: Effect.fnUntraced(function* ({ target, advisories }) {
+    yield* parseAntigravityCliOptions({
+      caaraSettings,
+      externalModelSpecifier: target.externalModelSpecifier,
+      rawDriverOptions: target.rawDriverOptions,
+      advisoryEffort: advisories.effort,
+      sandboxPosture: advisories.sandboxPosture,
+      pathService,
+    });
+  }),
   startOrResumeTurn: Effect.fnUntraced(function* (turn: AgentDriverTurn) {
     const prompt = yield* extractAntigravityCliPrompt(turn.prompt);
     const options = yield* parseAntigravityCliOptions({

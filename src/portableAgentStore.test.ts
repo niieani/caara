@@ -15,6 +15,9 @@ import {
   type DurablePortableTurn,
 } from "./portableAgentStore.ts";
 
+/** Creates a public-shape portable turn identity for durable store tests. */
+const makePortableStoreTestTurnId = () => PortableTurnId.make(`portable-turn-${randomUUID()}`);
+
 /** Creates an isolated state root under the project staging directory. */
 const stateDir = (): string =>
   path.join(process.cwd(), "temp.local", "2026-07-12", `portable-store-${randomUUID()}`);
@@ -26,7 +29,7 @@ const storeLayer = ({ root }: { readonly root: string }) =>
 describe("PortableAgentStore", () => {
   it.effect("persists turns and capability observations in isolated directories", () => {
     const root = stateDir();
-    const turnId = PortableTurnId.make("turn-durable");
+    const turnId = makePortableStoreTestTurnId();
     const capability = ObservationCapability.make("capability-secret");
     const accepted = {
       schemaVersion: 1,
@@ -93,7 +96,7 @@ describe("PortableAgentStore", () => {
 
   it.effect("expires portable records without deleting session bindings", () => {
     const root = stateDir();
-    const turnId = PortableTurnId.make("turn-expiring");
+    const turnId = makePortableStoreTestTurnId();
     const capability = ObservationCapability.make("capability-expiring");
     return Effect.gen(function* () {
       const store = yield* PortableAgentStore;

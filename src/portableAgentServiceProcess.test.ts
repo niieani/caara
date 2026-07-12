@@ -2,22 +2,27 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Match, Schedule, Schema } from "effect";
+import { Effect, Match, Option, Schedule, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
 import { runCaaraAgentWait } from "./caaraAgentCli.ts";
+import {
+  PortableAgentCancelResult,
+  PortableAgentErrorResult,
+  PortableAgentStartResult,
+  PortableAgentWaitResult,
+} from "./caaraAgentContract.ts";
 import {
   CaaraSessionBinding,
   DurableExternalSession,
   makeDriverResumeCursor,
 } from "./mockResponsesProvider/sessionDirectory.ts";
 import {
-  PortableAgentCancelResponse,
-  PortableAgentStartResponse,
   PortableAgentStartRequest,
   PortableAgentStartServiceResponse,
   PortableAgentWaitResponse,
 } from "./portableAgentHttp.ts";
+import { PortableSessionId } from "./portableAgentIdentity.ts";
 
 /** Allocates an OS-selected TCP port without guessing a random port. */
 const allocatePort = (): number => {
@@ -118,15 +123,33 @@ const withServiceProcess = <A, E, R>({
 const runCliProcess = Effect.fnUntraced(function* ({
   executable,
   args,
+  stdin,
 }: {
   readonly executable: string;
   readonly args: readonly string[];
+  readonly stdin?: string;
 }) {
+  const stdinMode = Option.match(Option.fromUndefinedOr(stdin), {
+    onNone: () => "ignore" as const,
+    onSome: () => "pipe" as const,
+  });
   const cliProcess = Bun.spawn([executable, ...args], {
     cwd: process.cwd(),
     env: process.env,
     stdout: "pipe",
     stderr: "pipe",
+    stdin: stdinMode,
+  });
+  yield* Option.match(Option.fromUndefinedOr(stdin), {
+    onNone: () => Effect.void,
+    onSome: (inputText) =>
+      Effect.gen(function* () {
+        const input = cliProcess.stdin;
+        assert.ok(input);
+        yield* Effect.promise(() =>
+          Promise.resolve(input.write(inputText)).then(() => input.end()),
+        );
+      }),
   });
   const [exitCode, stdout, stderr] = yield* Effect.promise(() =>
     Promise.all([
@@ -138,7 +161,273 @@ const runCliProcess = Effect.fnUntraced(function* ({
   return { exitCode, stdout, stderr };
 });
 
+/** Decodes one exact JSON CLI error while asserting stderr and process status discipline. */
+const decodeCliError = Effect.fnUntraced(function* ({
+  result,
+  exitCode,
+}: {
+  readonly result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string };
+  readonly exitCode: number;
+}) {
+  assert.strictEqual(result.exitCode, exitCode, result.stderr);
+  assert.strictEqual(result.stdout, "", result.stderr);
+  return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentErrorResult))(
+    result.stderr.trim(),
+  );
+});
+
 describe("portable Agent service process", () => {
+  it.live(
+    "preserves every prompt form and classifies public CLI request failures",
+    () => {
+      const port = allocatePort();
+      const stateRoot = path.join(
+        process.cwd(),
+        "temp.local",
+        "2026-07-12",
+        `portable-cli-contract-${randomUUID()}`,
+      );
+      return withServiceProcess({
+        port,
+        stateRoot,
+        use: ({ executable }) =>
+          Effect.gen(function* () {
+            const originArgs = ["--host", "127.0.0.1", "--port", String(port), "--json"];
+            for (const helpArgs of [
+              ["agent", "--help"],
+              ["agent", "start", "--help"],
+              ["agent", "wait", "--help"],
+              ["agent", "cancel", "--help"],
+            ]) {
+              const help = yield* runCliProcess({ executable, args: helpArgs });
+              assert.strictEqual(help.exitCode, 0, help.stderr);
+              assert.strictEqual(help.stderr, "");
+              assert.match(help.stdout, /USAGE|SUBCOMMANDS/u);
+            }
+            const promptFile = path.join(stateRoot, "prompt.txt");
+            yield* Effect.promise(() => Bun.write(promptFile, "file\nλ $()"));
+            const starts = [
+              { args: ["--prompt", "direct\nλ $()"], prompt: "direct\nλ $()" },
+              { args: ["--prompt-file", promptFile], prompt: "file\nλ $()" },
+              { args: ["--stdin"], stdin: "stdin\nλ $()", prompt: "stdin\nλ $()" },
+            ] as const;
+            for (const start of starts) {
+              const stdin = [start]
+                .filter(
+                  (candidate): candidate is typeof candidate & { readonly stdin: string } =>
+                    "stdin" in candidate,
+                )
+                .map((candidate) => candidate.stdin)
+                .at(0);
+              const result = yield* runCliProcess({
+                executable,
+                args: [
+                  "agent",
+                  "start",
+                  ...originArgs,
+                  "--target",
+                  "diagnostic/echo",
+                  "--cwd",
+                  process.cwd(),
+                  ...start.args,
+                ],
+                stdin,
+              });
+              assert.strictEqual(result.exitCode, 10, result.stderr);
+              assert.strictEqual(result.stderr, "");
+              const accepted = yield* Schema.decodeUnknownEffect(
+                Schema.fromJsonString(PortableAgentStartResult),
+              )(result.stdout.trim());
+              assert.strictEqual(accepted.status, "accepted");
+              const completed = yield* runCliProcess({
+                executable,
+                args: ["agent", "wait", accepted.turnId, ...originArgs],
+              }).pipe(
+                Effect.filterOrFail(
+                  (waited) => waited.exitCode === 0,
+                  (waited) => `Prompt fidelity wait exited ${waited.exitCode}: ${waited.stderr}`,
+                ),
+                Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+                Effect.flatMap(({ stdout }) =>
+                  Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentWaitResult))(
+                    stdout.trim(),
+                  ),
+                ),
+              );
+              const encodedPrompt = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)([
+                { type: "input_text", text: start.prompt },
+              ]);
+              assert.deepStrictEqual(completed, {
+                schemaVersion: 1,
+                status: "completed",
+                finalAnswer: `Diagnostic echo current user input: ${encodedPrompt}`,
+              });
+            }
+
+            const missingTarget = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                ...originArgs,
+                "--cwd",
+                process.cwd(),
+                "--prompt",
+                "missing target",
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 64 })));
+            assert.strictEqual(missingTarget.error.kind, "invalid_request");
+
+            const parserFailures = [
+              ["agent", "wait", ...originArgs],
+              [
+                "agent",
+                "wait",
+                ...originArgs,
+                "--timeout-millis",
+                "not-an-integer",
+                "portable-turn-00000000-0000-4000-8000-000000000001",
+              ],
+              [
+                "agent",
+                "wait",
+                ...originArgs,
+                "--unknown",
+                "portable-turn-00000000-0000-4000-8000-000000000001",
+              ],
+              ["agent", "start", ...originArgs, "--target"],
+            ] as const;
+            for (const args of parserFailures) {
+              const parserFailure = yield* runCliProcess({ executable, args }).pipe(
+                Effect.flatMap((result) => decodeCliError({ result, exitCode: 64 })),
+              );
+              assert.strictEqual(parserFailure.error.kind, "invalid_request");
+            }
+
+            const invalidCwd = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                ...originArgs,
+                "--target",
+                "diagnostic/activity",
+                "--cwd",
+                "relative/path",
+                "--prompt",
+                "invalid cwd",
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 64 })));
+            assert.strictEqual(invalidCwd.error.kind, "invalid_request");
+
+            const missingTargetDriver = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                ...originArgs,
+                "--target",
+                "missing/model",
+                "--cwd",
+                process.cwd(),
+                "--prompt",
+                "missing driver",
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 70 })));
+            assert.strictEqual(missingTargetDriver.error.kind, "target_failure");
+
+            const invalidDriverOption = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                ...originArgs,
+                "--target",
+                "diagnostic/activity",
+                "--cwd",
+                process.cwd(),
+                "--option",
+                "unsupported_option=value",
+                "--prompt",
+                "invalid option",
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 70 })));
+            assert.strictEqual(invalidDriverOption.error.kind, "target_failure");
+
+            const malformedTurn = yield* runCliProcess({
+              executable,
+              args: ["agent", "wait", "malformed", ...originArgs],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 64 })));
+            assert.strictEqual(malformedTurn.error.kind, "invalid_request");
+
+            const unknownTurn = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "wait",
+                "portable-turn-00000000-0000-4000-8000-000000000000",
+                ...originArgs,
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 66 })));
+            assert.strictEqual(unknownTurn.error.kind, "unknown_resource");
+
+            const failingStart = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                ...originArgs,
+                "--target",
+                "diagnostic/fails-after-partial",
+                "--cwd",
+                process.cwd(),
+                "--prompt",
+                "terminal failure",
+              ],
+            });
+            assert.strictEqual(failingStart.exitCode, 10, failingStart.stderr);
+            const failingAccepted = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(PortableAgentStartResult),
+            )(failingStart.stdout.trim());
+            const failedWait = yield* runCliProcess({
+              executable,
+              args: ["agent", "wait", failingAccepted.turnId, ...originArgs],
+            }).pipe(
+              Effect.filterOrFail(
+                (waited) => waited.exitCode === 20,
+                (waited) => `Terminal failure wait exited ${waited.exitCode}: ${waited.stderr}`,
+              ),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.strictEqual(failedWait.stderr, "");
+            assert.deepStrictEqual(
+              yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentWaitResult))(
+                failedWait.stdout.trim(),
+              ),
+              { schemaVersion: 1, status: "failed" },
+            );
+
+            const unavailablePort = allocatePort();
+            const unavailable = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "wait",
+                "portable-turn-00000000-0000-4000-8000-000000000000",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                String(unavailablePort),
+                "--json",
+              ],
+            }).pipe(Effect.flatMap((result) => decodeCliError({ result, exitCode: 69 })));
+            assert.strictEqual(unavailable.error.kind, "service_unavailable");
+          }),
+      });
+    },
+    20_000,
+  );
+
   it.live(
     "cancels every diagnostic outcome without exposing activity and applies binding policy",
     () => {
@@ -168,7 +457,12 @@ describe("portable Agent service process", () => {
               )({
                 prompt,
                 sessionId: undefined,
-                diagnosticCancellationMode: cancellationCase.mode,
+                target: "diagnostic/hangs-until-cancel",
+                cwd: process.cwd(),
+                driverOptions: {
+                  diagnostic_cancel: cancellationCase.mode,
+                  diagnostic_activity_sentinel: prompt,
+                },
               });
               const response = yield* Effect.tryPromise({
                 try: () =>
@@ -202,16 +496,18 @@ describe("portable Agent service process", () => {
                   "127.0.0.1",
                   "--port",
                   String(port),
+                  "--json",
                   started.turnId,
                 ],
               });
-              assert.strictEqual(cancelled.exitCode, 0, cancelled.stderr);
+              assert.strictEqual(cancelled.exitCode, 21, cancelled.stderr);
               assert.notMatch(`${cancelled.stdout}${cancelled.stderr}`, new RegExp(prompt, "u"));
               assert.deepStrictEqual(
-                yield* Schema.decodeUnknownEffect(
-                  Schema.fromJsonString(PortableAgentCancelResponse),
-                )(cancelled.stdout.trim()),
+                yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentCancelResult))(
+                  cancelled.stdout.trim(),
+                ),
                 {
+                  schemaVersion: 1,
                   status: "cancelled",
                   outcome: cancellationCase.outcome,
                   sessionReusable: cancellationCase.reusable,
@@ -223,6 +519,7 @@ describe("portable Agent service process", () => {
                 env: process.env,
               });
               assert.deepStrictEqual(waited, {
+                schemaVersion: 1,
                 status: "cancelled",
                 outcome: cancellationCase.outcome,
                 sessionReusable: cancellationCase.reusable,
@@ -247,7 +544,11 @@ describe("portable Agent service process", () => {
                 ],
               });
               assert.notStrictEqual(repeated.exitCode, 0);
-              assert.match(`${repeated.stdout}${repeated.stderr}`, /HTTP 409/u);
+              assert.strictEqual(repeated.exitCode, 75);
+              assert.match(
+                `${repeated.stdout}${repeated.stderr}`,
+                /already terminal or cancelling/u,
+              );
             }
 
             const sessionDirectory = path.join(
@@ -296,9 +597,18 @@ describe("portable Agent service process", () => {
         use: ({ origin }) =>
           Effect.gen(function* () {
             const start = Effect.fnUntraced(function* (sessionId?: string) {
+              const selectedSessionId = yield* Schema.decodeUnknownEffect(
+                Schema.optional(PortableSessionId),
+              )(sessionId);
               const encodedRequest = yield* Schema.encodeEffect(
                 Schema.fromJsonString(PortableAgentStartRequest),
-              )({ prompt: "portable continuity", sessionId });
+              )({
+                prompt: "portable continuity",
+                target: "diagnostic/activity",
+                cwd: process.cwd(),
+                driverOptions: { diagnostic_activity_sentinel: "portable continuity" },
+                sessionId: selectedSessionId,
+              });
               const response = yield* Effect.tryPromise({
                 try: () =>
                   fetch(`${origin}/agent/turns`, {
@@ -319,10 +629,10 @@ describe("portable Agent service process", () => {
             );
 
             const lost = yield* start("portable-session-lost");
-            assert.strictEqual(lost.response.status, 409);
+            assert.strictEqual(lost.response.status, 404);
 
             const overlap = yield* start(accepted.sessionId);
-            assert.strictEqual(overlap.response.status, 409);
+            assert.strictEqual(overlap.response.status, 404);
 
             const independent = yield* start();
             assert.strictEqual(independent.response.status, 200);
@@ -352,6 +662,7 @@ describe("portable Agent service process", () => {
               Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
             );
             assert.deepStrictEqual(firstCompleted, {
+              schemaVersion: 1,
               status: "completed",
               finalAnswer: "Diagnostic activity completed diagnostic/activity",
             });
@@ -364,10 +675,11 @@ describe("portable Agent service process", () => {
             assert.strictEqual(resumedAccepted.sessionId, accepted.sessionId);
             const resumedOverlap = yield* start(accepted.sessionId);
             assert.strictEqual(resumedOverlap.response.status, 409);
-            const resumedOverlapError = yield* Schema.decodeUnknownEffect(
-              Schema.Struct({ error: Schema.String }),
-            )(resumedOverlap.body);
-            assert.match(resumedOverlapError.error, /in-flight turn/iu);
+            const resumedOverlapError = yield* Schema.decodeUnknownEffect(PortableAgentErrorResult)(
+              resumedOverlap.body,
+            );
+            assert.strictEqual(resumedOverlapError.error.kind, "concurrency_conflict");
+            assert.match(resumedOverlapError.error.message, /in-flight turn/iu);
 
             const concurrentIndependent = yield* start();
             assert.strictEqual(concurrentIndependent.response.status, 200);
@@ -382,6 +694,7 @@ describe("portable Agent service process", () => {
               Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
             );
             assert.deepStrictEqual(resumedCompleted, {
+              schemaVersion: 1,
               status: "completed",
               finalAnswer: "Diagnostic activity resumed the prior opaque session",
             });
@@ -414,14 +727,15 @@ describe("portable Agent service process", () => {
               ),
             );
             const resumedBindingFile = bindingFiles.find(
-              ({ binding }) => binding.bindingKey.codexThreadId === accepted.sessionId,
+              ({ binding }) => String(binding.bindingKey.codexThreadId) === accepted.sessionId,
             );
             const resumedBinding = resumedBindingFile?.binding;
             assert.strictEqual(String(resumedBinding?.createdFromTurnId), String(accepted.turnId));
             assert.strictEqual(String(resumedBinding?.lastTurnId), String(resumedAccepted.turnId));
             assert.ok(
               bindingFiles.some(
-                ({ binding }) => binding.bindingKey.codexThreadId === independentAccepted.sessionId,
+                ({ binding }) =>
+                  String(binding.bindingKey.codexThreadId) === independentAccepted.sessionId,
               ),
             );
 
@@ -456,7 +770,7 @@ describe("portable Agent service process", () => {
               Effect.filterOrFail((result) => result.status === "failed"),
               Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
             );
-            assert.deepStrictEqual(invalidResumeResult, { status: "failed" });
+            assert.deepStrictEqual(invalidResumeResult, { schemaVersion: 1, status: "failed" });
             const persistedAfterFailure = yield* Effect.promise(() =>
               Bun.file(path.join(sessionDirectory, resumedBindingFile.file)).text(),
             ).pipe(
@@ -490,6 +804,9 @@ describe("portable Agent service process", () => {
           Effect.gen(function* () {
             const hostileHostBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)({
               prompt: "host-header-capability-test",
+              target: "diagnostic/activity",
+              cwd: process.cwd(),
+              driverOptions: {},
             });
             const hostileHostResponse = yield* Effect.tryPromise({
               try: () =>
@@ -520,19 +837,26 @@ describe("portable Agent service process", () => {
                 "127.0.0.1",
                 "--port",
                 String(port),
+                "--target",
+                "diagnostic/activity",
+                "--cwd",
+                process.cwd(),
+                "--option",
+                `diagnostic_activity_sentinel=${sentinel}`,
+                "--json",
                 "--prompt",
                 `line one\n${sentinel}`,
               ],
             });
-            assert.strictEqual(startProcess.exitCode, 0);
+            assert.strictEqual(startProcess.exitCode, 10);
             const start = yield* Schema.decodeUnknownEffect(
-              Schema.fromJsonString(PortableAgentStartResponse),
+              Schema.fromJsonString(PortableAgentStartResult),
             )(startProcess.stdout.trim());
             assert.deepStrictEqual(
-              yield* Schema.decodeUnknownEffect(PortableAgentStartResponse)(start),
+              yield* Schema.decodeUnknownEffect(PortableAgentStartResult)(start),
               start,
             );
-            assert.strictEqual(start.status, "working");
+            assert.strictEqual(start.status, "accepted");
             assert.match(start.observationUrl, new RegExp(`^${origin}/observe/`, "u"));
 
             const liveHtml = yield* fetchText({ url: start.observationUrl }).pipe(
@@ -547,16 +871,26 @@ describe("portable Agent service process", () => {
 
             const waitProcess = yield* runCliProcess({
               executable,
-              args: ["agent", "wait", "--host", "127.0.0.1", "--port", String(port), start.turnId],
+              args: [
+                "agent",
+                "wait",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                String(port),
+                "--json",
+                start.turnId,
+              ],
             }).pipe(
               Effect.filterOrFail(({ stdout }) => stdout.includes('"status":"completed"')),
               Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
             );
             assert.strictEqual(waitProcess.exitCode, 0);
             const completed = yield* Schema.decodeUnknownEffect(
-              Schema.fromJsonString(PortableAgentWaitResponse),
+              Schema.fromJsonString(PortableAgentWaitResult),
             )(waitProcess.stdout.trim());
             assert.deepStrictEqual(completed, {
+              schemaVersion: 1,
               status: "completed",
               finalAnswer: "Diagnostic activity completed diagnostic/activity",
             });
@@ -616,12 +950,17 @@ describe("portable Agent service process", () => {
                 "127.0.0.1",
                 "--port",
                 String(port),
+                "--target",
+                "diagnostic/activity",
+                "--cwd",
+                process.cwd(),
+                "--json",
                 "--prompt",
                 "restart durable state",
               ],
             });
             const start = yield* Schema.decodeUnknownEffect(
-              Schema.fromJsonString(PortableAgentStartResponse),
+              Schema.fromJsonString(PortableAgentStartResult),
             )(started.stdout.trim());
             yield* runCaaraAgentWait({
               args: ["--host", "127.0.0.1", "--port", String(port)],
@@ -650,14 +989,16 @@ describe("portable Agent service process", () => {
                     "127.0.0.1",
                     "--port",
                     String(port),
+                    "--json",
                     start.turnId,
                   ],
                 });
                 assert.strictEqual(waited.exitCode, 0);
                 const result = yield* Schema.decodeUnknownEffect(
-                  Schema.fromJsonString(PortableAgentWaitResponse),
+                  Schema.fromJsonString(PortableAgentWaitResult),
                 )(waited.stdout.trim());
                 assert.deepStrictEqual(result, {
+                  schemaVersion: 1,
                   status: "completed",
                   finalAnswer: "Diagnostic activity completed diagnostic/activity",
                 });
@@ -746,12 +1087,17 @@ describe("portable Agent service process", () => {
               "127.0.0.1",
               "--port",
               String(port),
+              "--target",
+              "diagnostic/hangs-until-cancel",
+              "--cwd",
+              process.cwd(),
+              "--json",
               "--prompt",
               "working restart state",
             ],
           }).pipe(
             Effect.flatMap(({ stdout }) =>
-              Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentStartResponse))(
+              Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentStartResult))(
                 stdout.trim(),
               ),
             ),
@@ -773,15 +1119,16 @@ describe("portable Agent service process", () => {
                     "127.0.0.1",
                     "--port",
                     String(port),
+                    "--json",
                     start.turnId,
                   ],
                 });
-                assert.strictEqual(waited.exitCode, 0);
+                assert.strictEqual(waited.exitCode, 11);
                 assert.deepStrictEqual(
-                  yield* Schema.decodeUnknownEffect(
-                    Schema.fromJsonString(PortableAgentWaitResponse),
-                  )(waited.stdout.trim()),
-                  { status: "working" },
+                  yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentWaitResult))(
+                    waited.stdout.trim(),
+                  ),
+                  { schemaVersion: 1, status: "working" },
                 );
                 assert.match(yield* fetchText({ url: start.observationUrl }), /Status: working/u);
                 const cancelledAfterRestart = yield* runCliProcess({
@@ -797,9 +1144,10 @@ describe("portable Agent service process", () => {
                   ],
                 });
                 assert.notStrictEqual(cancelledAfterRestart.exitCode, 0);
+                assert.strictEqual(cancelledAfterRestart.exitCode, 75);
                 assert.match(
                   `${cancelledAfterRestart.stdout}${cancelledAfterRestart.stderr}`,
-                  /HTTP 409/u,
+                  /working without a live cancellation handle/u,
                 );
               }),
           }),

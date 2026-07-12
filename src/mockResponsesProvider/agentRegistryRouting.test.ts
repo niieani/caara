@@ -299,6 +299,7 @@ function relaysPermissionDeniedRuntimeContext() {
   const driverRegistryLayer = singleKindAgentDriverRegistryLayer({
     externalAgentKind: "gemini",
     driver: {
+      preflight: () => Effect.void,
       startOrResumeTurn: () =>
         Effect.succeed({
           runtimeEvents: Stream.fromIterable(permissionDeniedRuntimeEvents),

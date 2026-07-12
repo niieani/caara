@@ -336,8 +336,21 @@ export type AgentDriverStart = (
   turn: AgentDriverTurn,
 ) => EffectContract<AgentDriverTurnResult, AgentDriverError>;
 
+/** Validated target context available before any portable turn is durably accepted. */
+export interface AgentDriverPreflightInput {
+  readonly target: AgentTarget;
+  readonly requestedCwd: string;
+  readonly advisories: AgentTurnContext["advisories"];
+}
+
+/** Driver-owned target and option validation performed without starting external work. */
+export type AgentDriverPreflight = (
+  input: AgentDriverPreflightInput,
+) => EffectContract<void, AgentDriverError>;
+
 /** Driver implementation selected for one external agent kind. */
 export interface AgentDriver {
+  readonly preflight: AgentDriverPreflight;
   readonly startOrResumeTurn: AgentDriverStart;
 }
 

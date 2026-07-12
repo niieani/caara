@@ -405,6 +405,21 @@ export const parseClaudeAgentSdkDriverOptions = Effect.fnUntraced(function* ({
   } satisfies ClaudeAgentSdkDriverOptions;
 });
 
+/** Validates Claude driver-owned options before a portable turn is accepted. */
+export const validateClaudeAgentSdkPreflight = Effect.fnUntraced(function* ({
+  caaraSettings,
+  rawDriverOptions,
+}: {
+  readonly caaraSettings: CaaraSettingsValue;
+  readonly rawDriverOptions: Readonly<Record<string, string>>;
+}) {
+  const options = yield* parseClaudeAgentSdkDriverOptions({ rawDriverOptions });
+  yield* validateDangerousPermissionBypass({
+    caaraSettings,
+    permissionMode: options.permissionMode,
+  });
+});
+
 /** Builds official Claude Agent SDK query options for one turn. */
 export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   advisoryEffort,

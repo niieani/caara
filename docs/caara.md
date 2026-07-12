@@ -66,6 +66,9 @@ caara status [--config <path>] [--host <host>] [--port <port>]
 caara doctor [--config <path>] [--fix]
 caara install-codex-roles [--config <path>] [--yolo] [target-dir]
 caara uninstall-codex-roles [target-dir]
+caara agent start (--prompt <text> | --prompt-file <path> | --stdin) --target <kind/model> --cwd <absolute-dir> [--session-id <id>] [--option <name=value>]... [--json]
+caara agent wait <turn-id> [--timeout-millis <0..30000>] [--json]
+caara agent cancel <turn-id> [--json]
 ```
 
 Service install flow:
@@ -112,6 +115,20 @@ systemctl --user enable --now caara.service
 ```
 
 `caara status` resolves the same config/CLI settings as the server and probes `GET /health`.
+
+### Portable Agent CLI
+
+`caara agent start` requires `--target kind/model`, `--cwd /absolute/directory`, and exactly one
+prompt source: `--prompt TEXT`, `--prompt-file PATH`, or `--stdin`. Prompt text is decoded as UTF-8,
+preserved without trimming or shell evaluation, and limited to 1 MiB. Repeated driver options use
+`--option name=value`; names must be unique. `--session-id` explicitly resumes a portable session.
+
+Start, wait, and cancel print concise human output by default. `--json` prints one versioned JSON
+result with `schemaVersion: 1`. Exit statuses are: 0 completed, 10 accepted, 11 working, 20 failed,
+21 cancelled, 64 invalid request, 66 unknown turn/session, 69 unavailable service, 70 target
+failure, and 75 concurrency/cancellation conflict. Errors go to stderr; successful and nonterminal
+results go to stdout. Agent automation should always pass `--json` and branch on both the typed
+status and process exit status.
 Bind-all hosts map to loopback probe targets: `0.0.0.0` becomes `127.0.0.1`, and `::` becomes
 `::1`.
 

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { TestConsole } from "effect/testing";
 import { CliOutput, Command } from "effect/unstable/cli";
 
@@ -48,22 +48,28 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
   installCodexRoles: recordingHandler({ name: "install-codex-roles", events }),
   uninstallCodexRoles: recordingHandler({ name: "uninstall-codex-roles", events }),
   agentStart: {
-    run: Effect.fnUntraced(function* ({ args, prompt }) {
-      events.push(`agent-start:${args.join(" ")}:${prompt}`);
-      yield* Effect.void;
+    run: Effect.fnUntraced(function* ({ args, prompt, target, cwd, driverOptions, json }) {
+      const encodedOptions = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+      )(driverOptions);
+      events.push(
+        `agent-start:${args.join(" ")}:${target}:${cwd}:${encodedOptions}:${String(json)}:${prompt}`,
+      );
     }),
   },
   agentWait: {
-    run: Effect.fnUntraced(function* ({ args, turnId }) {
-      events.push(`agent-wait:${args.join(" ")}:${turnId}`);
-      yield* Effect.void;
-    }),
+    run: ({ args, turnId, json }) =>
+      Effect.suspend(() => {
+        events.push(`agent-wait:${args.join(" ")}:${turnId}:${String(json)}`);
+        return Effect.void;
+      }),
   },
   agentCancel: {
-    run: Effect.fnUntraced(function* ({ args, turnId }) {
-      events.push(`agent-cancel:${args.join(" ")}:${turnId}`);
-      yield* Effect.void;
-    }),
+    run: ({ args, turnId, json }) =>
+      Effect.suspend(() => {
+        events.push(`agent-cancel:${args.join(" ")}:${turnId}:${String(json)}`);
+        return Effect.void;
+      }),
   },
 });
 
@@ -137,7 +143,21 @@ describe("Caara root CLI", () => {
         "/tmp/agents",
       ]);
       yield* run(["uninstall-codex-roles", "/tmp/agents"]);
-      yield* run(["agent", "start", "--port", "8799", "--prompt", "safe prompt"]);
+      yield* run([
+        "agent",
+        "start",
+        "--port",
+        "8799",
+        "--target",
+        "diagnostic/activity",
+        "--cwd",
+        "/tmp",
+        "--option",
+        "alpha=β",
+        "--json",
+        "--prompt",
+        "safe prompt",
+      ]);
       yield* run(["agent", "wait", "--port", "8799", "turn-1"]);
 
       assert.deepStrictEqual(events, [
@@ -148,8 +168,8 @@ describe("Caara root CLI", () => {
         "uninstall-service:--purge",
         "install-codex-roles:--config /tmp/caara.yaml --agents-md --panel-skill --yolo /tmp/agents",
         "uninstall-codex-roles:/tmp/agents",
-        "agent-start:--port 8799:safe prompt",
-        "agent-wait:--port 8799:turn-1",
+        'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:true:safe prompt',
+        "agent-wait:--port 8799:turn-1:false",
       ]);
     }).pipe(Effect.provide(cliTestLayer)),
   );
@@ -167,6 +187,57 @@ describe("Caara root CLI", () => {
       assert.deepStrictEqual(events, []);
       assert.match(output, /#compdef caara/u);
       assert.match(output, /SUBCOMMANDS/u);
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("parses exactly one direct, file, or stdin prompt without changing its text", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const promptFixtures = {
+        file: "file\nλ $()",
+        stdin: "stdin\nλ $()",
+      } as const;
+      const command = createCaaraCommand({
+        handlers: recordingHandlers({ events }),
+        promptReader: {
+          file: () => Effect.succeed(promptFixtures.file),
+          stdin: Effect.succeed(promptFixtures.stdin),
+        },
+      });
+      const run = Command.runWith(command, { version: caaraVersion });
+      const prefix = ["agent", "start", "--target", "diagnostic/activity", "--cwd", "/tmp"];
+      yield* run([...prefix, "--prompt", "direct\nλ $()"]);
+      yield* run([...prefix, "--prompt-file", "/prompt.txt"]);
+      yield* run([...prefix, "--stdin"]);
+
+      assert.deepStrictEqual(
+        events.map((event) => event.slice(event.lastIndexOf(":") + 1)),
+        ["direct\nλ $()", "file\nλ $()", "stdin\nλ $()"],
+      );
+    }).pipe(Effect.provide(cliTestLayer)),
+  );
+
+  it.effect("rejects missing, conflicting prompt forms and duplicate driver options", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const run = Command.runWith(createCaaraCommand({ handlers: recordingHandlers({ events }) }), {
+        version: caaraVersion,
+      });
+      const prefix = ["agent", "start", "--target", "diagnostic/activity", "--cwd", "/tmp"];
+      const priorExitCode = process.exitCode;
+      for (const suffix of [
+        [],
+        ["--prompt", "one", "--stdin"],
+        ["--prompt", "one", "--option", "mode=a", "--option", "mode=b"],
+        ["--prompt", "one", "--option", "malformed"],
+      ]) {
+        process.exitCode = undefined;
+        assert.strictEqual((yield* Effect.result(run([...prefix, ...suffix])))._tag, "Success");
+        assert.strictEqual(process.exitCode, 64);
+      }
+      process.exitCode = priorExitCode;
+      assert.deepStrictEqual(events, []);
+      assert.match((yield* TestConsole.errorLines).join("\n"), /invalid|requires|option/iu);
     }).pipe(Effect.provide(cliTestLayer)),
   );
 });

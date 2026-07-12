@@ -466,6 +466,30 @@ const startDiagnosticTurn = Effect.fnUntraced(function* (turn: AgentDriverTurn) 
 
 /** First-class Diagnostic driver used to smoke-test Caara runtime behavior. */
 export const diagnosticAgentDriver: AgentDriver = {
+  preflight: Effect.fnUntraced(function* ({ target }) {
+    yield* validateDiagnosticOptions(target.rawDriverOptions);
+    const supportedScenarios = new Set([
+      "basic",
+      "echo",
+      "reasoning",
+      "activity",
+      "fails-after-partial",
+      "fails-before-output",
+      "fails-invalid-request",
+      "hangs-until-cancel",
+      "recovery",
+    ]);
+    return yield* Effect.succeed(target.externalModelSpecifier).pipe(
+      Effect.filterOrFail(
+        (scenario) => supportedScenarios.has(scenario),
+        () =>
+          createInvalidPromptAgentDriverError({
+            message: `Unsupported diagnostic scenario: ${target.externalModelSpecifier}.`,
+          }),
+      ),
+      Effect.asVoid,
+    );
+  }),
   startOrResumeTurn: startDiagnosticTurn,
 };
 

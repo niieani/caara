@@ -1,9 +1,15 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Match, Option } from "effect";
+import { Effect, Layer, Match, Option, Record } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import packageMetadata from "../package.json" with { type: "json" };
 import {
+  CaaraAgentCliError,
+  type CaaraAgentPromptSource,
+  type CaaraAgentPromptReader,
+  liveCaaraAgentPromptReader,
+  runCaaraAgentInputErrorCli,
+  resolveCaaraAgentPrompt,
   runCaaraAgentCancelCli,
   runCaaraAgentStartCli,
   runCaaraAgentWaitCli,
@@ -97,6 +103,77 @@ const settingsArgs = ({
 const enabledFlagArgs = ({ name, enabled }: { readonly name: string; readonly enabled: boolean }) =>
   [`--${name}`].filter(() => enabled);
 
+/** Selects exactly one safe prompt source from the public start flags. */
+const selectPromptSource = ({
+  prompt,
+  promptFile,
+  stdin,
+}: {
+  readonly prompt: Option.Option<string>;
+  readonly promptFile: Option.Option<string>;
+  readonly stdin: boolean;
+}) => {
+  const sources: CaaraAgentPromptSource[] = [
+    ...Option.toArray(prompt).map((value) => ({ _tag: "Direct", value }) as const),
+    ...Option.toArray(promptFile).map((path) => ({ _tag: "File", path }) as const),
+    ...[{ _tag: "Stdin" } as const].filter(() => stdin),
+  ];
+  const source = sources.at(0);
+  return Match.value(sources.length === 1 && source !== undefined).pipe(
+    Match.when(true, () => Effect.succeed(source as CaaraAgentPromptSource)),
+    Match.orElse(() =>
+      Effect.fail(
+        new CaaraAgentCliError({
+          kind: "invalid_request",
+          message: "Specify exactly one of --prompt, --prompt-file, or --stdin.",
+        }),
+      ),
+    ),
+  );
+};
+
+/** Parses repeated driver-owned options while rejecting malformed and duplicate names. */
+const parseDriverOptions = (values: readonly string[]) => {
+  const entries = values.map((value) => {
+    const separator = value.indexOf("=");
+    const name = value.slice(0, Math.max(separator, 0));
+    return { name, value: value.slice(separator + 1), valid: separator >= 1 };
+  });
+  const names = new Set(entries.map(({ name }) => name));
+  return Match.value(entries.every(({ valid }) => valid) && names.size === entries.length).pipe(
+    Match.when(true, () =>
+      Effect.succeed(Record.fromIterableWith(entries, ({ name, value }) => [name, value])),
+    ),
+    Match.orElse(() =>
+      Effect.fail(
+        new CaaraAgentCliError({
+          kind: "invalid_request",
+          message: "Invalid or duplicate --option.",
+        }),
+      ),
+    ),
+  );
+};
+
+/** Requires one non-empty public start flag through the typed error contract. */
+const requireStartFlag = ({
+  name,
+  value,
+}: {
+  readonly name: string;
+  readonly value: Option.Option<string>;
+}) =>
+  Option.match(value, {
+    onNone: () =>
+      Effect.fail(
+        new CaaraAgentCliError({
+          kind: "invalid_request",
+          message: `Missing required --${name}.`,
+        }),
+      ),
+    onSome: Effect.succeed,
+  });
+
 /** Runs the default server behind the injectable CLI handler boundary. */
 const runCaaraServerCli = ({ args }: { readonly args: readonly string[] }) =>
   Layer.launch(mainLayerFromArgs({ args })).pipe(Effect.asVoid);
@@ -132,7 +209,13 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
 };
 
 /** Builds the public command tree around injectable typed-to-domain handler seams. */
-export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHandlers }) => {
+export const createCaaraCommand = ({
+  handlers,
+  promptReader = liveCaaraAgentPromptReader,
+}: {
+  readonly handlers: CaaraCliHandlers;
+  readonly promptReader?: CaaraAgentPromptReader;
+}) => {
   /** Runs the default Caara server from typed root settings. */
   const serverCommand = Command.make("caara", settingsFlags(), (input) =>
     handlers.server.run({ args: settingsArgs(input) }),
@@ -250,7 +333,24 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
     "start",
     {
       ...settingsFlags(),
-      prompt: Flag.string("prompt").pipe(Flag.withDescription("Prompt for the diagnostic Agent")),
+      target: Flag.optional(
+        Flag.string("target").pipe(Flag.withDescription("Agent target in kind/model form")),
+      ),
+      cwd: Flag.optional(
+        Flag.string("cwd").pipe(Flag.withDescription("Existing Agent working directory")),
+      ),
+      prompt: Flag.optional(
+        Flag.string("prompt").pipe(Flag.withDescription("Prompt value supplied directly")),
+      ),
+      promptFile: Flag.optional(
+        Flag.string("prompt-file").pipe(Flag.withDescription("Read the prompt from this file")),
+      ),
+      stdin: Flag.boolean("stdin").pipe(Flag.withDescription("Read the prompt from stdin")),
+      driverOptions: Flag.string("option").pipe(
+        Flag.between(0, 100),
+        Flag.withDescription("Driver-owned option as name=value; repeat for multiple options"),
+      ),
+      json: Flag.boolean("json").pipe(Flag.withDescription("Print stable JSON output")),
       sessionId: Flag.optional(
         Flag.string("session-id").pipe(
           Flag.withDescription("Resume the selected portable Agent session"),
@@ -258,11 +358,26 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
       ),
     },
     (input) =>
-      handlers.agentStart.run({
-        args: settingsArgs(input),
-        prompt: input.prompt,
-        sessionId: Option.getOrUndefined(input.sessionId),
-      }),
+      Effect.gen(function* () {
+        const source = yield* selectPromptSource(input);
+        const prompt = yield* resolveCaaraAgentPrompt({ source, reader: promptReader });
+        const target = yield* requireStartFlag({ name: "target", value: input.target });
+        const cwd = yield* requireStartFlag({ name: "cwd", value: input.cwd });
+        const driverOptions = yield* parseDriverOptions(input.driverOptions);
+        return yield* handlers.agentStart.run({
+          args: settingsArgs(input),
+          prompt,
+          target,
+          cwd,
+          driverOptions,
+          sessionId: Option.getOrUndefined(input.sessionId),
+          json: input.json,
+        });
+      }).pipe(
+        Effect.catchTag("CaaraAgentCliError", (error) =>
+          runCaaraAgentInputErrorCli({ error, json: input.json }),
+        ),
+      ),
   ).pipe(Command.withDescription("Start one portable diagnostic Agent turn"));
 
   /** Reads an Agent-safe coarse or final result for one accepted turn. */
@@ -276,12 +391,14 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
           Flag.withDescription("Maximum milliseconds to wait without cancelling the turn"),
         ),
       ),
+      json: Flag.boolean("json").pipe(Flag.withDescription("Print stable JSON output")),
     },
     (input) =>
       handlers.agentWait.run({
         args: settingsArgs(input),
         turnId: input.turnId,
         timeoutMillis: Option.getOrUndefined(input.timeoutMillis),
+        json: input.json,
       }),
   ).pipe(Command.withDescription("Read one portable Agent turn result"));
 
@@ -291,8 +408,14 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
     {
       ...settingsFlags(),
       turnId: Argument.string("turn-id").pipe(Argument.withDescription("Portable turn ID")),
+      json: Flag.boolean("json").pipe(Flag.withDescription("Print stable JSON output")),
     },
-    (input) => handlers.agentCancel.run({ args: settingsArgs(input), turnId: input.turnId }),
+    (input) =>
+      handlers.agentCancel.run({
+        args: settingsArgs(input),
+        turnId: input.turnId,
+        json: input.json,
+      }),
   ).pipe(Command.withDescription("Cancel one portable Agent turn"));
 
   /** Groups portable Agent commands under one stable namespace. */
@@ -317,13 +440,110 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
 /** Complete public Caara CLI command tree. */
 export const caaraCommand = createCaaraCommand({ handlers: liveCaaraCliHandlers });
 
+/** Detects raw portable command syntax failures before the CLI framework prints help text. */
+const agentCliSyntaxError = (args: readonly string[]): Option.Option<string> => {
+  const command = args.at(1);
+  const tail = args.slice(2);
+  const commonValueFlags = ["--config", "--host", "--port", "--log-level"];
+  const valueFlags: readonly string[] = Match.value(command).pipe(
+    Match.when("start", () => [
+      ...commonValueFlags,
+      "--target",
+      "--cwd",
+      "--prompt",
+      "--prompt-file",
+      "--option",
+      "--session-id",
+    ]),
+    Match.when("wait", () => [...commonValueFlags, "--timeout-millis"]),
+    Match.when("cancel", () => commonValueFlags),
+    Match.orElse(() => []),
+  );
+  const booleanFlags: readonly string[] = Match.value(command).pipe(
+    Match.when("start", () => ["--stdin", "--json", "--allow-dangerous-skip-permissions"]),
+    Match.when("wait", () => ["--json", "--allow-dangerous-skip-permissions"]),
+    Match.when("cancel", () => ["--json", "--allow-dangerous-skip-permissions"]),
+    Match.orElse(() => []),
+  );
+  const allowedFlags = new Set([...valueFlags, ...booleanFlags]);
+  const unknownFlag = tail.find(
+    (token) => token.startsWith("--") && !allowedFlags.has(token.split("=", 1)[0] ?? token),
+  );
+  const missingValueFlag = tail.find(
+    (token, index) =>
+      valueFlags.includes(token) &&
+      (tail.at(index + 1) === undefined || tail.at(index + 1)?.startsWith("--") === true),
+  );
+  const consumedValueIndices = new Set(
+    tail.flatMap((token, index) => [index + 1].filter(() => valueFlags.includes(token))),
+  );
+  const positional = tail.filter(
+    (token, index) => !token.startsWith("--") && !consumedValueIndices.has(index),
+  );
+  const invalidPositionalCount =
+    (command === "wait" || command === "cancel") && positional.length !== 1;
+  const timeoutIndex = tail.indexOf("--timeout-millis");
+  const timeout = Option.fromUndefinedOr(tail.at(timeoutIndex + 1)).pipe(
+    Option.filter(() => timeoutIndex >= 0),
+    Option.map(Number),
+  );
+  const errors = [
+    Option.fromUndefinedOr(
+      [`Unknown caara agent command: ${command ?? "missing"}.`]
+        .filter(() => !["start", "wait", "cancel"].includes(command ?? ""))
+        .at(0),
+    ),
+    Option.map(Option.fromUndefinedOr(unknownFlag), (flag) => `Unknown caara agent flag: ${flag}.`),
+    Option.map(
+      Option.fromUndefinedOr(missingValueFlag),
+      (flag) => `Missing value for caara agent flag: ${flag}.`,
+    ),
+    Option.fromUndefinedOr(
+      [`Missing or duplicate ${command} turn ID.`].filter(() => invalidPositionalCount).at(0),
+    ),
+    Option.fromUndefinedOr(
+      ["Invalid --timeout-millis integer."]
+        .filter(() => Option.exists(timeout, (value) => !Number.isSafeInteger(value)))
+        .at(0),
+    ),
+  ];
+  const globalAction = args.some((token) =>
+    ["--help", "-h", "--version", "-v", "--completions"].includes(token),
+  );
+  return Match.value({ globalAction, root: args.at(0) }).pipe(
+    Match.when({ globalAction: false, root: "agent" }, () => Option.firstSomeOf(errors)),
+    Match.orElse(() => Option.none()),
+  );
+};
+
 /** Runs the Caara CLI through Effect's parser, global actions, and command dispatcher. */
 export const caaraCliMain = Effect.fnUntraced(function* ({
   args,
 }: {
   readonly args: readonly string[];
 }) {
-  return yield* Command.runWith(caaraCommand, { version: caaraVersion })(args).pipe(
+  const execution = Command.runWith(caaraCommand, { version: caaraVersion })(args).pipe(
     Effect.provide(BunServices.layer),
+  );
+  const recoverParserError = () =>
+    runCaaraAgentInputErrorCli({
+      error: new CaaraAgentCliError({
+        kind: "invalid_request",
+        message: "Invalid caara agent command.",
+      }),
+      json: args.includes("--json"),
+    });
+  const caughtAgentExecution = execution.pipe(Effect.catch(recoverParserError));
+  const agentExecution = Option.match(agentCliSyntaxError(args), {
+    onNone: () => caughtAgentExecution,
+    onSome: (message) =>
+      runCaaraAgentInputErrorCli({
+        error: new CaaraAgentCliError({ kind: "invalid_request", message }),
+        json: args.includes("--json"),
+      }),
+  });
+  return yield* Match.value(args.at(0)).pipe(
+    Match.when("agent", () => agentExecution),
+    Match.orElse(() => execution),
   );
 });

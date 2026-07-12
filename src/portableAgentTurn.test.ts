@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+
+import { BunServices } from "@effect/platform-bun";
 import { assert, describe, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Match, Option, Ref, Stream } from "effect";
 import { TestClock } from "effect/testing";
@@ -20,6 +24,9 @@ import {
   portableAgentTurnsDurableLive,
   portableAgentTurnsLive,
 } from "./portableAgentTurn.ts";
+
+/** Creates a public-shape portable turn identity for internal projection tests. */
+const makePortableTestTurnId = () => PortableTurnId.make(`portable-turn-${randomUUID()}`);
 
 /** Marks one injected write as consumed, then returns its typed failure. */
 const consumeInjectedFailure = ({
@@ -109,7 +116,7 @@ describe("PortableAgentTurns", () => {
     () =>
       Effect.gen(function* () {
         const turns = yield* PortableAgentTurns;
-        const turnId = PortableTurnId.make("portable-cancel-driver-failure");
+        const turnId = makePortableTestTurnId();
         yield* turns.register({
           turnId,
           sessionId: "session-cancel-driver-failure",
@@ -134,7 +141,7 @@ describe("PortableAgentTurns", () => {
         const layer = portableAgentTurnsDurableLive({ records: new Map() }).pipe(
           Layer.provide(fixture.layer),
         );
-        const turnId = PortableTurnId.make(`portable-reconcile-${failureKind}`);
+        const turnId = makePortableTestTurnId();
         const capability = ObservationCapability.make(`capability-reconcile-${failureKind}`);
         const cancelCalls = yield* Ref.make(0);
         const turns = yield* PortableAgentTurns.pipe(Effect.provide(layer));
@@ -178,7 +185,7 @@ describe("PortableAgentTurns", () => {
         const layer = portableAgentTurnsDurableLive({ records: new Map() }).pipe(
           Layer.provide(fixture.layer),
         );
-        const turnId = PortableTurnId.make(`portable-driver-failure-${failureKind}`);
+        const turnId = makePortableTestTurnId();
         const turns = yield* PortableAgentTurns.pipe(Effect.provide(layer));
         yield* turns.register({
           turnId,
@@ -213,9 +220,9 @@ describe("PortableAgentTurns", () => {
         Layer.provide(portableAgentStoreLive({ stateDir: root })),
         Layer.provide(BunServices.layer),
       );
-    const cancellationTurnId = PortableTurnId.make("portable-gated-cancel-wins");
+    const cancellationTurnId = makePortableTestTurnId();
     const cancellationCapability = ObservationCapability.make("capability-gated-cancel-wins");
-    const completionTurnId = PortableTurnId.make("portable-gated-complete-wins");
+    const completionTurnId = makePortableTestTurnId();
     const completionCapability = ObservationCapability.make("capability-gated-complete-wins");
     const runRace = Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
@@ -297,7 +304,7 @@ describe("PortableAgentTurns", () => {
   it.effect("persists one immutable cancellation outcome without leaking activity", () =>
     Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
-      const turnId = PortableTurnId.make("portable-cancelled");
+      const turnId = makePortableTestTurnId();
       const capability = ObservationCapability.make("portable-cancelled-capability");
       yield* turns.register({
         turnId,
@@ -337,7 +344,7 @@ describe("PortableAgentTurns", () => {
   it.effect("keeps natural completion immutable when it wins cancellation", () =>
     Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
-      const turnId = PortableTurnId.make("portable-natural-winner");
+      const turnId = makePortableTestTurnId();
       yield* turns.register({
         turnId,
         sessionId: "session-natural-winner",
@@ -363,7 +370,7 @@ describe("PortableAgentTurns", () => {
   it.effect("treats an unphased assistant message as the final answer", () =>
     Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
-      const turnId = PortableTurnId.make("turn-unphased");
+      const turnId = makePortableTestTurnId();
       yield* turns.register({
         turnId,
         sessionId: "session-unphased",
@@ -387,7 +394,7 @@ describe("PortableAgentTurns", () => {
   it.effect("keeps commentary sentinel human-visible but agent-blind", () =>
     Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
-      const turnId = PortableTurnId.make("turn-1");
+      const turnId = makePortableTestTurnId();
       const capability = ObservationCapability.make("secret-capability");
       const events = [
         ...createAssistantTextRuntimeEvents({
@@ -435,7 +442,7 @@ describe("PortableAgentTurns", () => {
   it.effect("projects runtime stream defects as terminal failures", () =>
     Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
-      const turnId = PortableTurnId.make("turn-failed");
+      const turnId = makePortableTestTurnId();
       yield* turns.register({
         turnId,
         sessionId: "session-failed",
@@ -457,7 +464,7 @@ describe("PortableAgentTurns", () => {
     () =>
       Effect.gen(function* () {
         const turns = yield* PortableAgentTurns;
-        const turnId = PortableTurnId.make("turn-expired-memory");
+        const turnId = makePortableTestTurnId();
         const capability = ObservationCapability.make("expired-memory-capability");
         yield* turns.register({
           turnId,
@@ -498,7 +505,7 @@ describe("PortableAgentTurns", () => {
       const cancelled = yield* Ref.make(false);
       const result = yield* Effect.result(
         turns.register({
-          turnId: PortableTurnId.make("turn-registration-failure"),
+          turnId: makePortableTestTurnId(),
           sessionId: "session-registration-failure",
           capability: ObservationCapability.make("registration-failure-capability"),
           cancel: Effect.succeed({ _tag: "Interrupted", sessionReusable: true }),
@@ -522,7 +529,7 @@ describe("PortableAgentTurns", () => {
       Layer.provide(portableAgentStoreLive({ stateDir: root })),
       Layer.provide(BunServices.layer),
     );
-    const turnId = PortableTurnId.make("turn-durable-failed");
+    const turnId = makePortableTestTurnId();
     const capability = ObservationCapability.make("durable-failed-capability");
     const registerFailure = Effect.gen(function* () {
       const turns = yield* PortableAgentTurns;
@@ -552,7 +559,3 @@ describe("PortableAgentTurns", () => {
     return registerFailure.pipe(Effect.andThen(recoverFailure));
   });
 });
-import { randomUUID } from "node:crypto";
-import path from "node:path";
-
-import { BunServices } from "@effect/platform-bun";

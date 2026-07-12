@@ -1,18 +1,27 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Match, Option, Schema, Stream } from "effect";
 import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import type { AgentRuntimeEvent } from "./mockResponsesProvider/agentDriver.ts";
+import { caaraAgentContractVersion, type CaaraAgentErrorKind } from "./caaraAgentContract.ts";
+import {
+  AgentDriverRegistry,
+  type AgentRuntimeEvent,
+} from "./mockResponsesProvider/agentDriver.ts";
 import { runAgentTurn } from "./mockResponsesProvider/agentTurn.ts";
 import { AgentTarget } from "./mockResponsesProvider/codexTurnContext.ts";
 import {
   sessionBindingKeyFromTurn,
   SessionDirectory,
 } from "./mockResponsesProvider/sessionDirectory.ts";
-import { ObservationCapability, PortableTurnId } from "./portableAgentIdentity.ts";
+import {
+  ObservationCapability,
+  PortableSessionId,
+  PortableTurnId,
+} from "./portableAgentIdentity.ts";
 import { portableAgentStoreLive } from "./portableAgentStore.ts";
 import {
   PortableAgentTurns,
@@ -22,17 +31,20 @@ import {
 
 /** JSON request accepted by the portable diagnostic turn endpoint. */
 export const PortableAgentStartRequest = Schema.Struct({
-  prompt: Schema.NonEmptyString,
-  sessionId: Schema.optional(Schema.NonEmptyString),
-  diagnosticCancellationMode: Schema.optional(
-    Schema.Literals(["interrupted", "abandoned_reusable", "abandoned_nonreusable", "terminated"]),
+  prompt: Schema.String.pipe(
+    Schema.check(Schema.isMinLength(1)),
+    Schema.check(Schema.isMaxLength(1_048_576)),
   ),
+  target: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9-]*\/.+$/u))),
+  cwd: Schema.NonEmptyString,
+  driverOptions: Schema.Record(Schema.String, Schema.String),
+  sessionId: Schema.optional(PortableSessionId),
 });
 
 /** Service-internal response returned immediately after a portable turn is accepted. */
 export const PortableAgentStartServiceResponse = Schema.Struct({
   turnId: PortableTurnId,
-  sessionId: Schema.NonEmptyString,
+  sessionId: PortableSessionId,
   status: Schema.Literal("working"),
   observationPath: Schema.NonEmptyString,
 });
@@ -40,7 +52,7 @@ export const PortableAgentStartServiceResponse = Schema.Struct({
 /** Public CLI response with a trusted settings-derived absolute observation URL. */
 export const PortableAgentStartResponse = Schema.Struct({
   turnId: PortableTurnId,
-  sessionId: Schema.NonEmptyString,
+  sessionId: PortableSessionId,
   status: Schema.Literal("working"),
   observationUrl: Schema.NonEmptyString,
 });
@@ -70,6 +82,12 @@ export const portableAgentWaitMaximumMillis = 30_000;
 /** Explicit failure for a requested portable session without resumable durable state. */
 export class PortableSessionUnavailable extends Schema.TaggedErrorClass<PortableSessionUnavailable>()(
   "PortableSessionUnavailable",
+  { message: Schema.String },
+) {}
+
+/** Explicit validation failure raised before a portable turn is accepted. */
+class PortableRequestValidationError extends Schema.TaggedErrorClass<PortableRequestValidationError>()(
+  "PortableRequestValidationError",
   { message: Schema.String },
 ) {}
 
@@ -107,40 +125,93 @@ const readStartRequest = Effect.fnUntraced(function* (
   return yield* Schema.decodeUnknownEffect(PortableAgentStartRequest)(body);
 });
 
+/** Splits one validated portable target into registry-owned components. */
+const agentTargetFromPortableRequest = ({
+  target,
+  driverOptions,
+}: {
+  readonly target: string;
+  readonly driverOptions: Readonly<Record<string, string>>;
+}): AgentTarget => {
+  const separator = target.indexOf("/");
+  return new AgentTarget({
+    requestedModel: target,
+    externalAgentKind: target.slice(0, separator),
+    externalModelSpecifier: target.slice(separator + 1),
+    rawDriverOptions: driverOptions,
+  });
+};
+
+/** Requires an existing directory before a turn reaches session resolution. */
+const validatePortableCwd = Effect.fnUntraced(function* (cwd: string) {
+  const absoluteCwd = yield* Match.value(path.isAbsolute(cwd)).pipe(
+    Match.when(true, () => Effect.succeed(cwd)),
+    Match.orElse(
+      () =>
+        new PortableRequestValidationError({
+          message: "Portable Agent working directory must be absolute.",
+        }),
+    ),
+  );
+  const metadata = yield* Effect.tryPromise({
+    try: () => stat(absoluteCwd),
+    catch: () =>
+      new PortableRequestValidationError({ message: "Invalid portable Agent working directory." }),
+  });
+  return yield* Match.value(metadata.isDirectory()).pipe(
+    Match.when(true, () => Effect.succeed(cwd)),
+    Match.orElse(
+      () =>
+        new PortableRequestValidationError({
+          message: "Invalid portable Agent working directory.",
+        }),
+    ),
+  );
+});
+
 /** Starts one diagnostic activity turn and transfers stream ownership to the service registry. */
 export const handlePortableAgentStart = Effect.fnUntraced(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const input = yield* readStartRequest(request);
+  const promptByteLength = new TextEncoder().encode(input.prompt).byteLength;
+  yield* Match.value(promptByteLength <= 1_048_576).pipe(
+    Match.when(true, () => Effect.succeed(input.prompt)),
+    Match.orElse(
+      () =>
+        new PortableRequestValidationError({
+          message: "Portable Agent prompt exceeds 1048576 UTF-8 bytes.",
+        }),
+    ),
+  );
+  const requestedCwd = yield* validatePortableCwd(input.cwd);
   const turns = yield* PortableAgentTurns;
   const sessionId = input.sessionId ?? `portable-session-${randomUUID()}`;
   const turnId = PortableTurnId.make(`portable-turn-${randomUUID()}`);
   const capability = ObservationCapability.make(randomUUID());
-  const diagnosticScenario = Match.value(
-    Option.isSome(Option.fromUndefinedOr(input.diagnosticCancellationMode)),
-  ).pipe(
-    Match.when(true, () => "hangs-until-cancel" as const),
-    Match.orElse(() => "activity" as const),
-  );
-  const target = new AgentTarget({
-    requestedModel: `diagnostic/${diagnosticScenario}`,
-    externalAgentKind: "diagnostic",
-    externalModelSpecifier: diagnosticScenario,
-    rawDriverOptions: {
-      diagnostic_activity_sentinel: input.prompt,
-      ...Option.match(Option.fromUndefinedOr(input.diagnosticCancellationMode), {
-        onNone: () => ({}),
-        onSome: (mode) => ({ diagnostic_cancel: mode }),
-      }),
-    },
+  const target = agentTargetFromPortableRequest(input);
+  const driverRegistry = yield* AgentDriverRegistry;
+  const driver = yield* driverRegistry.resolve(target);
+  yield* driver.preflight({
+    target,
+    requestedCwd,
+    advisories: { effort: undefined, sandboxPosture: "enforced" },
   });
   const turnRequest = {
     identity: { sessionId, parentSessionId: sessionId, turnId },
     origin: { transport: "cli", metadata: {} },
     advisories: { effort: undefined, sandboxPosture: "enforced" },
-    requestedCwd: process.cwd(),
+    requestedCwd,
     target,
-    prompt: { input: input.prompt },
+    prompt: {
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: input.prompt }],
+        },
+      ],
+    },
   } as const;
   yield* Option.match(Option.fromUndefinedOr(input.sessionId), {
     onNone: () => Effect.void,
@@ -193,14 +264,23 @@ export const handlePortableAgentWait = Effect.fnUntraced(function* ({
   readonly timeoutMillis: number;
 }) {
   const turns = yield* PortableAgentTurns;
-  const portableTurnId = PortableTurnId.make(turnId ?? "missing");
+  const portableTurnId = yield* Schema.decodeUnknownEffect(PortableTurnId)(turnId).pipe(
+    Effect.mapError(
+      () => new PortableRequestValidationError({ message: "Malformed portable turn ID." }),
+    ),
+  );
   const initial = yield* turns.wait(portableTurnId);
   const shouldWait = Option.exists(initial, (state) => state._tag === "Working");
   const delays = [Effect.sleep(`${timeoutMillis} millis`)].filter(() => shouldWait);
   yield* Effect.all(delays, { discard: true });
   const projection = yield* turns.wait(portableTurnId);
   return Option.match(projection, {
-    onNone: () => HttpServerResponse.jsonUnsafe({ error: "not found" }, { status: 404 }),
+    onNone: () =>
+      portableErrorResponse({
+        status: 404,
+        kind: "unknown_resource",
+        message: "Portable turn not found.",
+      }),
     onSome: (state) =>
       HttpServerResponse.jsonUnsafe(
         Match.valueTags(state, {
@@ -221,7 +301,12 @@ export const handlePortableAgentCancel = Effect.fnUntraced(function* ({
   readonly turnId: string | undefined;
 }) {
   const turns = yield* PortableAgentTurns;
-  const outcome = yield* turns.cancel(PortableTurnId.make(turnId ?? "missing"));
+  const portableTurnId = yield* Schema.decodeUnknownEffect(PortableTurnId)(turnId).pipe(
+    Effect.mapError(
+      () => new PortableRequestValidationError({ message: "Malformed portable turn ID." }),
+    ),
+  );
+  const outcome = yield* turns.cancel(portableTurnId);
   return HttpServerResponse.jsonUnsafe({
     status: "cancelled",
     outcome: outcome._tag,
@@ -264,6 +349,21 @@ const durablePortableAgentTurnsLayer = portableAgentTurnsDurableLive({ records: 
   Layer.provide(BunServices.layer),
 );
 
+/** Creates one stable versioned portable transport error. */
+const portableErrorResponse = ({
+  status,
+  kind,
+  message,
+}: {
+  readonly status: number;
+  readonly kind: typeof CaaraAgentErrorKind.Type;
+  readonly message: string;
+}) =>
+  HttpServerResponse.jsonUnsafe(
+    { schemaVersion: caaraAgentContractVersion, status: "error", error: { kind, message } },
+    { status },
+  );
+
 /** Parses the optional bounded wait query from one service request URL. */
 const portableWaitTimeoutMillisFromUrl = (url: string): number => {
   const rawTimeout = new URL(url, "http://localhost").searchParams.get("timeoutMillis");
@@ -289,7 +389,11 @@ const portableWaitRequest = ({
     Match.when(true, () => handlePortableAgentWait({ turnId, timeoutMillis })),
     Match.orElse(() =>
       Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: "invalid timeoutMillis" }, { status: 400 }),
+        portableErrorResponse({
+          status: 400,
+          kind: "invalid_request",
+          message: "Invalid timeoutMillis.",
+        }),
       ),
     ),
   );
@@ -301,13 +405,37 @@ export const portableAgentRoutesLayer = Layer.mergeAll(
     handlePortableAgentStart(request).pipe(
       Effect.provide(durablePortableAgentTurnsLayer),
       Effect.catchTags({
+        AgentDriverError: (error) =>
+          Effect.succeed(
+            portableErrorResponse({
+              status: 422,
+              kind: "target_failure",
+              message: error.message,
+            }),
+          ),
         TurnConcurrencyConflict: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 409,
+              kind: "concurrency_conflict",
+              message: error.message,
+            }),
+          ),
         PortableSessionUnavailable: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 404,
+              kind: "unknown_resource",
+              message: error.message,
+            }),
+          ),
       }),
       Effect.orElseSucceed(() =>
-        HttpServerResponse.jsonUnsafe({ error: "invalid request" }, { status: 400 }),
+        portableErrorResponse({
+          status: 400,
+          kind: "invalid_request",
+          message: "Invalid portable Agent start request.",
+        }),
       ),
     ),
   ),
@@ -318,6 +446,11 @@ export const portableAgentRoutesLayer = Layer.mergeAll(
         return portableWaitRequest({ turnId, timeoutMillis });
       }),
       Effect.provide(durablePortableAgentTurnsLayer),
+      Effect.catchTag("PortableRequestValidationError", (error) =>
+        Effect.succeed(
+          portableErrorResponse({ status: 400, kind: "invalid_request", message: error.message }),
+        ),
+      ),
     ),
   ),
   HttpRouter.add("POST", "/agent/turns/:turnId/cancel", () =>
@@ -325,17 +458,49 @@ export const portableAgentRoutesLayer = Layer.mergeAll(
       Effect.flatMap(({ turnId }) => handlePortableAgentCancel({ turnId })),
       Effect.provide(durablePortableAgentTurnsLayer),
       Effect.catchTags({
+        PortableRequestValidationError: (error) =>
+          Effect.succeed(
+            portableErrorResponse({ status: 400, kind: "invalid_request", message: error.message }),
+          ),
         PortableTurnNotFound: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 404 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 404,
+              kind: "unknown_resource",
+              message: error.message,
+            }),
+          ),
         PortableTurnCancellationConflict: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 409,
+              kind: "concurrency_conflict",
+              message: error.message,
+            }),
+          ),
         PortableTurnCancellationUnavailable: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 409,
+              kind: "concurrency_conflict",
+              message: error.message,
+            }),
+          ),
         AgentTurnCancellationConflict: (error) =>
-          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+          Effect.succeed(
+            portableErrorResponse({
+              status: 409,
+              kind: "concurrency_conflict",
+              message: error.message,
+            }),
+          ),
       }),
       Effect.orElseSucceed(() =>
-        HttpServerResponse.jsonUnsafe({ error: "cancellation failed" }, { status: 500 }),
+        portableErrorResponse({
+          status: 500,
+          kind: "target_failure",
+          message: "Cancellation failed.",
+        }),
       ),
     ),
   ),
