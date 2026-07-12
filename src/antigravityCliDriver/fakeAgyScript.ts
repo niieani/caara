@@ -139,11 +139,13 @@ if (mode !== "missing-transcript") {
     fs.appendFileSync(invocationLog, JSON.stringify({ event: "out_of_order_complete", mode }) + "\\n");
     process.exit(0);
   }
-  if (conversationArg && mode === "resume-success") {
+  if (conversationArg && (mode === "resume-success" || mode === "portable-success")) {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    const resumedUserStep = mode === "portable-success" ? 5 : 3;
+    const resumedAnswerStep = mode === "portable-success" ? 6 : 4;
     const records = [
-      { step_index: 3, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
-      { step_index: 4, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "${fakeAgyFixture.resumedAnswer}" },
+      { step_index: resumedUserStep, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
+      { step_index: resumedAnswerStep, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "${fakeAgyFixture.resumedAnswer}" },
     ];
     fs.appendFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
     process.stdout.write("stdout must not become the answer\\n");
@@ -158,6 +160,15 @@ if (mode !== "missing-transcript") {
     fs.appendFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
     await delay(500);
     process.exit(0);
+  }
+  if (conversationArg && mode === "portable-cancel-resume") {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    const records = [
+      { step_index: 3, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
+      { step_index: 4, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:10:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" } }] },
+    ];
+    fs.appendFileSync(transcriptPath, records.map((record) => JSON.stringify(record)).join("\\n") + "\\n");
+    await waitForCancellation();
   }
   if (conversationArg && mode === "resume-missing-final") {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
@@ -174,7 +185,7 @@ if (mode !== "missing-transcript") {
     { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "<USER_REQUEST>\\\\n" + prompt + "\\\\n</USER_REQUEST>" },
     { step_index: 1, source: "SYSTEM", type: "CONVERSATION_HISTORY", status: "DONE", created_at: "2026-06-23T03:09:01Z" },
   ];
-  if (mode === "reasoning-activity") {
+  if (mode === "reasoning-activity" || mode === "portable-success") {
     records.push(
       { step_index: 2, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-06-23T03:09:01Z", content: "Inspecting workspace", tool_calls: [{ id: "tool-call-list", name: "list_dir", args: { DirectoryPath: "src", toolAction: "Listing src directory", toolSummary: "Src directory listing" }, payload: "FULL_TOOL_PAYLOAD_SHOULD_NOT_LEAK" }] },
       { step_index: 3, source: "MODEL", type: "VIEW_FILE", status: "DONE", created_at: "2026-06-23T03:09:01Z", file_path: "src/server.ts", content: "FULL_FILE_CONTENT_SHOULD_NOT_LEAK" },

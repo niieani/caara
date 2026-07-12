@@ -118,7 +118,11 @@ const withServiceProcess = <A, E, R>({
       const origin = `http://127.0.0.1:${port}`;
       return awaitService({ origin }).pipe(Effect.flatMap(() => use({ executable, origin })));
     },
-    ({ serviceProcess }) => Effect.sync(() => serviceProcess.kill()),
+    ({ serviceProcess }) =>
+      Effect.sync(() => serviceProcess.kill()).pipe(
+        Effect.andThen(() => Effect.promise(() => serviceProcess.exited)),
+        Effect.asVoid,
+      ),
   );
 
 /** Executes the compiled CLI and captures its complete agent-facing process output. */

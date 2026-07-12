@@ -36,6 +36,9 @@ Claude-backed subagent path.
 For Antigravity-backed smokes, use `docs/agents/antigravity-smoke-runbook.md`. It mirrors the
 Codex subagent first/resume/cancel flow below for the real `agy` driver path.
 
+For the compiled portable CLI plus installed-service path, use
+`docs/agents/antigravity-portable-smoke-runbook.md`.
+
 ## Claude SDK Subagent Flow
 
 1. Start the local provider:

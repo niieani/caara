@@ -158,13 +158,6 @@ const projectOpenRuntimeEvent = (
     }),
   });
 
-/** Applies one runtime event without mutating a claimed or terminal projection. */
-const projectRuntimeEvent = (state: ProjectionState, event: AgentRuntimeEvent): ProjectionState =>
-  Match.value(state.finalization).pipe(
-    Match.when("open", () => projectOpenRuntimeEvent(state, event)),
-    Match.orElse(() => state),
-  );
-
 /** Persists both projections after one event without mixing capability data into turn state. */
 const persistProjection = Effect.fnUntraced(function* ({
   store,
@@ -436,10 +429,21 @@ const makePortableAgentTurns = ({
       });
       yield* initializeDurableState.pipe(Effect.catch(failRegistration));
       const consumeRuntimeEvent = Effect.fnUntraced(function* (event: AgentRuntimeEvent) {
-        const current = yield* Ref.updateAndGet(state, (projection) =>
-          projectRuntimeEvent(projection, event),
+        const projected = yield* Ref.modify(
+          state,
+          (projection): readonly [Option.Option<ProjectionState>, ProjectionState] =>
+            Match.value(projection.finalization).pipe(
+              Match.when("open", () => {
+                const current = projectOpenRuntimeEvent(projection, event);
+                return [Option.some(current), current] as const;
+              }),
+              Match.orElse(() => [Option.none(), projection] as const),
+            ),
         );
-        yield* persistProjection({ store, record, turnId, current });
+        yield* Option.match(projected, {
+          onNone: () => Effect.void,
+          onSome: (current) => persistProjection({ store, record, turnId, current }),
+        });
       });
       const persistRuntimeFailure = Effect.fnUntraced(function* (error: {
         readonly message: string;
