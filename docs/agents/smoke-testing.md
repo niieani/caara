@@ -307,6 +307,9 @@ Focused regression reference:
 
 ## SDK Architecture Checks
 
+For portable Claude start/resume, caller-blind observation, cancellation, and session-reuse proof,
+follow `docs/agents/claude-portable-smoke-runbook.md` against the compiled installed user service.
+
 To distinguish the SDK-backed path from the retired Claude CLI path:
 
 - `src/caara.ts` should compose `claudeAgentSdkDriverLive`.

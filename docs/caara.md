@@ -135,6 +135,8 @@ result with `schemaVersion: 1`. Exit statuses are: 0 completed, 10 accepted, 11 
 failure, and 75 concurrency/cancellation conflict. Errors go to stderr; successful and nonterminal
 results go to stdout. Agent automation should always pass `--json` and branch on both the typed
 status and process exit status.
+The real Claude portable smoke flow—resume, caller blindness, capability viewer, and reusable
+cancellation—is documented in `docs/agents/claude-portable-smoke-runbook.md`.
 Bind-all hosts map to loopback probe targets: `0.0.0.0` becomes `127.0.0.1`, and `::` becomes
 `::1`.
 

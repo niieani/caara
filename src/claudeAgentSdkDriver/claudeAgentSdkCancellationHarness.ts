@@ -5,7 +5,7 @@ import type {
   TerminalReason,
 } from "@anthropic-ai/claude-agent-sdk";
 import { assert } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Match, Option } from "effect";
 import * as Path from "effect/Path";
 
 import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
@@ -61,6 +61,7 @@ export interface FakeSdkRuntimeConfig {
   readonly interruptMessages?: readonly SDKMessage[];
   readonly interruptFailure?: Error;
   readonly streamFailure?: Error;
+  readonly waitForInterrupt?: boolean;
 }
 
 /** Builds the minimal non-null SDK usage payload required by result messages. */
@@ -181,11 +182,16 @@ const fakeRuntime = ({
 }): ClaudeAgentSdkQueryRuntime => {
   const pendingMessages: SDKMessage[] = [...config.messages];
   let index = 0;
+  let interrupted = false;
+  let resumeBlockedNext: (() => void) | undefined;
 
   return {
     interrupt: () => {
       controls.interrupts.push("interrupt");
+      interrupted = true;
       pendingMessages.push(...(config.interruptMessages ?? []));
+      resumeBlockedNext?.();
+      resumeBlockedNext = undefined;
       return Option.match(Option.fromUndefinedOr(config.interruptFailure), {
         onNone: () => Promise.resolve(),
         onSome: (error) => Promise.reject(error),
@@ -201,17 +207,30 @@ const fakeRuntime = ({
       next: () => {
         controls.nexts.push("next");
         const message = pendingMessages.at(index);
-        index += 1;
+        index += Number(message !== undefined);
         return Option.match(Option.fromUndefinedOr(message), {
           onNone: () =>
-            Option.match(Option.fromUndefinedOr(config.streamFailure), {
-              onNone: () =>
-                Promise.resolve({
-                  done: true,
-                  value: undefined,
-                } satisfies IteratorReturnResult<undefined>),
-              onSome: (error) => Promise.reject(error),
-            }),
+            Match.value(config.waitForInterrupt === true && !interrupted).pipe(
+              Match.when(
+                true,
+                () =>
+                  new Promise<IteratorResult<SDKMessage, undefined>>((resolve) => {
+                    resumeBlockedNext = () => {
+                      resolve({ done: true, value: undefined });
+                    };
+                  }),
+              ),
+              Match.orElse(() =>
+                Option.match(Option.fromUndefinedOr(config.streamFailure), {
+                  onNone: () =>
+                    Promise.resolve({
+                      done: true,
+                      value: undefined,
+                    } satisfies IteratorReturnResult<undefined>),
+                  onSome: (error) => Promise.reject(error),
+                }),
+              ),
+            ),
           onSome: (nextMessage) =>
             Promise.resolve({
               done: false,

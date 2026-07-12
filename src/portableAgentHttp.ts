@@ -400,114 +400,128 @@ const portableWaitRequest = ({
 };
 
 /** Portable start, wait, and capability-viewer HTTP routes. */
-export const portableAgentRoutesLayer = Layer.mergeAll(
-  HttpRouter.add("POST", "/agent/turns", (request) =>
-    handlePortableAgentStart(request).pipe(
-      Effect.provide(durablePortableAgentTurnsLayer),
-      Effect.catchTags({
-        AgentDriverError: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 422,
-              kind: "target_failure",
-              message: error.message,
-            }),
-          ),
-        TurnConcurrencyConflict: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 409,
-              kind: "concurrency_conflict",
-              message: error.message,
-            }),
-          ),
-        PortableSessionUnavailable: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 404,
-              kind: "unknown_resource",
-              message: error.message,
-            }),
-          ),
-      }),
-      Effect.orElseSucceed(() =>
-        portableErrorResponse({
-          status: 400,
-          kind: "invalid_request",
-          message: "Invalid portable Agent start request.",
+export const portableAgentRoutesLayerFromTurns = ({
+  turnsLayer,
+}: {
+  readonly turnsLayer: typeof durablePortableAgentTurnsLayer;
+}) =>
+  Layer.mergeAll(
+    HttpRouter.add("POST", "/agent/turns", (request) =>
+      handlePortableAgentStart(request).pipe(
+        Effect.provide(turnsLayer),
+        Effect.catchTags({
+          AgentDriverError: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 422,
+                kind: "target_failure",
+                message: error.message,
+              }),
+            ),
+          TurnConcurrencyConflict: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 409,
+                kind: "concurrency_conflict",
+                message: error.message,
+              }),
+            ),
+          PortableSessionUnavailable: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 404,
+                kind: "unknown_resource",
+                message: error.message,
+              }),
+            ),
         }),
-      ),
-    ),
-  ),
-  HttpRouter.add("GET", "/agent/turns/:turnId", (request) =>
-    HttpRouter.params.pipe(
-      Effect.flatMap(({ turnId }) => {
-        const timeoutMillis = portableWaitTimeoutMillisFromUrl(request.url);
-        return portableWaitRequest({ turnId, timeoutMillis });
-      }),
-      Effect.provide(durablePortableAgentTurnsLayer),
-      Effect.catchTag("PortableRequestValidationError", (error) =>
-        Effect.succeed(
-          portableErrorResponse({ status: 400, kind: "invalid_request", message: error.message }),
+        Effect.orElseSucceed(() =>
+          portableErrorResponse({
+            status: 400,
+            kind: "invalid_request",
+            message: "Invalid portable Agent start request.",
+          }),
         ),
       ),
     ),
-  ),
-  HttpRouter.add("POST", "/agent/turns/:turnId/cancel", () =>
-    HttpRouter.params.pipe(
-      Effect.flatMap(({ turnId }) => handlePortableAgentCancel({ turnId })),
-      Effect.provide(durablePortableAgentTurnsLayer),
-      Effect.catchTags({
-        PortableRequestValidationError: (error) =>
+    HttpRouter.add("GET", "/agent/turns/:turnId", (request) =>
+      HttpRouter.params.pipe(
+        Effect.flatMap(({ turnId }) => {
+          const timeoutMillis = portableWaitTimeoutMillisFromUrl(request.url);
+          return portableWaitRequest({ turnId, timeoutMillis });
+        }),
+        Effect.provide(turnsLayer),
+        Effect.catchTag("PortableRequestValidationError", (error) =>
           Effect.succeed(
             portableErrorResponse({ status: 400, kind: "invalid_request", message: error.message }),
           ),
-        PortableTurnNotFound: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 404,
-              kind: "unknown_resource",
-              message: error.message,
-            }),
-          ),
-        PortableTurnCancellationConflict: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 409,
-              kind: "concurrency_conflict",
-              message: error.message,
-            }),
-          ),
-        PortableTurnCancellationUnavailable: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 409,
-              kind: "concurrency_conflict",
-              message: error.message,
-            }),
-          ),
-        AgentTurnCancellationConflict: (error) =>
-          Effect.succeed(
-            portableErrorResponse({
-              status: 409,
-              kind: "concurrency_conflict",
-              message: error.message,
-            }),
-          ),
-      }),
-      Effect.orElseSucceed(() =>
-        portableErrorResponse({
-          status: 500,
-          kind: "target_failure",
-          message: "Cancellation failed.",
-        }),
+        ),
       ),
     ),
-  ),
-  HttpRouter.add("GET", "/observe/:capability", () =>
-    HttpRouter.params.pipe(
-      Effect.flatMap(({ capability }) => handlePortableObservation({ capability })),
-      Effect.provide(durablePortableAgentTurnsLayer),
+    HttpRouter.add("POST", "/agent/turns/:turnId/cancel", () =>
+      HttpRouter.params.pipe(
+        Effect.flatMap(({ turnId }) => handlePortableAgentCancel({ turnId })),
+        Effect.provide(turnsLayer),
+        Effect.catchTags({
+          PortableRequestValidationError: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 400,
+                kind: "invalid_request",
+                message: error.message,
+              }),
+            ),
+          PortableTurnNotFound: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 404,
+                kind: "unknown_resource",
+                message: error.message,
+              }),
+            ),
+          PortableTurnCancellationConflict: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 409,
+                kind: "concurrency_conflict",
+                message: error.message,
+              }),
+            ),
+          PortableTurnCancellationUnavailable: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 409,
+                kind: "concurrency_conflict",
+                message: error.message,
+              }),
+            ),
+          AgentTurnCancellationConflict: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 409,
+                kind: "concurrency_conflict",
+                message: error.message,
+              }),
+            ),
+        }),
+        Effect.orElseSucceed(() =>
+          portableErrorResponse({
+            status: 500,
+            kind: "target_failure",
+            message: "Cancellation failed.",
+          }),
+        ),
+      ),
     ),
-  ),
-);
+    HttpRouter.add("GET", "/observe/:capability", () =>
+      HttpRouter.params.pipe(
+        Effect.flatMap(({ capability }) => handlePortableObservation({ capability })),
+        Effect.provide(turnsLayer),
+      ),
+    ),
+  );
+
+/** Portable routes backed by the process-owned durable turn registry. */
+export const portableAgentRoutesLayer = portableAgentRoutesLayerFromTurns({
+  turnsLayer: durablePortableAgentTurnsLayer,
+});
