@@ -17,6 +17,7 @@ import {
   createServerErrorAgentDriverError,
   createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
+import { agentTurnContextFromCodex } from "./codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
 import { EphemeralExternalSession } from "./sessionDirectory.ts";
 
@@ -47,7 +48,7 @@ const contractCodex = new CodexTurnContext({
 
 /** Builds one driver-facing turn using the explicit AgentDriverTurn contract. */
 const contractTurn = (): AgentDriverTurn => ({
-  codex: contractCodex,
+  context: agentTurnContextFromCodex({ codex: contractCodex }),
   target: contractTarget,
   prompt: {
     input: [
@@ -88,8 +89,8 @@ const contractCancel: AgentDriverCancel = Effect.succeed({
 
 /** Contract-test start hook typed through the explicit start alias. */
 const contractStart: AgentDriverStart = (turn: AgentDriverTurn) => {
-  assert.strictEqual(turn.codex.advisoryEffort, "high");
-  assert.strictEqual(turn.codex.sandboxPosture, "enforced");
+  assert.strictEqual(turn.context.advisories.effort, "high");
+  assert.strictEqual(turn.context.advisories.sandboxPosture, "enforced");
   const externalSession = new EphemeralExternalSession();
   return Effect.succeed({
     runtimeEvents: contractRuntimeStream,

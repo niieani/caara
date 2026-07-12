@@ -15,6 +15,7 @@ import type {
   AgentDriverTurnResult,
   AgentRuntimeEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import type { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
 import { makeAntigravityCliAgentDriver } from "./driver.ts";
@@ -105,7 +106,7 @@ const makeTurn = ({
   readonly turnId: string;
   readonly externalSession?: DurableExternalSession;
 }): AgentDriverTurn => ({
-  codex: makeCodex({ turnId }),
+  context: agentTurnContextFromCodex({ codex: makeCodex({ turnId }) }),
   target: makeTarget(),
   prompt: {
     input: [

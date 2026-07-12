@@ -1,7 +1,8 @@
 import { Context, Option, Schema, type Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
-import type { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
+import type { AgentTurnContext } from "./agentTurnContext.ts";
+import type { AgentTarget } from "./codexTurnContext.ts";
 import type { ExternalSessionState } from "./sessionDirectory.ts";
 
 /** Normalized prompt data sent from Caara transport into an external agent driver. */
@@ -11,7 +12,7 @@ export interface AgentTurnInput {
 
 /** Common input shape for one driver-facing turn relay. */
 export interface AgentDriverTurn {
-  readonly codex: CodexTurnContext;
+  readonly context: AgentTurnContext;
   readonly target: AgentTarget;
   readonly prompt: AgentTurnInput;
   readonly cwd: string;

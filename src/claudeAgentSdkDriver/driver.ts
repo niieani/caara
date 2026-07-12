@@ -278,7 +278,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
 }) {
   const pathToClaudeCodeExecutable = yield* settings.pathToClaudeCodeExecutable;
   const options = yield* buildClaudeAgentSdkQueryOptions({
-    advisoryEffort: turn.codex.advisoryEffort,
+    advisoryEffort: turn.context.advisories.effort,
     caaraSettings,
     cwd,
     model: turn.target.externalModelSpecifier,
@@ -394,7 +394,7 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
   const sessionId = yield* generator.nextSessionId;
   const pathToClaudeCodeExecutable = yield* settings.pathToClaudeCodeExecutable;
   const options = yield* buildClaudeAgentSdkQueryOptions({
-    advisoryEffort: turn.codex.advisoryEffort,
+    advisoryEffort: turn.context.advisories.effort,
     caaraSettings,
     cwd: freshCwd,
     model: turn.target.externalModelSpecifier,

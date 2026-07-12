@@ -15,6 +15,7 @@ import type {
   AgentDriverTurnResult,
   AgentRuntimeEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
   DurableExternalSession,
@@ -106,7 +107,7 @@ const makeTurn = ({
   readonly externalSession?: DurableExternalSession;
   readonly rawDriverOptions?: Readonly<Record<string, string>>;
 }): AgentDriverTurn => ({
-  codex: makeCodex({ turnId }),
+  context: agentTurnContextFromCodex({ codex: makeCodex({ turnId }) }),
   target: makeTarget({ rawDriverOptions }),
   prompt: {
     input: [

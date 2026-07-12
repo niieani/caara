@@ -1,7 +1,8 @@
 import { Context, Effect, Option, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
-import { AgentTarget, type CodexTurnContext } from "./codexTurnContext.ts";
+import type { AgentTurnContext } from "./agentTurnContext.ts";
+import { AgentTarget } from "./codexTurnContext.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 
 /** API response id persisted with the latest completed Caara turn. */
@@ -208,20 +209,20 @@ export const driverInstanceIdFromTarget = (target: AgentTarget): string => targe
 
 /** Builds the persisted session binding key for one selected target and Codex thread. */
 export const sessionBindingKeyFromTurn = ({
-  codex,
+  context,
   target,
 }: {
-  readonly codex: CodexTurnContext;
+  readonly context: AgentTurnContext;
   readonly target: AgentTarget;
 }): SessionBindingKey => ({
   externalAgentKind: makeExternalAgentKind(target.externalAgentKind),
   driverInstanceId: makeDriverInstanceId(driverInstanceIdFromTarget(target)),
-  codexThreadId: makeCodexThreadId(codex.threadId),
+  codexThreadId: makeCodexThreadId(context.identity.sessionId),
 });
 
 /** Builds the latest API response id persisted with a completed turn. */
-const apiResponseIdFromTurn = (codex: CodexTurnContext): ApiResponseId =>
-  makeApiResponseId(`resp_${codex.turnId}`);
+const apiResponseIdFromTurn = (context: AgentTurnContext): ApiResponseId =>
+  makeApiResponseId(`resp_${context.identity.turnId}`);
 
 /** Extracts mutable requested target state from a selected target. */
 const requestedTargetStateFromTarget = (target: AgentTarget): RequestedTargetState => ({
@@ -266,21 +267,21 @@ const validateLoadedBinding = Effect.fnUntraced(function* ({
 });
 
 /** Chooses an initial cwd for a new external agent binding. */
-const initialCwdOption = (codex: CodexTurnContext): Option.Option<string> =>
-  Option.fromUndefinedOr([...codex.workspacePaths, ...codex.cwdCandidates].at(0));
+const initialCwdOption = (context: AgentTurnContext): Option.Option<string> =>
+  Option.fromUndefinedOr(context.requestedCwd);
 
 /** Prepares binding state for a turn, reusing existing cwd when present. */
 export const prepareSessionBinding = Effect.fnUntraced(function* ({
-  codex,
+  context,
   target,
 }: {
-  readonly codex: CodexTurnContext;
+  readonly context: AgentTurnContext;
   readonly target: AgentTarget;
 }) {
   const directory = yield* SessionDirectory;
-  const key = sessionBindingKeyFromTurn({ codex, target });
+  const key = sessionBindingKeyFromTurn({ context, target });
   const binding = yield* directory.get(key);
-  const requestedCwd = Option.getOrUndefined(initialCwdOption(codex));
+  const requestedCwd = Option.getOrUndefined(initialCwdOption(context));
 
   return yield* Option.match(binding, {
     onNone: () =>
@@ -316,30 +317,31 @@ export const prepareSessionBinding = Effect.fnUntraced(function* ({
 
 /** Persists the completed binding state after a driver reports external session state. */
 export const completeSessionBinding = Effect.fnUntraced(function* ({
-  codex,
+  context,
   target,
   prepared,
   externalSession,
   bindingCwd,
 }: {
-  readonly codex: CodexTurnContext;
+  readonly context: AgentTurnContext;
   readonly target: AgentTarget;
   readonly prepared: PreparedSessionBinding;
   readonly externalSession: ExternalSessionState;
   readonly bindingCwd?: string;
 }) {
   const directory = yield* SessionDirectory;
-  const bindingKey = sessionBindingKeyFromTurn({ codex, target });
+  const bindingKey = sessionBindingKeyFromTurn({ context, target });
   const binding = new CaaraSessionBinding({
     schemaVersion: 2,
-    apiResponseId: apiResponseIdFromTurn(codex),
+    apiResponseId: apiResponseIdFromTurn(context),
     bindingKey,
-    parentCodexSessionId: makeCodexParentSessionId(codex.parentSessionId),
+    parentCodexSessionId: makeCodexParentSessionId(context.identity.parentSessionId),
     requestedTarget: requestedTargetStateFromTarget(target),
     externalSession,
     cwd: bindingCwd ?? prepared.cwd,
-    createdFromTurnId: prepared.binding?.createdFromTurnId ?? makeCodexTurnId(codex.turnId),
-    lastTurnId: makeCodexTurnId(codex.turnId),
+    createdFromTurnId:
+      prepared.binding?.createdFromTurnId ?? makeCodexTurnId(context.identity.turnId),
+    lastTurnId: makeCodexTurnId(context.identity.turnId),
   });
   yield* directory.save(binding);
   return binding;
@@ -347,12 +349,12 @@ export const completeSessionBinding = Effect.fnUntraced(function* ({
 
 /** Deletes a session binding after a driver reports the external session is not reusable. */
 export const deleteSessionBinding = Effect.fnUntraced(function* ({
-  codex,
+  context,
   target,
 }: {
-  readonly codex: CodexTurnContext;
+  readonly context: AgentTurnContext;
   readonly target: AgentTarget;
 }) {
   const directory = yield* SessionDirectory;
-  yield* directory.delete(sessionBindingKeyFromTurn({ codex, target }));
+  yield* directory.delete(sessionBindingKeyFromTurn({ context, target }));
 });

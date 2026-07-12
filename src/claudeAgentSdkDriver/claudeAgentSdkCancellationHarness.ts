@@ -14,6 +14,7 @@ import {
   type AgentCancellationOutcome,
   type AgentDriverTurn,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import type { DurableExternalSession } from "../mockResponsesProvider/sessionDirectory.ts";
 import {
@@ -342,7 +343,7 @@ export const makeTurn = ({
 }: {
   readonly externalSession?: DurableExternalSession;
 } = {}): AgentDriverTurn => ({
-  codex: makeCodex({ requestedCwd: projectRoot }),
+  context: agentTurnContextFromCodex({ codex: makeCodex({ requestedCwd: projectRoot }) }),
   target: makeTarget(),
   prompt: {
     input: [

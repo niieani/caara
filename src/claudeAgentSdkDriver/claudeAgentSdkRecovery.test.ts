@@ -9,6 +9,7 @@ import {
   type AgentDriverTurn,
   type AgentDriverTurnResult,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
   DurableExternalSession,
@@ -175,19 +176,21 @@ const makeTurn = ({
 }: {
   readonly rawDriverOptions?: Readonly<Record<string, string>>;
 } = {}): AgentDriverTurn => ({
-  codex: new CodexTurnContext({
-    parentSessionId: "parent-session-sdk-recovery",
-    threadId: "codex-thread-sdk-recovery",
-    turnId: "turn-sdk-recovery",
-    parentThreadId: "parent-thread-sdk-recovery",
-    windowId: "window-sdk-recovery",
-    requestKind: "turn",
-    subagentKind: "caara",
-    originator: "codex_cli_rs",
-    requestedModel: "claude/sonnet",
-    sandboxPosture: "enforced",
-    workspacePaths: [projectRoot],
-    cwdCandidates: [projectRoot],
+  context: agentTurnContextFromCodex({
+    codex: new CodexTurnContext({
+      parentSessionId: "parent-session-sdk-recovery",
+      threadId: "codex-thread-sdk-recovery",
+      turnId: "turn-sdk-recovery",
+      parentThreadId: "parent-thread-sdk-recovery",
+      windowId: "window-sdk-recovery",
+      requestKind: "turn",
+      subagentKind: "caara",
+      originator: "codex_cli_rs",
+      requestedModel: "claude/sonnet",
+      sandboxPosture: "enforced",
+      workspacePaths: [projectRoot],
+      cwdCandidates: [projectRoot],
+    }),
   }),
   target: makeTarget({ rawDriverOptions }),
   prompt: {

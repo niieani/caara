@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Option, Result } from "effect";
 
 import { type AgentDriverTurn, AgentDriverError } from "./agentDriver.ts";
+import { agentTurnContextFromCodex } from "./codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
 import { diagnosticAgentDriver } from "./diagnosticDriver.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
@@ -95,7 +96,7 @@ const invalidRequestMessage = (result: Result.Result<unknown, unknown>): string 
 
 /** Builds a Diagnostic driver turn from a prepared v2 binding. */
 const diagnosticTurn = (binding: CaaraSessionBinding): AgentDriverTurn => ({
-  codex: followUpCodex,
+  context: agentTurnContextFromCodex({ codex: followUpCodex }),
   target: diagnosticTarget,
   prompt: { input: [] },
   cwd: binding.cwd,
@@ -108,9 +109,10 @@ describe("session binding v2 contracts", () => {
   it.effect("fails follow-up lookup when the required binding is missing", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        prepareSessionBinding({ codex: followUpCodex, target: diagnosticTarget }).pipe(
-          Effect.provide(sessionDirectoryLayer(Option.none())),
-        ),
+        prepareSessionBinding({
+          context: agentTurnContextFromCodex({ codex: followUpCodex }),
+          target: diagnosticTarget,
+        }).pipe(Effect.provide(sessionDirectoryLayer(Option.none()))),
       );
 
       assert.match(invalidRequestMessage(result), /session binding/i);
@@ -120,7 +122,10 @@ describe("session binding v2 contracts", () => {
   it.effect("fails follow-up lookup when the stored binding belongs to another driver", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
-        prepareSessionBinding({ codex: followUpCodex, target: diagnosticTarget }).pipe(
+        prepareSessionBinding({
+          context: agentTurnContextFromCodex({ codex: followUpCodex }),
+          target: diagnosticTarget,
+        }).pipe(
           Effect.provide(
             sessionDirectoryLayer(Option.some(storedBinding({ externalAgentKind: "gemini" }))),
           ),

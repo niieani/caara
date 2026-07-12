@@ -5,6 +5,7 @@ import { TestConsole } from "effect/testing";
 
 import { CaaraAppLogWriter } from "../caaraLogging.ts";
 import type { AgentDriverTurn, AgentRuntimeEvent } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
   fakeSdkHarness,
@@ -59,7 +60,7 @@ const makeTarget = (): AgentTarget =>
 
 /** Builds one direct driver turn with core-normalized current-user prompt input. */
 const makeTurn = (): AgentDriverTurn => ({
-  codex: makeCodex(),
+  context: agentTurnContextFromCodex({ codex: makeCodex() }),
   target: makeTarget(),
   prompt: {
     input: [

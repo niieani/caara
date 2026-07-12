@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer, Match, Option, Ref, Stream } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -6,11 +6,9 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 
-import {
-  type AgentDriverError,
-  AgentDriverRegistry,
-  type AgentDriverTurnResult,
-} from "./agentDriver.ts";
+import type { AgentDriverError, AgentDriverTurnResult } from "./agentDriver.ts";
+import { runAgentTurn } from "./agentTurn.ts";
+import { agentTurnContextFromCodex } from "./codexAgentTurnContext.ts";
 import { decodeCodexTurnRequest, type DecodedCodexTurnRequest } from "./codexTurnContext.ts";
 import { normalizeCurrentTurnInput } from "./currentTurnInput.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
@@ -21,17 +19,9 @@ import {
   RequestDiagnosticsLogger,
 } from "./requestDiagnosticsLogger.ts";
 import { createResponseEventStreamFromRuntimeEvents } from "./responseEvents.ts";
-import {
-  completeSessionBinding,
-  deleteSessionBinding,
-  type DurableExternalSession,
-  EphemeralExternalSession,
-  prepareSessionBinding,
-  SessionDirectory,
-} from "./sessionDirectory.ts";
-import { createLostSessionRecoveryRuntimeEvents } from "./sessionRecoveryPolicy.ts";
+import { EphemeralExternalSession } from "./sessionDirectory.ts";
 import { encodeSseEventStream } from "./sse.ts";
-import { TurnConcurrency, type TurnConcurrencyConflict } from "./turnConcurrency.ts";
+import type { TurnConcurrencyConflict } from "./turnConcurrency.ts";
 
 /** Converts a validation failure into an OpenAI-shaped JSON error response. */
 export const invalidResponsesRequestResponse = (error: InvalidResponsesRequest) =>
@@ -157,9 +147,6 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   const responsesRequest = yield* readResponsesCreateRequest(request);
   const logger = yield* InputLogger;
   const relayLogger = yield* RelayLogger;
-  const driverRegistry = yield* AgentDriverRegistry;
-  const sessionDirectory = yield* SessionDirectory;
-  const turnConcurrency = yield* TurnConcurrency;
 
   yield* relayLogger.log({
     _tag: "TurnAccepted",
@@ -176,17 +163,6 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
     rawDriverOptions: responsesRequest.target.rawDriverOptions,
   });
 
-  const preparedSession = yield* prepareSessionBinding({
-    codex: responsesRequest.codex,
-    target: responsesRequest.target,
-  });
-  const driver = yield* driverRegistry
-    .resolve(responsesRequest.target)
-    .pipe(
-      Effect.catchTag("AgentDriverError", (error) =>
-        Effect.fail(acceptedPreDriverFailure({ responsesRequest, error })),
-      ),
-    );
   const normalizedPrompt = yield* normalizeCurrentTurnInput({
     input: responsesRequest.responses.input,
   }).pipe(
@@ -194,16 +170,15 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
       Effect.fail(acceptedPreDriverFailure({ responsesRequest, error })),
     ),
   );
-  const lease = yield* turnConcurrency
-    .acquire({
-      key: {
-        externalAgentKind: responsesRequest.target.externalAgentKind,
-        codexThreadId: responsesRequest.codex.threadId,
-      },
-      turnId: responsesRequest.codex.turnId,
-    })
-    .pipe(
-      Effect.catchTag("TurnConcurrencyConflict", (error) =>
+  const agentTurn = yield* runAgentTurn({
+    target: responsesRequest.target,
+    prompt: normalizedPrompt,
+    ...agentTurnContextFromCodex({ codex: responsesRequest.codex }),
+  }).pipe(
+    Effect.catchTags({
+      AgentDriverError: (error) =>
+        Effect.fail(acceptedPreDriverFailure({ responsesRequest, error })),
+      TurnConcurrencyConflict: (error) =>
         Effect.gen(function* () {
           yield* relayLogger.log({
             _tag: "TurnConcurrencyConflict",
@@ -214,209 +189,20 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
           });
           return yield* error;
         }),
-      ),
-    );
-  yield* relayLogger.log({
-    _tag: "TurnInFlightAcquired",
-    externalAgentKind: responsesRequest.target.externalAgentKind,
-    codexThreadId: responsesRequest.codex.threadId,
-    turnId: responsesRequest.codex.turnId,
-  });
-
-  const previousTarget = Option.match(Option.fromUndefinedOr(preparedSession.previousTarget), {
-    onNone: () => undefined,
-    onSome: (target) => ({
-      requestedModel: target.requestedModel,
-      externalAgentKind: target.externalAgentKind,
-      externalModelSpecifier: target.externalModelSpecifier,
-      rawDriverOptions: target.rawDriverOptions,
     }),
-  });
-  const externalSessionId = Option.getOrUndefined(
-    Option.fromUndefinedOr(
-      [preparedSession.binding?.externalSession]
-        .filter(
-          (externalSession): externalSession is DurableExternalSession =>
-            externalSession?._tag === "Durable",
-        )
-        .map((externalSession) => externalSession.driverResumeCursor)
-        .at(0),
-    ),
   );
-
-  yield* relayLogger.log({
-    _tag: "DriverStarted",
-    threadId: responsesRequest.codex.threadId,
-    turnId: responsesRequest.codex.turnId,
-    externalAgentKind: responsesRequest.target.externalAgentKind,
-    externalSessionId,
-    previousTarget,
-  });
-  const driverTurnResult = yield* driver
-    .startOrResumeTurn({
-      codex: responsesRequest.codex,
-      target: responsesRequest.target,
-      prompt: normalizedPrompt,
-      cwd: preparedSession.cwd,
-      requestedCwd: preparedSession.requestedCwd,
-      previousTarget: preparedSession.previousTarget,
-      externalSession: preparedSession.binding?.externalSession,
-    })
-    .pipe(
-      Effect.catchTag("AgentDriverError", (error) =>
-        Effect.succeed(failedDriverStartTurnResult({ error })),
-      ),
-    );
   yield* logger.logInput(responsesRequest.responses.input);
-  yield* Option.match(Option.fromUndefinedOr(driverTurnResult.lostSessionRecovery), {
-    onNone: () => Effect.void,
-    onSome: (recovery) =>
-      relayLogger.log({
-        _tag: "LostSessionRecovered",
-        threadId: responsesRequest.codex.threadId,
-        turnId: responsesRequest.codex.turnId,
-        reason: recovery.reason,
-        diagnostics: recovery.diagnostics,
-      }),
-  });
-  const runtimeTurnFailed = yield* Ref.make(false);
-  const runtimeTurnSucceeded = yield* Ref.make(false);
-  const driverRuntimeEvents = Option.match(
-    Option.fromUndefinedOr(driverTurnResult.lostSessionRecovery),
-    {
-      onNone: () => driverTurnResult.runtimeEvents,
-      onSome: () => Stream.fromIterable(createLostSessionRecoveryRuntimeEvents()),
-    },
-  );
-  const runtimeEvents = driverRuntimeEvents.pipe(
-    Stream.tap((runtimeEvent) =>
-      Effect.gen(function* () {
-        yield* relayLogger.log({
-          _tag: "RuntimeEventRelayed",
-          threadId: responsesRequest.codex.threadId,
-          turnId: responsesRequest.codex.turnId,
-          runtimeEventTag: runtimeEvent._tag,
-        });
-        yield* Match.valueTags(runtimeEvent, {
-          TurnSucceeded: () => Ref.set(runtimeTurnSucceeded, true),
-          TurnFailed: (event) =>
-            Effect.all(
-              [
-                Ref.set(runtimeTurnFailed, true),
-                relayLogger.log({
-                  _tag: "TurnFailed",
-                  threadId: responsesRequest.codex.threadId,
-                  turnId: responsesRequest.codex.turnId,
-                  message: event.error.message,
-                }),
-              ],
-              { discard: true },
-            ),
-          ItemCreated: () => Effect.void,
-          ContentStarted: () => Effect.void,
-          ContentDelta: () => Effect.void,
-          ContentCompleted: () => Effect.void,
-          ItemCompleted: () => Effect.void,
-          PermissionDenied: (event) =>
-            relayLogger.log({
-              _tag: "PermissionDenied",
-              threadId: responsesRequest.codex.threadId,
-              turnId: responsesRequest.codex.turnId,
-              toolName: event.toolName,
-              toolUseId: event.toolUseId,
-              message: event.message,
-              decisionReason: event.decisionReason,
-            }),
-        });
-      }),
-    ),
-  );
-  const completeTurn = Effect.gen(function* () {
-    yield* relayLogger.log({
-      _tag: "TurnCompleted",
-      threadId: responsesRequest.codex.threadId,
-      turnId: responsesRequest.codex.turnId,
-    });
-    yield* completeSessionBinding({
-      codex: responsesRequest.codex,
-      target: responsesRequest.target,
-      prepared: preparedSession,
-      externalSession: driverTurnResult.externalSession,
-      bindingCwd: driverTurnResult.bindingCwd,
-    }).pipe(Effect.provideService(SessionDirectory, sessionDirectory));
-  }).pipe(Effect.ensuring(lease.release));
-  const releaseFailedTurn = lease.release;
-  const completeOrReleaseTurn = Effect.gen(function* () {
-    const failed = yield* Ref.get(runtimeTurnFailed);
-    const succeeded = yield* Ref.get(runtimeTurnSucceeded);
-    return yield* Match.value({ failed, succeeded }).pipe(
-      Match.when(
-        ({ failed }) => failed,
-        () => releaseFailedTurn,
-      ),
-      Match.when(
-        ({ succeeded }) => succeeded,
-        () => completeTurn,
-      ),
-      Match.orElse(() => releaseFailedTurn),
-    );
-  });
-  const cancelTurn = Effect.gen(function* () {
-    const cancellation = yield* driverTurnResult.cancel;
-    yield* relayLogger.log({
-      _tag: "TurnCancelled",
-      externalAgentKind: responsesRequest.target.externalAgentKind,
-      codexThreadId: responsesRequest.codex.threadId,
-      turnId: responsesRequest.codex.turnId,
-      outcomeTag: cancellation._tag,
-      sessionReusable: cancellation.sessionReusable,
-    });
-    const reusableCancellation = Option.fromUndefinedOr(
-      [cancellation].filter((outcome) => outcome.sessionReusable).at(0),
-    );
-    yield* Option.match(reusableCancellation, {
-      onNone: () =>
-        deleteSessionBinding({
-          codex: responsesRequest.codex,
-          target: responsesRequest.target,
-        }).pipe(Effect.provideService(SessionDirectory, sessionDirectory)),
-      onSome: () =>
-        completeSessionBinding({
-          codex: responsesRequest.codex,
-          target: responsesRequest.target,
-          prepared: preparedSession,
-          externalSession: driverTurnResult.externalSession,
-          bindingCwd: driverTurnResult.bindingCwd,
-        }).pipe(Effect.provideService(SessionDirectory, sessionDirectory), Effect.asVoid),
-    });
-  }).pipe(Effect.ensuring(lease.release));
-  /** Selects interrupted exits, which represent disconnected client streams. */
-  const interruptedExitOption = (exit: Exit.Exit<unknown>): Option.Option<Exit.Exit<unknown>> =>
-    Option.fromUndefinedOr([exit].filter(Exit.hasInterrupts).at(0));
-  /** Finalizes a streamed turn according to normal completion, cancellation, or failure cleanup. */
-  const finalizeTurn = (exit: Exit.Exit<unknown>) =>
-    Exit.match(exit, {
-      onSuccess: () => completeOrReleaseTurn,
-      onFailure: () =>
-        Option.match(interruptedExitOption(exit), {
-          onNone: () => releaseFailedTurn,
-          onSome: () => cancelTurn,
-        }),
-    }).pipe(Effect.ignore({ log: true, message: "Failed while finalizing Caara turn stream." }));
   const responseEventStream = createResponseEventStreamFromRuntimeEvents({
     request: responsesRequest.responses,
-    runtimeEvents,
+    runtimeEvents: agentTurn.runtimeEvents,
     onRuntimeFailure: (error) =>
-      Effect.gen(function* () {
-        yield* Ref.set(runtimeTurnFailed, true);
-        yield* relayLogger.log({
-          _tag: "TurnFailed",
-          threadId: responsesRequest.codex.threadId,
-          turnId: responsesRequest.codex.turnId,
-          message: error.message,
-        });
+      relayLogger.log({
+        _tag: "TurnFailed",
+        threadId: responsesRequest.codex.threadId,
+        turnId: responsesRequest.codex.turnId,
+        message: error.message,
       }),
-  }).pipe(Stream.onExit(finalizeTurn));
+  });
 
   return HttpServerResponse.stream(encodeSseEventStream(responseEventStream), {
     contentType: "text/event-stream",

@@ -9,6 +9,7 @@ import {
   createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
 } from "../mockResponsesProvider/agentDriver.ts";
+import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import {
   type CodexAdvisoryEffort,
   AgentTarget,
@@ -110,7 +111,7 @@ const makeTurn = ({
   readonly requestedCwd?: string;
   readonly advisoryEffort?: CodexAdvisoryEffort;
 } = {}): AgentDriverTurn => ({
-  codex: makeCodex({ advisoryEffort, requestedCwd }),
+  context: agentTurnContextFromCodex({ codex: makeCodex({ advisoryEffort, requestedCwd }) }),
   target,
   prompt: {
     input: [

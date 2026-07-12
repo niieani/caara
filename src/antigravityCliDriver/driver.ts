@@ -71,8 +71,8 @@ const durableAntigravitySession = ({
 const transcriptTelemetryContextFromTurn = (
   turn: AgentDriverTurn,
 ): AntigravityTranscriptTelemetryContext => ({
-  threadId: turn.codex.threadId,
-  turnId: turn.codex.turnId,
+  threadId: turn.context.identity.sessionId,
+  turnId: turn.context.identity.turnId,
 });
 
 /** Extracts a durable Antigravity resume cursor from prior external session state. */
@@ -420,8 +420,8 @@ export const makeAntigravityCliAgentDriver = ({
       caaraSettings,
       externalModelSpecifier: turn.target.externalModelSpecifier,
       rawDriverOptions: turn.target.rawDriverOptions,
-      advisoryEffort: turn.codex.advisoryEffort,
-      sandboxPosture: turn.codex.sandboxPosture,
+      advisoryEffort: turn.context.advisories.effort,
+      sandboxPosture: turn.context.advisories.sandboxPosture,
       pathService,
     });
     const defaultLogFilePath = antigravityLogFilePath({

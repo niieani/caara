@@ -14,7 +14,7 @@
     "build:service:all": "bun run scripts/buildService.ts --all",
     "prepare": "effect-tsgo patch",
     "typecheck": "tsgo -b",
-    "lint": "biome lint && oxlint --disable-nested-config",
+    "lint": "biome lint src && oxlint --disable-nested-config",
     "lint:fix": "oxlint --disable-nested-config --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",

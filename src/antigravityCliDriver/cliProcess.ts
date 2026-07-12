@@ -31,7 +31,13 @@ export const antigravityLogFilePath = ({
   readonly homeDir: string;
   readonly turn: AgentDriverTurn;
 }): string =>
-  pathService.join(homeDir, ".caara", "antigravity-cli", "logs", `${turn.codex.turnId}.log`);
+  pathService.join(
+    homeDir,
+    ".caara",
+    "antigravity-cli",
+    "logs",
+    `${turn.context.identity.turnId}.log`,
+  );
 
 /** Extracts the Antigravity conversation id from the CLI log content. */
 const conversationIdFromLog = Effect.fnUntraced(function* (content: string) {
