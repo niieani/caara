@@ -3,6 +3,7 @@ import { Effect, Layer, Match, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import packageMetadata from "../package.json" with { type: "json" };
+import { runCaaraAgentStartCli, runCaaraAgentWaitCli } from "./caaraAgentCli.ts";
 import { mainLayerFromArgs } from "./caaraApp.ts";
 import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
@@ -105,6 +106,8 @@ export interface CaaraCliHandlers {
   readonly uninstallService: { readonly run: typeof runCaaraUninstallServiceCli };
   readonly installCodexRoles: { readonly run: typeof runCaaraInstallCodexRolesCli };
   readonly uninstallCodexRoles: { readonly run: typeof runCaaraUninstallCodexRolesCli };
+  readonly agentStart: { readonly run: typeof runCaaraAgentStartCli };
+  readonly agentWait: { readonly run: typeof runCaaraAgentWaitCli };
 }
 
 /** Live command handlers backed by Caara's application and lifecycle operations. */
@@ -118,6 +121,8 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
   uninstallService: { run: runCaaraUninstallServiceCli },
   installCodexRoles: { run: runCaaraInstallCodexRolesCli },
   uninstallCodexRoles: { run: runCaaraUninstallCodexRolesCli },
+  agentStart: { run: runCaaraAgentStartCli },
+  agentWait: { run: runCaaraAgentWaitCli },
 };
 
 /** Builds the public command tree around injectable typed-to-domain handler seams. */
@@ -234,6 +239,32 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
       handlers.uninstallCodexRoles.run({ args: Option.toArray(targetDirectory) }),
   ).pipe(Command.withDescription("Remove Caara-managed Codex subagent roles"));
 
+  /** Safely submits one prompt value without transcript or stdin ambiguity. */
+  const agentStartCommand = Command.make(
+    "start",
+    {
+      ...settingsFlags(),
+      prompt: Flag.string("prompt").pipe(Flag.withDescription("Prompt for the diagnostic Agent")),
+    },
+    (input) => handlers.agentStart.run({ args: settingsArgs(input), prompt: input.prompt }),
+  ).pipe(Command.withDescription("Start one portable diagnostic Agent turn"));
+
+  /** Reads an Agent-safe coarse or final result for one accepted turn. */
+  const agentWaitCommand = Command.make(
+    "wait",
+    {
+      ...settingsFlags(),
+      turnId: Argument.string("turn-id").pipe(Argument.withDescription("Portable turn ID")),
+    },
+    (input) => handlers.agentWait.run({ args: settingsArgs(input), turnId: input.turnId }),
+  ).pipe(Command.withDescription("Read one portable Agent turn result"));
+
+  /** Groups portable Agent commands under one stable namespace. */
+  const agentCommand = Command.make("agent").pipe(
+    Command.withDescription("Delegate portable Agent turns"),
+    Command.withSubcommands([agentStartCommand, agentWaitCommand]),
+  );
+
   return serverCommand.pipe(
     Command.withSubcommands([
       statusCommand,
@@ -242,6 +273,7 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
       uninstallServiceCommand,
       installCodexRolesCommand,
       uninstallCodexRolesCommand,
+      agentCommand,
     ]),
   );
 };

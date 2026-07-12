@@ -51,6 +51,7 @@ const diagnosticOptionNames = [
   "diagnostic_resume",
   "diagnostic_fresh_start",
   "diagnostic_activity",
+  "diagnostic_activity_sentinel",
 ] as const;
 
 /** Returns the first unsupported Diagnostic raw option name, if present. */

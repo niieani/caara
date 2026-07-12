@@ -47,6 +47,18 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
   uninstallService: recordingHandler({ name: "uninstall-service", events }),
   installCodexRoles: recordingHandler({ name: "install-codex-roles", events }),
   uninstallCodexRoles: recordingHandler({ name: "uninstall-codex-roles", events }),
+  agentStart: {
+    run: Effect.fnUntraced(function* ({ args, prompt }) {
+      events.push(`agent-start:${args.join(" ")}:${prompt}`);
+      yield* Effect.void;
+    }),
+  },
+  agentWait: {
+    run: Effect.fnUntraced(function* ({ args, turnId }) {
+      events.push(`agent-wait:${args.join(" ")}:${turnId}`);
+      yield* Effect.void;
+    }),
+  },
 });
 
 describe("Caara root CLI", () => {
@@ -63,6 +75,7 @@ describe("Caara root CLI", () => {
         "uninstall-service",
         "install-codex-roles",
         "uninstall-codex-roles",
+        "agent",
       ]) {
         assert.match(output, new RegExp(`\\n  ${subcommand}`, "u"));
       }
@@ -118,6 +131,8 @@ describe("Caara root CLI", () => {
         "/tmp/agents",
       ]);
       yield* run(["uninstall-codex-roles", "/tmp/agents"]);
+      yield* run(["agent", "start", "--port", "8799", "--prompt", "safe prompt"]);
+      yield* run(["agent", "wait", "--port", "8799", "turn-1"]);
 
       assert.deepStrictEqual(events, [
         "server:--config /tmp/caara.yaml --no-allow-dangerous-skip-permissions",
@@ -127,6 +142,8 @@ describe("Caara root CLI", () => {
         "uninstall-service:--purge",
         "install-codex-roles:--config /tmp/caara.yaml --agents-md --panel-skill --yolo /tmp/agents",
         "uninstall-codex-roles:/tmp/agents",
+        "agent-start:--port 8799:safe prompt",
+        "agent-wait:--port 8799:turn-1",
       ]);
     }).pipe(Effect.provide(cliTestLayer)),
   );

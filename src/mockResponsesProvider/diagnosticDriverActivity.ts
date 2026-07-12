@@ -1,8 +1,9 @@
-import { Effect, Match, Stream } from "effect";
+import { Effect, Match, Option, Stream } from "effect";
 
 import {
   createInvalidPromptAgentDriverError,
   type AgentRuntimeEvent,
+  createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
 } from "./agentDriver.ts";
 import { diagnosticDriverFixture } from "./diagnosticDriverFixtures.ts";
@@ -32,6 +33,28 @@ export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(func
   readonly rawDriverOptions: Readonly<Record<string, string>>;
 }) {
   const transportVisibility = yield* diagnosticActivityVisibility(rawDriverOptions);
+  const sentinelEvents = Option.toArray(
+    Option.fromUndefinedOr(rawDriverOptions.diagnostic_activity_sentinel),
+  ).flatMap((sentinel) => [
+    ...createChunkedAssistantTextRuntimeEvents({
+      itemId: "diagnostic-activity-sentinel-commentary",
+      text: sentinel,
+      chunkCount: 1,
+      messagePhase: "commentary",
+      transportVisibility,
+    }),
+    ...createReasoningSummaryRuntimeEvents({
+      itemId: "diagnostic-activity-sentinel-reasoning",
+      text: sentinel,
+    }),
+    {
+      _tag: "PermissionDenied",
+      toolName: "diagnostic-sentinel-tool",
+      toolUseId: "diagnostic-sentinel-tool-use",
+      message: sentinel,
+      decisionReason: "diagnostic blindness fixture",
+    } satisfies AgentRuntimeEvent,
+  ]);
   return Stream.fromIterable([
     ...createChunkedAssistantTextRuntimeEvents({
       itemId: diagnosticDriverFixture.activityReadingItemId,
@@ -40,6 +63,7 @@ export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(func
       messagePhase: "commentary",
       transportVisibility,
     }),
+    ...sentinelEvents,
     ...createChunkedAssistantTextRuntimeEvents({
       itemId: diagnosticDriverFixture.activityEditingItemId,
       text: diagnosticDriverFixture.activityEditingText,

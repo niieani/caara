@@ -6,6 +6,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 
+import { portableAgentRoutesLayer } from "../portableAgentHttp.ts";
 import type { AgentDriverError, AgentDriverTurnResult } from "./agentDriver.ts";
 import { runAgentTurn } from "./agentTurn.ts";
 import { agentTurnContextFromCodex } from "./codexAgentTurnContext.ts";
@@ -242,6 +243,7 @@ export const responsesCreateRouteLayer = HttpRouter.add("POST", "/v1/responses",
 export const mockResponsesRoutesLayer = Layer.mergeAll(
   caaraHealthRouteLayer,
   responsesCreateRouteLayer,
+  portableAgentRoutesLayer,
 );
 
 /** Scoped server layer that serves the mock Responses router on the current HTTP server. */

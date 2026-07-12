@@ -21,7 +21,9 @@ const sourceFileSingleton = ({
   readonly filePath: string;
   readonly info: FileSystem.File.Info;
 }): readonly string[] =>
-  Match.value(info.type === "File" && filePath.endsWith(".ts")).pipe(
+  Match.value(
+    info.type === "File" && filePath.endsWith(".ts") && !filePath.endsWith(".test.ts"),
+  ).pipe(
     Match.when(true, () => [filePath]),
     Match.orElse(() => []),
   );
