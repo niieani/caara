@@ -51,7 +51,16 @@ describe("Codex AGENTS.md guidance block", () => {
     assert.ok(block.startsWith(codexAgentsGuidanceBeginMarker()));
     assert.ok(block.trimEnd().endsWith(codexAgentsGuidanceEndMarker()));
     assert.match(block, /Cross-model subagents/u);
-    assert.match(block, /second opinions/u);
+    assert.match(block, /caara agent start --json/u);
+    assert.match(block, /--prompt-file/u);
+    assert.match(block, /observationUrl/u);
+    assert.match(block, /immediately show/u);
+    assert.match(block, /never open, fetch, inspect, or summarize/u);
+    assert.match(block, /caara agent wait --json/u);
+    assert.match(block, /Exit\s+11/u);
+    assert.match(block, /caara agent cancel --json/u);
+    assert.match(block, /finalAnswer/u);
+    assert.match(block, /does\s+not depend on Codex subagent roles/u);
     assert.ok(!block.includes(`$panel`));
     assert.ok(!block.includes(`~/.codex/agents`));
     assert.ok(!block.includes(`parallel`));

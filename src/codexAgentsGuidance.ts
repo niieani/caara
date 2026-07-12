@@ -34,13 +34,23 @@ export type CodexAgentsGuidanceUpdate =
       readonly reason: string;
     };
 
-/** Delegation guidance paragraph recommending Caara roles for cross-model perspectives. */
+/** Portable blind-delegation workflow installed for Codex orchestrators. */
 const crossModelParagraph = [
-  "`caara-*` subagent roles run external code agents (Claude Code, Antigravity) as native Codex",
-  "subagents — a genuinely different model family, not another Codex seat. Prefer them over native",
-  "subagents when a different model's perspective adds value: code review, second opinions,",
-  "contested design calls, or tasks that play to another model's strengths. Follow-up turns resume",
-  "the same external session, so treat them as persistent collaborators rather than one-shot tools.",
+  "Use Caara's portable CLI for blind delegation to a different model family. This workflow does",
+  "not depend on Codex subagent roles or native subagent tool schemas.",
+  "",
+  "1. Select an explicit target such as `claude/sonnet` or `agy/gemini-3.5-flash` and an absolute",
+  "   working directory. Put arbitrary or multiline task text in a file; do not interpolate it into",
+  "   shell syntax.",
+  "2. Run `caara agent start --json --target TARGET --cwd CWD --prompt-file PROMPT_FILE`.",
+  "   Accepted starts exit 10. Parse the JSON; immediately show `observationUrl` to the user as a",
+  "   clickable human-only link; never open, fetch, inspect, or summarize that URL, and never pass it",
+  "   to another tool or model. It is a bearer capability containing private agent activity.",
+  "3. Repeatedly run `caara agent wait --json --timeout-millis 30000 TURN_ID`. Exit 11 means the",
+  "   turn is still working; wait again without reading the observation page. On completion, consume",
+  "   only `finalAnswer` from the terminal JSON. Do not seek reasoning, tool activity, or transcripts.",
+  "4. If the task must stop, run `caara agent cancel --json TURN_ID`. Successful cancellation exits",
+  "   12; honor `sessionReusable` before attempting any follow-up with `--session-id`.",
 ].join("\n");
 
 /** Guidance paragraph pointing at the globally installed panel skill. */

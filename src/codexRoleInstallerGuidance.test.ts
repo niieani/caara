@@ -83,6 +83,8 @@ describe("Codex role installer delegation opt-ins", () => {
       assert.ok(agents.includes(codexAgentsGuidanceBeginMarker()));
       assert.ok(agents.includes(codexAgentsGuidanceEndMarker()));
       assert.ok(!agents.includes("$panel"));
+      assert.match(agents, /never open, fetch, inspect, or summarize/u);
+      assert.match(agents, /consume\s+only `finalAnswer`/u);
       assert.ok(result.writtenFiles.includes(fixture.agentsFilePath));
       assert.strictEqual(yield* pathExists({ filePath: fixture.skillDirectory }), false);
     }),
