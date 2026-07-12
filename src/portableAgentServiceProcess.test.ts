@@ -270,7 +270,9 @@ describe("portable Agent service process", () => {
                     arguments: { turnId: "malformed-turn-id" },
                   }),
                 );
-                const allMcpOutput = JSON.stringify({ started, failed });
+                const allMcpOutput = yield* Schema.encodeEffect(
+                  Schema.fromJsonString(Schema.Unknown),
+                )({ started, failed });
                 assert.notMatch(allMcpOutput, new RegExp(sentinel, "u"));
                 assert.strictEqual(failed.isError, true);
                 assert.strictEqual(client.getServerCapabilities()?.resources, undefined);
@@ -279,10 +281,10 @@ describe("portable Agent service process", () => {
                   turnId: start.turnId,
                 });
               }),
-            ({ client, server }) =>
-              Effect.tryPromise(() => client.close()).pipe(
-                Effect.andThen(Effect.tryPromise(() => server.close())),
-              ),
+            Effect.fnUntraced(function* ({ client, server }) {
+              yield* Effect.tryPromise(() => client.close());
+              yield* Effect.tryPromise(() => server.close());
+            }),
           ),
       });
     },

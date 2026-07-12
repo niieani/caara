@@ -429,19 +429,23 @@ export const createCaaraCommand = ({
               }),
           ),
         );
-        const originMetadata = {
-          ...(input.originLineage.length > 0
-            ? { caaraLineage: input.originLineage.join(",") }
-            : {}),
-          ...(validOriginDepth === undefined ? {} : { caaraDepth: String(validOriginDepth) }),
-        };
+        const lineageMetadata: Readonly<{ [key: string]: string }> = Match.value(
+          input.originLineage.length > 0,
+        ).pipe(
+          Match.when(true, () => ({ caaraLineage: input.originLineage.join(",") })),
+          Match.orElse(() => ({})),
+        );
+        const originMetadata = Match.value(validOriginDepth).pipe(
+          Match.when(undefined, () => lineageMetadata),
+          Match.orElse((depth) => Record.set(lineageMetadata, "caaraDepth", String(depth))),
+        );
         return yield* handlers.agentStart.run({
           args: settingsArgs(input),
           prompt,
           target,
           cwd,
           driverOptions,
-          ...(Object.keys(originMetadata).length > 0 ? { originMetadata } : {}),
+          originMetadata,
           sessionId: Option.getOrUndefined(input.sessionId),
           json: input.json,
         });

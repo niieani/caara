@@ -513,11 +513,12 @@ const makePortableAgentTurns = ({
             onSome: (durable) =>
               Effect.all([durable.loadTurn(turnId), durable.loadObservationForTurn(turnId)]).pipe(
                 Effect.map(([turn, observation]) =>
-                  Option.all({ turn, observation }).pipe(
-                    Option.map(({ turn: durableTurn, observation: durableObservation }) => ({
+                  Option.map(
+                    Option.all({ turn, observation }),
+                    ({ turn: durableTurn, observation: durableObservation }) => ({
                       sessionId: durableTurn.sessionId,
                       capability: durableObservation.capability,
-                    })),
+                    }),
                   ),
                 ),
               ),

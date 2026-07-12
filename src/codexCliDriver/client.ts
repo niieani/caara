@@ -165,14 +165,56 @@ const ensureSessionReported = Effect.fnUntraced(function* (
   session: Deferred.Deferred<string, AgentDriverError>,
 ) {
   const started = yield* Deferred.isDone(session);
-  return yield* Match.value(started).pipe(
-    Match.when(true, () => Effect.void),
-    Match.orElse(() =>
+  yield* Effect.filterOrFail(
+    Effect.succeed(started),
+    (reported) => reported,
+    () =>
       createServerErrorAgentDriverError({
         message: "Codex CLI did not report a durable thread identifier.",
       }),
-    ),
   );
+});
+
+/** Projects one decoded Codex record into session startup and activity channels. */
+const observeCodexRecord = Effect.fnUntraced(function* ({
+  record,
+  session,
+  activities,
+}: {
+  readonly record: Readonly<Record<string, unknown>>;
+  readonly session: Deferred.Deferred<string, AgentDriverError>;
+  readonly activities: Queue.Queue<CodexCliActivity, AgentDriverError | Cause.Done>;
+}) {
+  const threadId = Match.value(stringField({ record, name: "type" })).pipe(
+    Match.when("thread.started", () => stringField({ record, name: "thread_id" })),
+    Match.orElse(() => undefined),
+  );
+  yield* Option.match(Option.fromUndefinedOr(threadId), {
+    onNone: () => Effect.void,
+    onSome: (id) => Deferred.succeed(session, id),
+  });
+  yield* Queue.offerAll(activities, activityFromRecord(record));
+});
+
+/** Fails both startup and activity channels after one protocol failure. */
+const failCodexObservation = Effect.fnUntraced(function* ({
+  session,
+  activities,
+  error,
+}: {
+  readonly session: Deferred.Deferred<string, AgentDriverError>;
+  readonly activities: Queue.Queue<CodexCliActivity, AgentDriverError | Cause.Done>;
+  readonly error: AgentDriverError;
+}) {
+  yield* Deferred.fail(session, error);
+  yield* Queue.fail(activities, error);
+});
+
+/** Ends the activity channel after successful process completion. */
+const endCodexObservation = Effect.fnUntraced(function* (
+  activities: Queue.Queue<CodexCliActivity, AgentDriverError | Cause.Done>,
+) {
+  yield* Queue.end(activities);
 });
 
 /** Creates a streaming Codex client around an injectable process boundary. */
@@ -192,40 +234,24 @@ export const createCodexCliClient = ({
     const session = yield* Deferred.make<string, AgentDriverError>();
     const activities = yield* Queue.unbounded<CodexCliActivity, AgentDriverError | Cause.Done>();
     const observe = codexRecordStream(process).pipe(
-      Stream.runForEach(
-        Effect.fnUntraced(function* (record) {
-          if (stringField({ record, name: "type" }) === "thread.started") {
-            const threadId = stringField({ record, name: "thread_id" });
-            if (threadId === undefined) {
-              return yield* createServerErrorAgentDriverError({
-                message: "Codex CLI reported thread.started without a durable thread identifier.",
-              });
-            }
-            yield* Deferred.succeed(session, threadId);
-          }
-          yield* Queue.offerAll(activities, activityFromRecord(record));
-        }),
-      ),
+      Stream.runForEach((record) => observeCodexRecord({ record, session, activities })),
       Effect.andThen(validateProcessExit(process)),
       Effect.andThen(ensureSessionReported(session)),
       Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.all([Deferred.fail(session, error), Queue.fail(activities, error)]).pipe(
-            Effect.asVoid,
-          ),
-        onSuccess: () => Queue.end(activities).pipe(Effect.asVoid),
+        onFailure: (error) => failCodexObservation({ session, activities, error }),
+        onSuccess: () => endCodexObservation(activities),
       }),
     );
     yield* Effect.forkDetach(observe);
     const sessionId = yield* Deferred.await(session);
-    const cancel = Effect.fnUntraced(function* () {
+    const cancel = Effect.gen(function* () {
       yield* Effect.sync(() => process.kill("SIGTERM"));
       yield* Effect.promise(() => process.exited);
       return {
         _tag: "Terminated",
         sessionReusable: false,
       } satisfies AgentCancellationOutcome;
-    })();
+    });
     return {
       sessionId,
       runtimeEvents: Stream.fromQueue(activities),

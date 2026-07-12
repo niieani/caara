@@ -82,8 +82,11 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
       const encodedOptions = yield* Schema.encodeEffect(
         Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
       )(driverOptions);
+      const encodedOrigin = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+      )(originMetadata ?? {});
       events.push(
-        `agent-start:${args.join(" ")}:${target}:${cwd}:${encodedOptions}:${JSON.stringify(originMetadata ?? {})}:${String(json)}:${prompt}`,
+        `agent-start:${args.join(" ")}:${target}:${cwd}:${encodedOptions}:${encodedOrigin}:${String(json)}:${prompt}`,
       );
     }),
   },
