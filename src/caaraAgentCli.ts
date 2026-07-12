@@ -1,5 +1,5 @@
 import { BunHttpClient } from "@effect/platform-bun";
-import { Console, Effect, Match, Schema } from "effect";
+import { Console, Effect, Match, Option, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/unstable/http";
 
@@ -31,6 +31,7 @@ export interface CaaraAgentApi {
 export interface RunCaaraAgentStartOptions {
   readonly args: readonly string[];
   readonly prompt: string;
+  readonly sessionId?: string;
   readonly api?: CaaraAgentApi;
   readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraSettingsEnvironment;
@@ -40,6 +41,7 @@ export interface RunCaaraAgentStartOptions {
 export interface RunCaaraAgentWaitOptions {
   readonly args: readonly string[];
   readonly turnId: string;
+  readonly timeoutMillis?: number;
   readonly api?: CaaraAgentApi;
   readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraSettingsEnvironment;
@@ -101,12 +103,22 @@ const resolveAgentServiceOrigin = Effect.fnUntraced(function* ({
 export const runCaaraAgentStart = Effect.fnUntraced(function* ({
   args,
   prompt,
+  sessionId,
   api = liveCaaraAgentApi,
   configLoader,
   env,
 }: RunCaaraAgentStartOptions) {
   const origin = yield* resolveAgentServiceOrigin({ args, configLoader, env });
-  const body = yield* api.post({ url: `${origin}/agent/turns`, body: { prompt } });
+  const body = yield* api.post({
+    url: `${origin}/agent/turns`,
+    body: {
+      prompt,
+      ...Option.match(Option.fromUndefinedOr(sessionId), {
+        onNone: () => ({}),
+        onSome: (selected) => ({ sessionId: selected }),
+      }),
+    },
+  });
   const accepted = yield* Schema.decodeUnknownEffect(PortableAgentStartServiceResponse)(body).pipe(
     Effect.mapError(agentCliError),
   );
@@ -122,12 +134,17 @@ export const runCaaraAgentStart = Effect.fnUntraced(function* ({
 export const runCaaraAgentWait = Effect.fnUntraced(function* ({
   args,
   turnId,
+  timeoutMillis,
   api = liveCaaraAgentApi,
   configLoader,
   env,
 }: RunCaaraAgentWaitOptions) {
   const origin = yield* resolveAgentServiceOrigin({ args, configLoader, env });
-  const body = yield* api.get(`${origin}/agent/turns/${encodeURIComponent(turnId)}`);
+  const timeoutQuery = Option.match(Option.fromUndefinedOr(timeoutMillis), {
+    onNone: () => "",
+    onSome: (value) => `?timeoutMillis=${encodeURIComponent(value)}`,
+  });
+  const body = yield* api.get(`${origin}/agent/turns/${encodeURIComponent(turnId)}${timeoutQuery}`);
   return yield* Schema.decodeUnknownEffect(PortableAgentWaitResponse)(body).pipe(
     Effect.mapError(agentCliError),
   );
@@ -137,11 +154,13 @@ export const runCaaraAgentWait = Effect.fnUntraced(function* ({
 export const runCaaraAgentStartCli = Effect.fnUntraced(function* ({
   args,
   prompt,
+  sessionId,
 }: {
   readonly args: readonly string[];
   readonly prompt: string;
+  readonly sessionId?: string;
 }) {
-  const result = yield* runCaaraAgentStart({ args, prompt });
+  const result = yield* runCaaraAgentStart({ args, prompt, sessionId });
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PortableAgentStartResponse))(
     result,
   );
@@ -152,11 +171,13 @@ export const runCaaraAgentStartCli = Effect.fnUntraced(function* ({
 export const runCaaraAgentWaitCli = Effect.fnUntraced(function* ({
   args,
   turnId,
+  timeoutMillis,
 }: {
   readonly args: readonly string[];
   readonly turnId: string;
+  readonly timeoutMillis?: number;
 }) {
-  const result = yield* runCaaraAgentWait({ args, turnId });
+  const result = yield* runCaaraAgentWait({ args, turnId, timeoutMillis });
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PortableAgentWaitResponse))(
     result,
   );

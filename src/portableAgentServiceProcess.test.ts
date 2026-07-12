@@ -7,7 +7,13 @@ import type { Effect as EffectContract } from "effect/Effect";
 
 import { runCaaraAgentWait } from "./caaraAgentCli.ts";
 import {
+  CaaraSessionBinding,
+  DurableExternalSession,
+  makeDriverResumeCursor,
+} from "./mockResponsesProvider/sessionDirectory.ts";
+import {
   PortableAgentStartResponse,
+  PortableAgentStartRequest,
   PortableAgentStartServiceResponse,
   PortableAgentWaitResponse,
 } from "./portableAgentHttp.ts";
@@ -132,108 +138,308 @@ const runCliProcess = Effect.fnUntraced(function* ({
 });
 
 describe("portable Agent service process", () => {
-  it.live("proves CLI start, live viewer, final-only wait, and capability blindness", () => {
-    const port = allocatePort();
-    return withServiceProcess({
-      port,
-      use: ({ executable, origin }) =>
-        Effect.gen(function* () {
-          const hostileHostBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)({
-            prompt: "host-header-capability-test",
-          });
-          const hostileHostResponse = yield* Effect.tryPromise({
-            try: () =>
-              fetch(`${origin}/agent/turns`, {
-                method: "POST",
-                headers: { "content-type": "application/json", host: "attacker.example" },
-                body: hostileHostBody,
+  it.live(
+    "resumes explicit sessions, rejects overlap, and leaves bounded waits non-cancelling",
+    () => {
+      const port = allocatePort();
+      const stateRoot = path.join(
+        process.cwd(),
+        "temp.local",
+        "2026-07-12",
+        `portable-session-${randomUUID()}`,
+      );
+      return withServiceProcess({
+        port,
+        stateRoot,
+        use: ({ origin }) =>
+          Effect.gen(function* () {
+            const start = Effect.fnUntraced(function* (sessionId?: string) {
+              const encodedRequest = yield* Schema.encodeEffect(
+                Schema.fromJsonString(PortableAgentStartRequest),
+              )({ prompt: "portable continuity", sessionId });
+              const response = yield* Effect.tryPromise({
+                try: () =>
+                  fetch(`${origin}/agent/turns`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: encodedRequest,
+                  }),
+                catch: String,
+              });
+              const body = yield* Effect.tryPromise({ try: () => response.json(), catch: String });
+              return { response, body };
+            });
+
+            const first = yield* start();
+            assert.strictEqual(first.response.status, 200);
+            const accepted = yield* Schema.decodeUnknownEffect(PortableAgentStartServiceResponse)(
+              first.body,
+            );
+
+            const lost = yield* start("portable-session-lost");
+            assert.strictEqual(lost.response.status, 409);
+
+            const overlap = yield* start(accepted.sessionId);
+            assert.strictEqual(overlap.response.status, 409);
+
+            const independent = yield* start();
+            assert.strictEqual(independent.response.status, 200);
+            const independentAccepted = yield* Schema.decodeUnknownEffect(
+              PortableAgentStartServiceResponse,
+            )(independent.body);
+            assert.notStrictEqual(independentAccepted.sessionId, accepted.sessionId);
+
+            const bounded = yield* Effect.tryPromise({
+              try: () => fetch(`${origin}/agent/turns/${accepted.turnId}?timeoutMillis=1`),
+              catch: String,
+            }).pipe(
+              Effect.flatMap((response) =>
+                Effect.tryPromise({ try: () => response.json(), catch: String }),
+              ),
+              Effect.flatMap(Schema.decodeUnknownEffect(PortableAgentWaitResponse)),
+            );
+            assert.deepStrictEqual(bounded, { status: "working" });
+
+            const firstCompleted = yield* runCaaraAgentWait({
+              args: ["--host", "127.0.0.1", "--port", String(port)],
+              turnId: accepted.turnId,
+              timeoutMillis: 500,
+              env: process.env,
+            }).pipe(
+              Effect.filterOrFail((result) => result.status === "completed"),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.deepStrictEqual(firstCompleted, {
+              status: "completed",
+              finalAnswer: "Diagnostic activity completed diagnostic/activity",
+            });
+
+            const resumed = yield* start(accepted.sessionId);
+            assert.strictEqual(resumed.response.status, 200);
+            const resumedAccepted = yield* Schema.decodeUnknownEffect(
+              PortableAgentStartServiceResponse,
+            )(resumed.body);
+            assert.strictEqual(resumedAccepted.sessionId, accepted.sessionId);
+            const resumedOverlap = yield* start(accepted.sessionId);
+            assert.strictEqual(resumedOverlap.response.status, 409);
+            assert.match(JSON.stringify(resumedOverlap.body), /in-flight turn/iu);
+
+            const concurrentIndependent = yield* start();
+            assert.strictEqual(concurrentIndependent.response.status, 200);
+
+            const resumedCompleted = yield* runCaaraAgentWait({
+              args: ["--host", "127.0.0.1", "--port", String(port)],
+              turnId: resumedAccepted.turnId,
+              timeoutMillis: 500,
+              env: process.env,
+            }).pipe(
+              Effect.filterOrFail((result) => result.status === "completed"),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.deepStrictEqual(resumedCompleted, {
+              status: "completed",
+              finalAnswer: "Diagnostic activity resumed the prior opaque session",
+            });
+            assert.deepStrictEqual(
+              yield* runCaaraAgentWait({
+                args: ["--host", "127.0.0.1", "--port", String(port)],
+                turnId: resumedAccepted.turnId,
+                timeoutMillis: 1,
+                env: process.env,
               }),
-            catch: String,
-          });
-          const hostileHostStart = yield* Effect.tryPromise({
-            try: () => hostileHostResponse.json(),
-            catch: String,
-          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(PortableAgentStartServiceResponse)));
-          assert.match(hostileHostStart.observationPath, /^\/observe\//u);
-          assert.strictEqual(hostileHostStart.observationPath.includes("attacker.example"), false);
+              resumedCompleted,
+            );
 
-          const sentinel = ["strict-blindness", "λ-$(touch /tmp/never)", "sentinel"].join("-");
-          const startProcess = yield* runCliProcess({
-            executable,
-            args: [
-              "agent",
-              "start",
-              "--host",
-              "127.0.0.1",
-              "--port",
-              String(port),
-              "--prompt",
-              `line one\n${sentinel}`,
-            ],
-          });
-          assert.strictEqual(startProcess.exitCode, 0);
-          const start = yield* Schema.decodeUnknownEffect(
-            Schema.fromJsonString(PortableAgentStartResponse),
-          )(startProcess.stdout.trim());
-          assert.deepStrictEqual(
-            yield* Schema.decodeUnknownEffect(PortableAgentStartResponse)(start),
-            start,
-          );
-          assert.strictEqual(start.status, "working");
-          assert.match(start.observationUrl, new RegExp(`^${origin}/observe/`, "u"));
+            const sessionDirectory = path.join(
+              stateRoot,
+              "caara",
+              "sessions",
+              "diagnostic",
+              "diagnostic",
+            );
+            const files = yield* Effect.promise(() =>
+              Array.fromAsync(new Bun.Glob("*.json").scan(sessionDirectory)),
+            );
+            const bindingFiles = yield* Effect.forEach(files, (file) =>
+              Effect.promise(() => Bun.file(path.join(sessionDirectory, file)).text()).pipe(
+                Effect.flatMap(
+                  Schema.decodeUnknownEffect(Schema.fromJsonString(CaaraSessionBinding)),
+                ),
+                Effect.map((binding) => ({ binding, file })),
+              ),
+            );
+            const resumedBindingFile = bindingFiles.find(
+              ({ binding }) => binding.bindingKey.codexThreadId === accepted.sessionId,
+            );
+            const resumedBinding = resumedBindingFile?.binding;
+            assert.strictEqual(String(resumedBinding?.createdFromTurnId), String(accepted.turnId));
+            assert.strictEqual(String(resumedBinding?.lastTurnId), String(resumedAccepted.turnId));
+            assert.ok(
+              bindingFiles.some(
+                ({ binding }) => binding.bindingKey.codexThreadId === independentAccepted.sessionId,
+              ),
+            );
 
-          const liveHtml = yield* fetchText({ url: start.observationUrl }).pipe(
-            Effect.filterOrFail(
-              (html) => html.includes(sentinel) && html.includes("diagnostic-sentinel-tool"),
-            ),
-            Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
-          );
-          assert.match(liveHtml, /Reading src\/server\.ts/u);
-          assert.ok(liveHtml.includes(sentinel));
-          assert.match(liveHtml, /Permission denied: diagnostic-sentinel-tool/u);
+            assert.ok(resumedBinding);
+            const corruptedBinding = new CaaraSessionBinding({
+              ...resumedBinding,
+              externalSession: new DurableExternalSession({
+                driverResumeCursor: makeDriverResumeCursor("invalid-opaque-cursor"),
+              }),
+            });
+            assert.ok(resumedBindingFile);
+            const encodedCorruptedBinding = yield* Schema.encodeEffect(
+              Schema.fromJsonString(CaaraSessionBinding),
+            )(corruptedBinding);
+            yield* Effect.promise(() =>
+              Bun.write(
+                path.join(sessionDirectory, resumedBindingFile.file),
+                encodedCorruptedBinding,
+              ),
+            );
+            const invalidResume = yield* start(accepted.sessionId);
+            assert.strictEqual(invalidResume.response.status, 200);
+            const invalidResumeAccepted = yield* Schema.decodeUnknownEffect(
+              PortableAgentStartServiceResponse,
+            )(invalidResume.body);
+            const invalidResumeResult = yield* runCaaraAgentWait({
+              args: ["--host", "127.0.0.1", "--port", String(port)],
+              turnId: invalidResumeAccepted.turnId,
+              timeoutMillis: 500,
+              env: process.env,
+            }).pipe(
+              Effect.filterOrFail((result) => result.status === "failed"),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.deepStrictEqual(invalidResumeResult, { status: "failed" });
+            const persistedAfterFailure = yield* Effect.promise(() =>
+              Bun.file(path.join(sessionDirectory, resumedBindingFile.file)).text(),
+            ).pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(Schema.fromJsonString(CaaraSessionBinding)),
+              ),
+            );
+            assert.strictEqual(
+              persistedAfterFailure.externalSession._tag === "Durable"
+                ? persistedAfterFailure.externalSession.driverResumeCursor
+                : "ephemeral",
+              "invalid-opaque-cursor",
+            );
+          }),
+      });
+    },
+    15_000,
+  );
 
-          const waitProcess = yield* runCliProcess({
-            executable,
-            args: ["agent", "wait", "--host", "127.0.0.1", "--port", String(port), start.turnId],
-          }).pipe(
-            Effect.filterOrFail(({ stdout }) => stdout.includes('"status":"completed"')),
-            Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
-          );
-          assert.strictEqual(waitProcess.exitCode, 0);
-          const completed = yield* Schema.decodeUnknownEffect(
-            Schema.fromJsonString(PortableAgentWaitResponse),
-          )(waitProcess.stdout.trim());
-          assert.deepStrictEqual(completed, {
-            status: "completed",
-            finalAnswer: "Diagnostic activity completed diagnostic/activity",
-          });
-          assert.strictEqual(
-            /Reading|Editing|reasoning|Permission denied|sentinel/iu.test(
-              `${startProcess.stdout}${startProcess.stderr}${waitProcess.stdout}${waitProcess.stderr}`,
-            ),
-            false,
-          );
+  it.live(
+    "proves CLI start, live viewer, final-only wait, and capability blindness",
+    () => {
+      const port = allocatePort();
+      return withServiceProcess({
+        port,
+        use: ({ executable, origin }) =>
+          Effect.gen(function* () {
+            const hostileHostBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)({
+              prompt: "host-header-capability-test",
+            });
+            const hostileHostResponse = yield* Effect.tryPromise({
+              try: () =>
+                fetch(`${origin}/agent/turns`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json", host: "attacker.example" },
+                  body: hostileHostBody,
+                }),
+              catch: String,
+            });
+            const hostileHostStart = yield* Effect.tryPromise({
+              try: () => hostileHostResponse.json(),
+              catch: String,
+            }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(PortableAgentStartServiceResponse)));
+            assert.match(hostileHostStart.observationPath, /^\/observe\//u);
+            assert.strictEqual(
+              hostileHostStart.observationPath.includes("attacker.example"),
+              false,
+            );
 
-          const finalHtml = yield* fetchText({ url: start.observationUrl });
-          assert.match(finalHtml, /Status: completed/u);
-          assert.match(finalHtml, /Final answer/u);
-          assert.match(finalHtml, /Diagnostic activity completed diagnostic\/activity/u);
+            const sentinel = ["strict-blindness", "λ-$(touch /tmp/never)", "sentinel"].join("-");
+            const startProcess = yield* runCliProcess({
+              executable,
+              args: [
+                "agent",
+                "start",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                String(port),
+                "--prompt",
+                `line one\n${sentinel}`,
+              ],
+            });
+            assert.strictEqual(startProcess.exitCode, 0);
+            const start = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(PortableAgentStartResponse),
+            )(startProcess.stdout.trim());
+            assert.deepStrictEqual(
+              yield* Schema.decodeUnknownEffect(PortableAgentStartResponse)(start),
+              start,
+            );
+            assert.strictEqual(start.status, "working");
+            assert.match(start.observationUrl, new RegExp(`^${origin}/observe/`, "u"));
 
-          const invalid = yield* Effect.tryPromise({
-            try: () => fetch(`${origin}/observe/invalid-capability`),
-            catch: String,
-          });
-          const tampered = yield* Effect.tryPromise({
-            try: () => fetch(`${start.observationUrl}-tampered`),
-            catch: String,
-          });
-          assert.strictEqual(invalid.status, 404);
-          assert.strictEqual(tampered.status, 404);
-          assert.strictEqual(yield* Effect.promise(() => invalid.text()), "Not found");
-          assert.strictEqual(yield* Effect.promise(() => tampered.text()), "Not found");
-        }),
-    });
-  });
+            const liveHtml = yield* fetchText({ url: start.observationUrl }).pipe(
+              Effect.filterOrFail(
+                (html) => html.includes(sentinel) && html.includes("diagnostic-sentinel-tool"),
+              ),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.match(liveHtml, /Reading src\/server\.ts/u);
+            assert.ok(liveHtml.includes(sentinel));
+            assert.match(liveHtml, /Permission denied: diagnostic-sentinel-tool/u);
+
+            const waitProcess = yield* runCliProcess({
+              executable,
+              args: ["agent", "wait", "--host", "127.0.0.1", "--port", String(port), start.turnId],
+            }).pipe(
+              Effect.filterOrFail(({ stdout }) => stdout.includes('"status":"completed"')),
+              Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+            );
+            assert.strictEqual(waitProcess.exitCode, 0);
+            const completed = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(PortableAgentWaitResponse),
+            )(waitProcess.stdout.trim());
+            assert.deepStrictEqual(completed, {
+              status: "completed",
+              finalAnswer: "Diagnostic activity completed diagnostic/activity",
+            });
+            assert.strictEqual(
+              /Reading|Editing|reasoning|Permission denied|sentinel/iu.test(
+                `${startProcess.stdout}${startProcess.stderr}${waitProcess.stdout}${waitProcess.stderr}`,
+              ),
+              false,
+            );
+
+            const finalHtml = yield* fetchText({ url: start.observationUrl });
+            assert.match(finalHtml, /Status: completed/u);
+            assert.match(finalHtml, /Final answer/u);
+            assert.match(finalHtml, /Diagnostic activity completed diagnostic\/activity/u);
+
+            const invalid = yield* Effect.tryPromise({
+              try: () => fetch(`${origin}/observe/invalid-capability`),
+              catch: String,
+            });
+            const tampered = yield* Effect.tryPromise({
+              try: () => fetch(`${start.observationUrl}-tampered`),
+              catch: String,
+            });
+            assert.strictEqual(invalid.status, 404);
+            assert.strictEqual(tampered.status, 404);
+            assert.strictEqual(yield* Effect.promise(() => invalid.text()), "Not found");
+            assert.strictEqual(yield* Effect.promise(() => tampered.text()), "Not found");
+          }),
+      });
+    },
+    15_000,
+  );
 
   it.live(
     "recovers completed wait and capability pages after service restart",

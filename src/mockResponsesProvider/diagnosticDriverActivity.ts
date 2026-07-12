@@ -2,6 +2,7 @@ import { Effect, Match, Option, Stream } from "effect";
 
 import {
   createInvalidPromptAgentDriverError,
+  type AgentDriverTurn,
   type AgentRuntimeEvent,
   createReasoningSummaryRuntimeEvents,
   createRuntimeTurnSucceededEvent,
@@ -29,8 +30,10 @@ const diagnosticActivityVisibility = Effect.fnUntraced(function* (
 /** Builds the diagnostic/activity runtime stream for commentary and final-answer coverage. */
 export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(function* ({
   rawDriverOptions,
+  turn,
 }: {
   readonly rawDriverOptions: Readonly<Record<string, string>>;
+  readonly turn: AgentDriverTurn;
 }) {
   const transportVisibility = yield* diagnosticActivityVisibility(rawDriverOptions);
   const sentinelEvents = Option.toArray(
@@ -73,7 +76,10 @@ export const createDiagnosticActivityRuntimeEventStream = Effect.fnUntraced(func
     }),
     ...createChunkedAssistantTextRuntimeEvents({
       itemId: diagnosticDriverFixture.activityAnswerItemId,
-      text: diagnosticDriverFixture.activityAnswerText,
+      text:
+        turn.externalSession === undefined
+          ? diagnosticDriverFixture.activityAnswerText
+          : diagnosticDriverFixture.resumedActivityAnswerText,
       chunkCount: 1,
       messagePhase: "final_answer",
     }),

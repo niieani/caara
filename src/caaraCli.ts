@@ -245,8 +245,18 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
     {
       ...settingsFlags(),
       prompt: Flag.string("prompt").pipe(Flag.withDescription("Prompt for the diagnostic Agent")),
+      sessionId: Flag.optional(
+        Flag.string("session-id").pipe(
+          Flag.withDescription("Resume the selected portable Agent session"),
+        ),
+      ),
     },
-    (input) => handlers.agentStart.run({ args: settingsArgs(input), prompt: input.prompt }),
+    (input) =>
+      handlers.agentStart.run({
+        args: settingsArgs(input),
+        prompt: input.prompt,
+        sessionId: Option.getOrUndefined(input.sessionId),
+      }),
   ).pipe(Command.withDescription("Start one portable diagnostic Agent turn"));
 
   /** Reads an Agent-safe coarse or final result for one accepted turn. */
@@ -255,8 +265,18 @@ export const createCaaraCommand = ({ handlers }: { readonly handlers: CaaraCliHa
     {
       ...settingsFlags(),
       turnId: Argument.string("turn-id").pipe(Argument.withDescription("Portable turn ID")),
+      timeoutMillis: Flag.optional(
+        Flag.integer("timeout-millis").pipe(
+          Flag.withDescription("Maximum milliseconds to wait without cancelling the turn"),
+        ),
+      ),
     },
-    (input) => handlers.agentWait.run({ args: settingsArgs(input), turnId: input.turnId }),
+    (input) =>
+      handlers.agentWait.run({
+        args: settingsArgs(input),
+        turnId: input.turnId,
+        timeoutMillis: Option.getOrUndefined(input.timeoutMillis),
+      }),
   ).pipe(Command.withDescription("Read one portable Agent turn result"));
 
   /** Groups portable Agent commands under one stable namespace. */

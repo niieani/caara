@@ -8,6 +8,10 @@ import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/u
 import type { AgentRuntimeEvent } from "./mockResponsesProvider/agentDriver.ts";
 import { runAgentTurn } from "./mockResponsesProvider/agentTurn.ts";
 import { AgentTarget } from "./mockResponsesProvider/codexTurnContext.ts";
+import {
+  sessionBindingKeyFromTurn,
+  SessionDirectory,
+} from "./mockResponsesProvider/sessionDirectory.ts";
 import { ObservationCapability, PortableTurnId } from "./portableAgentIdentity.ts";
 import { portableAgentStoreLive } from "./portableAgentStore.ts";
 import {
@@ -17,7 +21,10 @@ import {
 } from "./portableAgentTurn.ts";
 
 /** JSON request accepted by the portable diagnostic turn endpoint. */
-export const PortableAgentStartRequest = Schema.Struct({ prompt: Schema.NonEmptyString });
+export const PortableAgentStartRequest = Schema.Struct({
+  prompt: Schema.NonEmptyString,
+  sessionId: Schema.optional(Schema.NonEmptyString),
+});
 
 /** Service-internal response returned immediately after a portable turn is accepted. */
 export const PortableAgentStartServiceResponse = Schema.Struct({
@@ -41,6 +48,15 @@ export const PortableAgentWaitResponse = Schema.Union([
   Schema.Struct({ status: Schema.Literal("completed"), finalAnswer: Schema.String }),
   Schema.Struct({ status: Schema.Literal("failed") }),
 ]);
+
+/** Maximum one-request wait duration accepted by the portable service. */
+export const portableAgentWaitMaximumMillis = 30_000;
+
+/** Explicit failure for a requested portable session without resumable durable state. */
+export class PortableSessionUnavailable extends Schema.TaggedErrorClass<PortableSessionUnavailable>()(
+  "PortableSessionUnavailable",
+  { message: Schema.String },
+) {}
 
 /** Escapes one runtime observation for literal placement in HTML text content. */
 const escapeHtml = (value: string): string =>
@@ -77,22 +93,41 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
 ) {
   const input = yield* readStartRequest(request);
   const turns = yield* PortableAgentTurns;
-  const sessionId = `portable-session-${randomUUID()}`;
+  const sessionId = input.sessionId ?? `portable-session-${randomUUID()}`;
   const turnId = PortableTurnId.make(`portable-turn-${randomUUID()}`);
   const capability = ObservationCapability.make(randomUUID());
-  const execution = yield* runAgentTurn({
+  const target = new AgentTarget({
+    requestedModel: "diagnostic/activity",
+    externalAgentKind: "diagnostic",
+    externalModelSpecifier: "activity",
+    rawDriverOptions: { diagnostic_activity_sentinel: input.prompt },
+  });
+  const turnRequest = {
     identity: { sessionId, parentSessionId: sessionId, turnId },
     origin: { transport: "cli", metadata: {} },
     advisories: { effort: undefined, sandboxPosture: "enforced" },
     requestedCwd: process.cwd(),
-    target: new AgentTarget({
-      requestedModel: "diagnostic/activity",
-      externalAgentKind: "diagnostic",
-      externalModelSpecifier: "activity",
-      rawDriverOptions: { diagnostic_activity_sentinel: input.prompt },
-    }),
+    target,
     prompt: { input: input.prompt },
+  } as const;
+  yield* Option.match(Option.fromUndefinedOr(input.sessionId), {
+    onNone: () => Effect.void,
+    onSome: () =>
+      SessionDirectory.pipe(
+        Effect.flatMap((directory) =>
+          directory.get(sessionBindingKeyFromTurn({ context: turnRequest, target })),
+        ),
+        Effect.filterOrFail(
+          Option.isSome,
+          () =>
+            new PortableSessionUnavailable({
+              message: `Portable session ${sessionId} is unavailable or already has an in-flight turn.`,
+            }),
+        ),
+        Effect.asVoid,
+      ),
   });
+  const execution = yield* runAgentTurn(turnRequest);
   const delayRuntimeEvent = (event: AgentRuntimeEvent) =>
     Match.value(event._tag).pipe(
       Match.when("ContentDelta", () =>
@@ -119,11 +154,18 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
 /** Returns one coarse or completed terminal projection without observation details. */
 export const handlePortableAgentWait = Effect.fnUntraced(function* ({
   turnId,
+  timeoutMillis,
 }: {
   readonly turnId: string | undefined;
+  readonly timeoutMillis: number;
 }) {
   const turns = yield* PortableAgentTurns;
-  const projection = yield* turns.wait(PortableTurnId.make(turnId ?? "missing"));
+  const portableTurnId = PortableTurnId.make(turnId ?? "missing");
+  const initial = yield* turns.wait(portableTurnId);
+  const shouldWait = Option.exists(initial, (state) => state._tag === "Working");
+  const delays = [Effect.sleep(`${timeoutMillis} millis`)].filter(() => shouldWait);
+  yield* Effect.all(delays, { discard: true });
+  const projection = yield* turns.wait(portableTurnId);
   return Option.match(projection, {
     onNone: () => HttpServerResponse.jsonUnsafe({ error: "not found" }, { status: 404 }),
     onSome: (state) =>
@@ -172,19 +214,48 @@ const durablePortableAgentTurnsLayer = portableAgentTurnsDurableLive.pipe(
   Layer.provide(BunServices.layer),
 );
 
+/** Parses the optional bounded wait query from one service request URL. */
+const portableWaitTimeoutMillisFromUrl = (url: string): number => {
+  const rawTimeout = new URL(url, "http://localhost").searchParams.get("timeoutMillis");
+  return Option.fromNullishOr(rawTimeout).pipe(
+    Option.map(Number),
+    Option.getOrElse(() => 0),
+  );
+};
+
 /** Portable start, wait, and capability-viewer HTTP routes. */
 export const portableAgentRoutesLayer = Layer.mergeAll(
   HttpRouter.add("POST", "/agent/turns", (request) =>
     handlePortableAgentStart(request).pipe(
       Effect.provide(durablePortableAgentTurnsLayer),
+      Effect.catchTags({
+        TurnConcurrencyConflict: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+        PortableSessionUnavailable: (error) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+      }),
       Effect.orElseSucceed(() =>
         HttpServerResponse.jsonUnsafe({ error: "invalid request" }, { status: 400 }),
       ),
     ),
   ),
-  HttpRouter.add("GET", "/agent/turns/:turnId", () =>
+  HttpRouter.add("GET", "/agent/turns/:turnId", (request) =>
     HttpRouter.params.pipe(
-      Effect.flatMap(({ turnId }) => handlePortableAgentWait({ turnId })),
+      Effect.flatMap(({ turnId }) => {
+        const timeoutMillis = portableWaitTimeoutMillisFromUrl(request.url);
+        const validTimeout =
+          Number.isSafeInteger(timeoutMillis) &&
+          timeoutMillis >= 0 &&
+          timeoutMillis <= portableAgentWaitMaximumMillis;
+        return Match.value(validTimeout).pipe(
+          Match.when(true, () => handlePortableAgentWait({ turnId, timeoutMillis })),
+          Match.orElse(() =>
+            Effect.succeed(
+              HttpServerResponse.jsonUnsafe({ error: "invalid timeoutMillis" }, { status: 400 }),
+            ),
+          ),
+        );
+      }),
       Effect.provide(durablePortableAgentTurnsLayer),
     ),
   ),

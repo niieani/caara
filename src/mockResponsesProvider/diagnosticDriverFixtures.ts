@@ -6,6 +6,7 @@ export const diagnosticDriverFixture = {
   activityReadingText: "Reading src/server.ts",
   activityEditingText: "Editing src/runtimeResponseEncoder.ts",
   activityAnswerText: "Diagnostic activity completed diagnostic/activity",
+  resumedActivityAnswerText: "Diagnostic activity resumed the prior opaque session",
   startFailureMessage: "diagnostic driver failed before runtime events",
   runtimeFailureBeforeOutputMessage: "diagnostic driver runtime failed before output",
   runtimeFailureAfterPartialMessage: "diagnostic driver runtime failed after partial output",

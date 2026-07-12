@@ -356,6 +356,7 @@ const diagnosticActivityTurnResult = Effect.fnUntraced(function* (turn: AgentDri
   yield* validateDiagnosticOptions(turn.target.rawDriverOptions);
   const runtimeEvents = yield* createDiagnosticActivityRuntimeEventStream({
     rawDriverOptions: turn.target.rawDriverOptions,
+    turn,
   });
   const externalSession = yield* diagnosticExternalSession(turn);
   return {
