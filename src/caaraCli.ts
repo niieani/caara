@@ -18,6 +18,7 @@ import {
   runCaaraAgentStartCli,
   runCaaraAgentWaitCli,
 } from "./caaraAgentCli.ts";
+import { runCaaraAgentMcpStdio } from "./caaraAgentMcp.ts";
 import { mainLayerFromArgs } from "./caaraApp.ts";
 import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
@@ -206,6 +207,7 @@ export interface CaaraCliHandlers {
   readonly agentStart: { readonly run: typeof runCaaraAgentStartCli };
   readonly agentWait: { readonly run: typeof runCaaraAgentWaitCli };
   readonly agentCancel: { readonly run: typeof runCaaraAgentCancelCli };
+  readonly agentMcp: { readonly run: typeof runCaaraAgentMcpStdio };
 }
 
 /** Live command handlers backed by Caara's application and lifecycle operations. */
@@ -226,6 +228,7 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
   agentStart: { run: runCaaraAgentStartCli },
   agentWait: { run: runCaaraAgentWaitCli },
   agentCancel: { run: runCaaraAgentCancelCli },
+  agentMcp: { run: runCaaraAgentMcpStdio },
 };
 
 /** Builds the public command tree around injectable typed-to-domain handler seams. */
@@ -466,6 +469,11 @@ export const createCaaraCommand = ({
     Command.withSubcommands([agentStartCommand, agentWaitCommand, agentCancelCommand]),
   );
 
+  /** Serves blind portable Agent delegation through MCP standard input/output. */
+  const agentMcpCommand = Command.make("agent-mcp", {}, () => handlers.agentMcp.run()).pipe(
+    Command.withDescription("Run the blind portable Agent MCP server over stdio"),
+  );
+
   return serverCommand.pipe(
     Command.withSubcommands([
       statusCommand,
@@ -479,6 +487,7 @@ export const createCaaraCommand = ({
       installAntigravityGuidanceCommand,
       uninstallAntigravityGuidanceCommand,
       agentCommand,
+      agentMcpCommand,
     ]),
   );
 };

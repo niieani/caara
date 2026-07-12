@@ -93,6 +93,9 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
         return Effect.void;
       }),
   },
+  agentMcp: {
+    run: () => Effect.sync(() => events.push("agent-mcp")),
+  },
 });
 
 describe("Caara root CLI", () => {
@@ -114,6 +117,7 @@ describe("Caara root CLI", () => {
         "install-antigravity-guidance",
         "uninstall-antigravity-guidance",
         "agent",
+        "agent-mcp",
       ]) {
         assert.match(output, new RegExp(`\\n  ${subcommand}`, "u"));
       }
@@ -189,6 +193,7 @@ describe("Caara root CLI", () => {
         "safe prompt",
       ]);
       yield* run(["agent", "wait", "--port", "8799", "turn-1"]);
+      yield* run(["agent-mcp"]);
 
       assert.deepStrictEqual(events, [
         "server:--config /tmp/caara.yaml --no-allow-dangerous-skip-permissions",
@@ -204,6 +209,7 @@ describe("Caara root CLI", () => {
         "uninstall-antigravity-guidance:",
         'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:true:safe prompt',
         "agent-wait:--port 8799:turn-1:false",
+        "agent-mcp",
       ]);
     }).pipe(Effect.provide(cliTestLayer)),
   );
