@@ -278,8 +278,8 @@ export const createCodexCliAgentDriver = ({
       ),
       externalSession: new DurableExternalSession({
         driverResumeCursor: makeDriverResumeCursor(running.sessionId),
-        delegationLineage: propagatedOrigin.lineage,
-        delegationDepth: propagatedOrigin.depth,
+        delegationLineage: origin.lineage,
+        delegationDepth: origin.depth,
       }),
       cancel: running.cancel,
       lostSessionRecovery: started.lostSessionRecovery,

@@ -82,8 +82,8 @@ describe("Codex CLI Agent driver", () => {
       assert.match(invocations[0]?.prompt ?? "", /caaraDepth=2/u);
       assert.ok(result.externalSession instanceof DurableExternalSession);
       assert.strictEqual(result.externalSession.driverResumeCursor, "codex-session-new");
-      assert.deepStrictEqual(result.externalSession.delegationLineage, ["claude-root", "codex"]);
-      assert.strictEqual(result.externalSession.delegationDepth, 2);
+      assert.deepStrictEqual(result.externalSession.delegationLineage, ["claude-root"]);
+      assert.strictEqual(result.externalSession.delegationDepth, 1);
       assert.deepStrictEqual(
         [...events].map(({ _tag }) => _tag),
         [
@@ -144,27 +144,24 @@ describe("Codex CLI Agent driver", () => {
     }),
   );
 
-  it.effect("preserves durable lineage and rejects a resumed lineage reset before startup", () =>
+  it.effect("resumes the durable session while preserving its pre-driver lineage", () =>
     Effect.gen(function* () {
       const invocations: CodexCliInvocation[] = [];
       const driver = createCodexCliAgentDriver({
         client: recordingClient({ invocations }),
         maximumDepth: 3,
       });
-      const outcome = yield* Effect.result(
-        driver.startOrResumeTurn(
-          turn({
-            metadata: {},
-            externalSession: new DurableExternalSession({
-              driverResumeCursor: makeDriverResumeCursor("codex-session-existing"),
-              delegationLineage: ["claude-root", "codex"],
-              delegationDepth: 2,
-            }),
-          }),
-        ),
+      const first = yield* driver.startOrResumeTurn(
+        turn({ metadata: { caaraLineage: "claude-root", caaraDepth: "1" } }),
       );
-      assert.strictEqual(outcome._tag, "Failure");
-      assert.strictEqual(invocations.length, 0);
+      assert.ok(first.externalSession instanceof DurableExternalSession);
+      yield* driver.startOrResumeTurn(
+        turn({ metadata: {}, externalSession: first.externalSession }),
+      );
+      assert.strictEqual(invocations.length, 2);
+      assert.strictEqual(invocations[1]?.resumeSessionId, "codex-session-new");
+      assert.deepStrictEqual(invocations[1]?.lineage, ["claude-root", "codex"]);
+      assert.strictEqual(invocations[1]?.depth, 2);
     }),
   );
 
