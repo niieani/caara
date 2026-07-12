@@ -61,6 +61,14 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
         return undefined;
       }),
   },
+  installAntigravityGuidance: recordingHandler({
+    name: "install-antigravity-guidance",
+    events,
+  }),
+  uninstallAntigravityGuidance: recordingHandler({
+    name: "uninstall-antigravity-guidance",
+    events,
+  }),
   agentStart: {
     run: Effect.fnUntraced(function* ({ args, prompt, target, cwd, driverOptions, json }) {
       const encodedOptions = yield* Schema.encodeEffect(
@@ -103,6 +111,8 @@ describe("Caara root CLI", () => {
         "uninstall-codex-roles",
         "install-claude-guidance",
         "uninstall-claude-guidance",
+        "install-antigravity-guidance",
+        "uninstall-antigravity-guidance",
         "agent",
       ]) {
         assert.match(output, new RegExp(`\\n  ${subcommand}`, "u"));
@@ -161,6 +171,8 @@ describe("Caara root CLI", () => {
       yield* run(["uninstall-codex-roles", "/tmp/agents"]);
       yield* run(["install-claude-guidance"]);
       yield* run(["uninstall-claude-guidance"]);
+      yield* run(["install-antigravity-guidance"]);
+      yield* run(["uninstall-antigravity-guidance"]);
       yield* run([
         "agent",
         "start",
@@ -188,6 +200,8 @@ describe("Caara root CLI", () => {
         "uninstall-codex-roles:/tmp/agents",
         "install-claude-guidance:",
         "uninstall-claude-guidance:",
+        "install-antigravity-guidance:",
+        "uninstall-antigravity-guidance:",
         'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:true:safe prompt',
         "agent-wait:--port 8799:turn-1:false",
       ]);

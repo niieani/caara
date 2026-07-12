@@ -4,6 +4,10 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import packageMetadata from "../package.json" with { type: "json" };
 import {
+  runCaaraInstallAntigravityGuidanceCli,
+  runCaaraUninstallAntigravityGuidanceCli,
+} from "./antigravityPortableGuidance.ts";
+import {
   CaaraAgentCliError,
   type CaaraAgentPromptSource,
   type CaaraAgentPromptReader,
@@ -193,6 +197,12 @@ export interface CaaraCliHandlers {
   readonly uninstallCodexRoles: { readonly run: typeof runCaaraUninstallCodexRolesCli };
   readonly installClaudeGuidance: { readonly run: typeof runCaaraInstallClaudeGuidanceCli };
   readonly uninstallClaudeGuidance: { readonly run: typeof runCaaraUninstallClaudeGuidanceCli };
+  readonly installAntigravityGuidance: {
+    readonly run: typeof runCaaraInstallAntigravityGuidanceCli;
+  };
+  readonly uninstallAntigravityGuidance: {
+    readonly run: typeof runCaaraUninstallAntigravityGuidanceCli;
+  };
   readonly agentStart: { readonly run: typeof runCaaraAgentStartCli };
   readonly agentWait: { readonly run: typeof runCaaraAgentWaitCli };
   readonly agentCancel: { readonly run: typeof runCaaraAgentCancelCli };
@@ -211,6 +221,8 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
   uninstallCodexRoles: { run: runCaaraUninstallCodexRolesCli },
   installClaudeGuidance: { run: runCaaraInstallClaudeGuidanceCli },
   uninstallClaudeGuidance: { run: runCaaraUninstallClaudeGuidanceCli },
+  installAntigravityGuidance: { run: runCaaraInstallAntigravityGuidanceCli },
+  uninstallAntigravityGuidance: { run: runCaaraUninstallAntigravityGuidanceCli },
   agentStart: { run: runCaaraAgentStartCli },
   agentWait: { run: runCaaraAgentWaitCli },
   agentCancel: { run: runCaaraAgentCancelCli },
@@ -346,6 +358,18 @@ export const createCaaraCommand = ({
     handlers.uninstallClaudeGuidance.run({ args: [] }),
   ).pipe(Command.withDescription("Remove Caara portable guidance for Claude"));
 
+  /** Installs the managed block in Antigravity's global rules. */
+  const installAntigravityGuidanceCommand = Command.make("install-antigravity-guidance", {}, () =>
+    handlers.installAntigravityGuidance.run({ args: [] }),
+  ).pipe(Command.withDescription("Install Caara portable guidance for Antigravity"));
+
+  /** Removes only Caara's managed block from Antigravity's global rules. */
+  const uninstallAntigravityGuidanceCommand = Command.make(
+    "uninstall-antigravity-guidance",
+    {},
+    () => handlers.uninstallAntigravityGuidance.run({ args: [] }),
+  ).pipe(Command.withDescription("Remove Caara portable guidance for Antigravity"));
+
   /** Safely submits one prompt value without transcript or stdin ambiguity. */
   const agentStartCommand = Command.make(
     "start",
@@ -452,6 +476,8 @@ export const createCaaraCommand = ({
       uninstallCodexRolesCommand,
       installClaudeGuidanceCommand,
       uninstallClaudeGuidanceCommand,
+      installAntigravityGuidanceCommand,
+      uninstallAntigravityGuidanceCommand,
       agentCommand,
     ]),
   );
