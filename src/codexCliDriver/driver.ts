@@ -160,6 +160,42 @@ const resumeSessionId = (externalSession: unknown): string | undefined =>
     ),
   );
 
+/** Reads durable delegation origin from a resumable Codex session when available. */
+const durableDelegationOrigin = (
+  externalSession: unknown,
+): { readonly lineage: readonly string[]; readonly depth: number } | undefined =>
+  [externalSession]
+    .filter(
+      (session): session is DurableExternalSession =>
+        session instanceof DurableExternalSession &&
+        session.delegationLineage !== undefined &&
+        session.delegationDepth !== undefined,
+    )
+    .map((session) => ({
+      lineage: session.delegationLineage ?? [],
+      depth: session.delegationDepth ?? 0,
+    }))
+    .at(0);
+
+/** Adds mandatory nested-delegation metadata instructions to the Codex task. */
+const promptWithDelegationOrigin = ({
+  prompt,
+  lineage,
+  depth,
+}: {
+  readonly prompt: string;
+  readonly lineage: readonly string[];
+  readonly depth: number;
+}): string =>
+  [
+    prompt,
+    "",
+    "Caara delegation invariant: for every nested Caara start, pass originMetadata exactly as:",
+    `caaraLineage=${lineage.join(",")}`,
+    `caaraDepth=${String(depth)}`,
+    "Never remove or reset this metadata.",
+  ].join("\n");
+
 /** Starts Codex, recovering explicitly when a durable resume cursor is unavailable. */
 const startWithLostSessionRecovery = Effect.fnUntraced(function* ({
   client,
@@ -216,9 +252,15 @@ export const createCodexCliAgentDriver = ({
       ),
     ),
   startOrResumeTurn: Effect.fnUntraced(function* (turn) {
-    const origin = yield* delegationOrigin({ metadata: turn.context.origin.metadata });
+    const incomingOrigin = yield* delegationOrigin({ metadata: turn.context.origin.metadata });
+    const origin = durableDelegationOrigin(turn.externalSession) ?? incomingOrigin;
     yield* enforceRecursionPolicy({ ...origin, maximumDepth });
-    const prompt = yield* extractAntigravityCliPrompt(turn.prompt);
+    const rawPrompt = yield* extractAntigravityCliPrompt(turn.prompt);
+    const propagatedOrigin = {
+      lineage: [...origin.lineage, "codex"],
+      depth: origin.depth + 1,
+    } as const;
+    const prompt = promptWithDelegationOrigin({ prompt: rawPrompt, ...propagatedOrigin });
     const started = yield* startWithLostSessionRecovery({
       client,
       invocation: {
@@ -226,8 +268,7 @@ export const createCodexCliAgentDriver = ({
         model: turn.target.externalModelSpecifier,
         prompt,
         resumeSessionId: resumeSessionId(turn.externalSession),
-        lineage: [...origin.lineage, "codex"],
-        depth: origin.depth + 1,
+        ...propagatedOrigin,
       },
     });
     const running = started.running;
@@ -237,6 +278,8 @@ export const createCodexCliAgentDriver = ({
       ),
       externalSession: new DurableExternalSession({
         driverResumeCursor: makeDriverResumeCursor(running.sessionId),
+        delegationLineage: propagatedOrigin.lineage,
+        delegationDepth: propagatedOrigin.depth,
       }),
       cancel: running.cancel,
       lostSessionRecovery: started.lostSessionRecovery,

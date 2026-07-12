@@ -76,6 +76,14 @@ describe("Codex CLI Agent driver", () => {
       const events = yield* Stream.runCollect(result.runtimeEvents);
 
       assert.strictEqual(invocations.length, 1);
+      assert.deepStrictEqual(invocations[0]?.lineage, ["claude-root", "codex"]);
+      assert.strictEqual(invocations[0]?.depth, 2);
+      assert.match(invocations[0]?.prompt ?? "", /caaraLineage=claude-root,codex/u);
+      assert.match(invocations[0]?.prompt ?? "", /caaraDepth=2/u);
+      assert.ok(result.externalSession instanceof DurableExternalSession);
+      assert.strictEqual(result.externalSession.driverResumeCursor, "codex-session-new");
+      assert.deepStrictEqual(result.externalSession.delegationLineage, ["claude-root", "codex"]);
+      assert.strictEqual(result.externalSession.delegationDepth, 2);
       assert.deepStrictEqual(
         [...events].map(({ _tag }) => _tag),
         [
@@ -133,6 +141,30 @@ describe("Codex CLI Agent driver", () => {
         assert.strictEqual(outcome._tag, "Failure");
         assert.strictEqual(invocations.length, 0);
       }
+    }),
+  );
+
+  it.effect("preserves durable lineage and rejects a resumed lineage reset before startup", () =>
+    Effect.gen(function* () {
+      const invocations: CodexCliInvocation[] = [];
+      const driver = createCodexCliAgentDriver({
+        client: recordingClient({ invocations }),
+        maximumDepth: 3,
+      });
+      const outcome = yield* Effect.result(
+        driver.startOrResumeTurn(
+          turn({
+            metadata: {},
+            externalSession: new DurableExternalSession({
+              driverResumeCursor: makeDriverResumeCursor("codex-session-existing"),
+              delegationLineage: ["claude-root", "codex"],
+              delegationDepth: 2,
+            }),
+          }),
+        ),
+      );
+      assert.strictEqual(outcome._tag, "Failure");
+      assert.strictEqual(invocations.length, 0);
     }),
   );
 

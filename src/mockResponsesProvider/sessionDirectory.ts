@@ -123,6 +123,10 @@ export class DurableExternalSession extends Schema.TaggedClass<DurableExternalSe
   "Durable",
   {
     driverResumeCursor: DriverResumeCursor,
+    delegationLineage: Schema.optional(Schema.Array(Schema.NonEmptyString)),
+    delegationDepth: Schema.optional(
+      Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+    ),
   },
 ) {}
 
