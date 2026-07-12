@@ -1,7 +1,8 @@
-import { Effect, Match, Option, Schema, Stream } from "effect";
+import { type Cause, Deferred, Effect, Match, Option, Queue, Schema, Stream } from "effect";
 
 import {
   type AgentCancellationOutcome,
+  type AgentDriverError,
   createInvalidPromptAgentDriverError,
   createServerErrorAgentDriverError,
 } from "../mockResponsesProvider/agentDriver.ts";
@@ -15,12 +16,16 @@ export const codexCliExecutableRequirements = [
 /** Minimal JSONL object shape accepted from `codex exec --json`. */
 const codexJsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 
-/** Terminal result collected from one non-interactive Codex process. */
-interface CodexProcessResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
+/** Process capabilities required by the live Codex protocol adapter. */
+export interface CodexCliProcess {
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderrText: () => Promise<string>;
+  readonly exited: Promise<number>;
+  readonly kill: (signal: NodeJS.Signals) => void;
 }
+
+/** Injectable process constructor used to test the Codex IO boundary causally. */
+export type CodexCliSpawn = (invocation: CodexCliInvocation) => CodexCliProcess;
 
 /** Builds `codex exec` arguments for a fresh or resumed durable session. */
 export const codexCliArgv = (invocation: CodexCliInvocation): readonly string[] => {
@@ -31,48 +36,30 @@ export const codexCliArgv = (invocation: CodexCliInvocation): readonly string[] 
   );
 };
 
-/** Executes one Codex process and retains both protocol output and diagnostics. */
-const runCodexProcess = (invocation: CodexCliInvocation) =>
-  Effect.try({
-    try: () =>
-      Bun.spawn(["codex", ...codexCliArgv(invocation)], {
-        cwd: invocation.cwd,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
-    catch: (cause) =>
-      createInvalidPromptAgentDriverError({
-        message: `Codex CLI failed to start: ${String(cause)}`,
-      }),
-  }).pipe(
-    Effect.flatMap((process) =>
-      Effect.tryPromise({
-        try: () =>
-          Promise.all([process.exited, process.stdout.text(), process.stderr.text()]).then(
-            ([exitCode, stdout, stderr]) =>
-              ({ exitCode, stdout, stderr }) satisfies CodexProcessResult,
-          ),
-        catch: (cause) =>
-          createServerErrorAgentDriverError({
-            message: `Codex CLI process failed: ${String(cause)}`,
-          }),
-      }),
-    ),
-  );
-
-/** Parses all complete Codex JSONL records with explicit malformed-output failure. */
-const decodeCodexRecords = Effect.fnUntraced(function* (stdout: string) {
-  return yield* Effect.forEach(
-    stdout.split("\n").filter((line) => line.length > 0),
-    (line) =>
-      Schema.decodeUnknownEffect(Schema.fromJsonString(codexJsonRecord))(line).pipe(
-        Effect.mapError(() =>
-          createServerErrorAgentDriverError({ message: "Codex CLI emitted malformed JSONL." }),
-        ),
-      ),
-  );
+/** Builds recursion metadata inherited by Codex and nested Caara invocations. */
+export const codexCliEnvironment = (
+  invocation: CodexCliInvocation,
+): Readonly<Record<string, string>> => ({
+  CAARA_DELEGATION_LINEAGE: invocation.lineage.join(","),
+  CAARA_DELEGATION_DEPTH: String(invocation.depth),
 });
+
+/** Starts the real Codex executable with piped protocol and diagnostic channels. */
+const spawnLiveCodex: CodexCliSpawn = (invocation) => {
+  const process = Bun.spawn(["codex", ...codexCliArgv(invocation)], {
+    cwd: invocation.cwd,
+    env: { ...globalThis.process.env, ...codexCliEnvironment(invocation) },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    stdout: process.stdout,
+    stderrText: () => process.stderr.text(),
+    exited: process.exited,
+    kill: (signal) => process.kill(signal),
+  };
+};
 
 /** Reads one string field from a validated Codex JSON record. */
 const stringField = ({
@@ -122,46 +109,130 @@ const activityFromRecord = (
     Match.orElse(() => []),
   );
 
-/** Extracts the durable Codex thread identifier from protocol records. */
-const threadIdFromRecords = (records: readonly Readonly<Record<string, unknown>>[]) =>
-  records
-    .filter((record) => stringField({ record, name: "type" }) === "thread.started")
-    .map((record) => stringField({ record, name: "thread_id" }))
-    .find((value): value is string => value !== undefined);
+/** Decodes one newline-complete Codex protocol record. */
+const decodeCodexRecord = (line: string) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(codexJsonRecord))(line).pipe(
+    Effect.mapError(() =>
+      createServerErrorAgentDriverError({ message: "Codex CLI emitted malformed JSONL." }),
+    ),
+  );
 
-/** Completed-process cancellation policy: no hidden mutation remains in flight. */
-const completedCancellation = Effect.succeed<AgentCancellationOutcome>({
-  _tag: "Interrupted",
-  sessionReusable: true,
+/** Converts a process stdout channel into complete decoded JSONL records. */
+const codexRecordStream = (process: CodexCliProcess) =>
+  Stream.fromReadableStream({
+    evaluate: () => process.stdout,
+    onError: (cause) =>
+      createServerErrorAgentDriverError({
+        message: `Codex CLI protocol stream failed: ${String(cause)}`,
+      }),
+  }).pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.length > 0),
+    Stream.mapEffect(decodeCodexRecord),
+  );
+
+/** Reports process completion through a stable driver diagnostic. */
+const validateProcessExit = Effect.fnUntraced(function* (process: CodexCliProcess) {
+  const exitCode = yield* Effect.tryPromise({
+    try: () => process.exited,
+    catch: (cause) =>
+      createServerErrorAgentDriverError({
+        message: `Codex CLI process failed: ${String(cause)}`,
+      }),
+  });
+  return yield* Match.value(exitCode).pipe(
+    Match.when(0, () => Effect.void),
+    Match.orElse(
+      Effect.fnUntraced(function* (failedExitCode) {
+        const stderr = yield* Effect.tryPromise({
+          try: process.stderrText,
+          catch: (cause) =>
+            createServerErrorAgentDriverError({
+              message: `Codex CLI diagnostic stream failed: ${String(cause)}`,
+            }),
+        });
+        return yield* createServerErrorAgentDriverError({
+          message: `Codex CLI exited with code ${failedExitCode}: ${stderr.trim()}`,
+        });
+      }),
+    ),
+  );
 });
 
-/** Live Codex CLI client using the stable JSONL exec protocol. */
-export const liveCodexCliClient: CodexCliClient = {
+/** Fails a completed protocol stream that never established a durable session. */
+const ensureSessionReported = Effect.fnUntraced(function* (
+  session: Deferred.Deferred<string, AgentDriverError>,
+) {
+  const started = yield* Deferred.isDone(session);
+  return yield* Match.value(started).pipe(
+    Match.when(true, () => Effect.void),
+    Match.orElse(() =>
+      createServerErrorAgentDriverError({
+        message: "Codex CLI did not report a durable thread identifier.",
+      }),
+    ),
+  );
+});
+
+/** Creates a streaming Codex client around an injectable process boundary. */
+export const createCodexCliClient = ({
+  spawn,
+}: {
+  readonly spawn: CodexCliSpawn;
+}): CodexCliClient => ({
   start: Effect.fnUntraced(function* (invocation) {
-    const result = yield* runCodexProcess(invocation);
-    yield* Match.value(result.exitCode).pipe(
-      Match.when(0, () => Effect.succeed(result)),
-      Match.orElse((exitCode) =>
-        createServerErrorAgentDriverError({
-          message: `Codex CLI exited with code ${exitCode}: ${result.stderr.trim()}`,
+    const process = yield* Effect.try({
+      try: () => spawn(invocation),
+      catch: (cause) =>
+        createInvalidPromptAgentDriverError({
+          message: `Codex CLI failed to start: ${String(cause)}`,
+        }),
+    });
+    const session = yield* Deferred.make<string, AgentDriverError>();
+    const activities = yield* Queue.unbounded<CodexCliActivity, AgentDriverError | Cause.Done>();
+    const observe = codexRecordStream(process).pipe(
+      Stream.runForEach(
+        Effect.fnUntraced(function* (record) {
+          if (stringField({ record, name: "type" }) === "thread.started") {
+            const threadId = stringField({ record, name: "thread_id" });
+            if (threadId === undefined) {
+              return yield* createServerErrorAgentDriverError({
+                message: "Codex CLI reported thread.started without a durable thread identifier.",
+              });
+            }
+            yield* Deferred.succeed(session, threadId);
+          }
+          yield* Queue.offerAll(activities, activityFromRecord(record));
         }),
       ),
+      Effect.andThen(validateProcessExit(process)),
+      Effect.andThen(ensureSessionReported(session)),
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.all([Deferred.fail(session, error), Queue.fail(activities, error)]).pipe(
+            Effect.asVoid,
+          ),
+        onSuccess: () => Queue.end(activities).pipe(Effect.asVoid),
+      }),
     );
-    const records = yield* decodeCodexRecords(result.stdout);
-    const sessionId = yield* Option.match(
-      Option.fromUndefinedOr(invocation.resumeSessionId ?? threadIdFromRecords(records)),
-      {
-        onNone: () =>
-          createServerErrorAgentDriverError({
-            message: "Codex CLI did not report a durable thread identifier.",
-          }),
-        onSome: Effect.succeed,
-      },
-    );
+    yield* Effect.forkDetach(observe);
+    const sessionId = yield* Deferred.await(session);
+    const cancel = Effect.fnUntraced(function* () {
+      yield* Effect.sync(() => process.kill("SIGTERM"));
+      yield* Effect.promise(() => process.exited);
+      return {
+        _tag: "Terminated",
+        sessionReusable: false,
+      } satisfies AgentCancellationOutcome;
+    })();
     return {
       sessionId,
-      runtimeEvents: Stream.fromIterable(records.flatMap(activityFromRecord)),
-      cancel: completedCancellation,
+      runtimeEvents: Stream.fromQueue(activities),
+      cancel,
     };
   }),
-};
+});
+
+/** Live Codex CLI client using the stable streaming JSONL exec protocol. */
+export const liveCodexCliClient: CodexCliClient = createCodexCliClient({ spawn: spawnLiveCodex });
