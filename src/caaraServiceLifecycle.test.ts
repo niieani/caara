@@ -7,6 +7,7 @@ import { Effect } from "effect";
 import { TestClock } from "effect/testing";
 
 import type { CaaraDoctorResult } from "./caaraDoctor.ts";
+import type { CaaraPortableDoctorProbe } from "./caaraPortableDoctor.ts";
 import { installedBinaryCopyRequired } from "./caaraServiceInstallNoStart.ts";
 import {
   runCaaraInstallService,
@@ -116,6 +117,20 @@ const recordingHealthProbe = ({ events }: { readonly events: string[] }): CaaraH
       events.push(`health:${url}`);
       yield* Effect.void;
       return { status: "ok", service: "caara" } as const;
+    }),
+});
+
+/** Builds a portable probe seam that records the post-start public capability check. */
+const recordingPortableProbe = ({
+  events,
+}: {
+  readonly events: string[];
+}): CaaraPortableDoctorProbe => ({
+  probe: ({ cwd, origin }) =>
+    Effect.gen(function* () {
+      events.push(`portable:${origin}:${cwd}`);
+      yield* Effect.void;
+      return { observationUrl: `${origin}/observe/private` };
     }),
 });
 
@@ -338,6 +353,17 @@ describe("Caara service lifecycle", () => {
       const serviceFile = path.join(env.HOME, "Library", "LaunchAgents", "dev.caara.plist");
       const configPath = path.join(env.XDG_CONFIG_HOME, "caara", "config.yaml");
       const receiptPath = path.join(env.XDG_STATE_HOME, "caara", "install-receipt.json");
+      const portableStatePath = path.join(
+        env.XDG_STATE_HOME,
+        "caara",
+        "portable",
+        "observations.json",
+      );
+      const siblingConfigPath = path.join(env.XDG_CONFIG_HOME, "user-owned", "config.txt");
+      const siblingStatePath = path.join(env.XDG_STATE_HOME, "user-owned", "state.txt");
+      yield* writeFile({ filePath: portableStatePath, content: "portable-user-state" });
+      yield* writeFile({ filePath: siblingConfigPath, content: "user-config" });
+      yield* writeFile({ filePath: siblingStatePath, content: "user-state" });
 
       const result = yield* runCaaraUninstallService({
         args: [],
@@ -350,6 +376,7 @@ describe("Caara service lifecycle", () => {
       assert.strictEqual(yield* fileExists({ filePath: serviceFile }), false);
       assert.strictEqual(yield* fileExists({ filePath: receiptPath }), false);
       assert.strictEqual(yield* fileExists({ filePath: configPath }), true);
+      assert.strictEqual(yield* fileExists({ filePath: portableStatePath }), true);
       assert.match(managerEvents.at(0) ?? "", /unload:dev\.caara/u);
 
       yield* writeFile({ filePath: sourceExecutable, content: "compiled-caara" });
@@ -371,6 +398,8 @@ describe("Caara service lifecycle", () => {
         yield* fileExists({ filePath: path.join(env.XDG_STATE_HOME, "caara") }),
         false,
       );
+      assert.strictEqual(yield* fileExists({ filePath: siblingConfigPath }), true);
+      assert.strictEqual(yield* fileExists({ filePath: siblingStatePath }), true);
     }),
   );
 
@@ -390,6 +419,7 @@ describe("Caara service lifecycle", () => {
         env,
         healthProbe: recordingHealthProbe({ events }),
         platform: "darwin",
+        portableProbe: recordingPortableProbe({ events }),
         runtime: compiledRuntime({ executablePath: sourceExecutable }),
         serviceManager: recordingServiceManager(events),
       });
@@ -399,9 +429,11 @@ describe("Caara service lifecycle", () => {
         "doctor:--fix --host 0.0.0.0 --port 8799",
         `start:dev.caara:${serviceFile}`,
         "health:http://127.0.0.1:8799/health",
+        `portable:http://127.0.0.1:8799:${process.cwd()}`,
       ]);
       assert.match(result.message, /service started/u);
       assert.match(result.message, /Caara healthy/u);
+      assert.match(result.message, /portable diagnostic turn completed/u);
     }),
   );
 

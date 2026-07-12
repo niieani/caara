@@ -14,12 +14,14 @@ import {
   pathEntriesFromValue,
   type CaaraExecutionPathEnvironment,
 } from "./caaraExecutionPath.ts";
+import { liveCaaraPortableDoctorProbe, runPortableDoctorCheck } from "./caaraPortableDoctor.ts";
 import {
   type CaaraConfigLoader,
   type CaaraServiceConfigValue,
   type CaaraSettingsResolution,
   resolveCaaraSettingsResolutionFromArgs,
 } from "./caaraSettings.ts";
+import { caaraHealthProbeUrl } from "./caaraStatus.ts";
 
 /** Registry value consumed by the doctor command. */
 export type CaaraDoctorRequirementsRegistry = AgentDriverExecutableRequirementsRegistry["Service"];
@@ -471,13 +473,25 @@ export const runCaaraDoctor = Effect.fnUntraced(function* ({
 /** Runs the live `caara doctor` CLI command and fails for nonzero doctor status. */
 export const runCaaraDoctorCli = Effect.fnUntraced(function* ({ args }: RunCaaraDoctorCliOptions) {
   const result = yield* runCaaraDoctor({ args });
-  yield* Console.log(result.message);
+  const options = parseDoctorCliOptions({ args });
+  const settings = yield* resolveCaaraSettingsResolutionFromArgs({ args: options.settingsArgs });
+  const portable = yield* runPortableDoctorCheck({
+    cwd: process.cwd(),
+    origin: caaraHealthProbeUrl({ settings: settings.settings }).replace(/\/health$/u, ""),
+    probe: liveCaaraPortableDoctorProbe,
+  });
+  const combinedExitCode = Match.value(result.exitCode === 0 && portable.exitCode === 0).pipe(
+    Match.when(true, () => 0 as const),
+    Match.orElse(() => 1 as const),
+  );
+  const message = [result.message, portable.message].join("\n");
+  yield* Console.log(message);
 
   return yield* Option.match(
-    Option.fromUndefinedOr([result].filter(({ exitCode }) => exitCode !== 0).at(0)),
+    Option.fromUndefinedOr([message].filter(() => combinedExitCode !== 0).at(0)),
     {
       onNone: () => Effect.void,
-      onSome: (failure) => Effect.fail(caaraDoctorError(failure.message)),
+      onSome: (failureMessage) => Effect.fail(caaraDoctorError(failureMessage)),
     },
   );
 });

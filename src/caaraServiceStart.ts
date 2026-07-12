@@ -1,10 +1,11 @@
-import { Effect, Match, Result, Schedule } from "effect";
+import { Effect, Match, Option, Result, Schedule } from "effect";
 
 import {
   runCaaraDoctor,
   type CaaraDoctorResult,
   type RunCaaraDoctorOptions,
 } from "./caaraDoctor.ts";
+import { runPortableDoctorCheck, type CaaraPortableDoctorProbe } from "./caaraPortableDoctor.ts";
 import type {
   CaaraServiceLifecycleEnvironment,
   CaaraServicePaths,
@@ -21,6 +22,7 @@ import {
   installServiceNoStartArtifacts,
   type CaaraServiceLifecycleResult,
   type InstallServiceOptions,
+  type NoStartInstallOutcome,
 } from "./caaraServiceInstallNoStart.ts";
 import type { CaaraServiceManager } from "./caaraServiceManager.ts";
 import type { CaaraConfigLoader, CaaraSettingsValue } from "./caaraSettings.ts";
@@ -40,6 +42,7 @@ export interface RunCaaraInstallServiceStartedOptions {
   readonly healthProbe: CaaraHealthProbe;
   readonly options: InstallServiceOptions;
   readonly platform: CaaraServicePlatform | undefined;
+  readonly portableProbe?: CaaraPortableDoctorProbe;
   readonly runtime: CaaraServiceRuntime;
   readonly serviceManager: CaaraServiceManager;
 }
@@ -134,10 +137,12 @@ const serviceStartedResult = ({
   doctorResult,
   health,
   installResult,
+  portableMessage,
 }: {
   readonly doctorResult: CaaraDoctorResult;
   readonly health: Extract<ServiceHealthVerification, { readonly _tag: "Healthy" }>;
   readonly installResult: CaaraServiceLifecycleResult;
+  readonly portableMessage?: string;
 }): CaaraServiceLifecycleResult => ({
   exitCode: 0,
   message: [
@@ -145,7 +150,75 @@ const serviceStartedResult = ({
     doctorResult.message,
     "service started",
     `Caara healthy at ${health.url}`,
+    ...[portableMessage].filter((message): message is string => message !== undefined),
   ].join("\n"),
+});
+
+/** Runs the optional portable capability probe after service health succeeds. */
+const portableStartedResult = Effect.fnUntraced(function* ({
+  doctorResult,
+  health,
+  installResult,
+  probe,
+}: {
+  readonly doctorResult: CaaraDoctorResult;
+  readonly health: Extract<ServiceHealthVerification, { readonly _tag: "Healthy" }>;
+  readonly installResult: CaaraServiceLifecycleResult;
+  readonly probe: CaaraPortableDoctorProbe;
+}) {
+  const portable = yield* runPortableDoctorCheck({
+    cwd: process.cwd(),
+    origin: health.url.replace(/\/health$/u, ""),
+    probe,
+  });
+  return {
+    exitCode: portable.exitCode,
+    message: [
+      serviceStartedResult({ doctorResult, health, installResult }).message,
+      portable.message,
+    ].join("\n"),
+  } satisfies CaaraServiceLifecycleResult;
+});
+
+/** Starts the installed service, verifies health, then verifies portable delegation. */
+const startAndVerifyInstalledService = Effect.fnUntraced(function* ({
+  doctorResult,
+  healthProbe,
+  installOutcome,
+  installResult,
+  portableProbe,
+  serviceManager,
+}: {
+  readonly doctorResult: CaaraDoctorResult;
+  readonly healthProbe: CaaraHealthProbe;
+  readonly installOutcome: NoStartInstallOutcome;
+  readonly installResult: CaaraServiceLifecycleResult;
+  readonly portableProbe: CaaraPortableDoctorProbe | undefined;
+  readonly serviceManager: CaaraServiceManager;
+}) {
+  const request = serviceManagerRequestFromPaths({ paths: installOutcome.paths });
+  yield* serviceManager.start(request);
+  const health = yield* verifyStartedServiceHealth({
+    healthProbe,
+    settings: installOutcome.resolution.settings,
+  });
+  return yield* Match.valueTags(health, {
+    Healthy: (healthy) =>
+      Option.match(Option.fromUndefinedOr(portableProbe), {
+        onNone: () =>
+          Effect.succeed(serviceStartedResult({ doctorResult, health: healthy, installResult })),
+        onSome: (probe) =>
+          portableStartedResult({ doctorResult, health: healthy, installResult, probe }),
+      }),
+    Unhealthy: (unhealthy) =>
+      Effect.succeed(
+        serviceHealthFailureResult({
+          health: unhealthy,
+          installResult,
+          statusHint: serviceManager.statusHint(request),
+        }),
+      ),
+  });
 });
 
 /** Builds the result when service start health verification fails. */
@@ -176,6 +249,7 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
   healthProbe,
   options,
   platform,
+  portableProbe,
   runtime,
   serviceManager,
 }: RunCaaraInstallServiceStartedOptions) {
@@ -216,27 +290,13 @@ export const runCaaraInstallServiceStarted = Effect.fnUntraced(function* ({
     ),
     Match.when({ installExitCode: 1 }, () => Effect.succeed(installResult)),
     Match.orElse(() =>
-      Effect.gen(function* () {
-        const request = serviceManagerRequestFromPaths({ paths: installOutcome.paths });
-        yield* serviceManager.start(request);
-        const health = yield* verifyStartedServiceHealth({
-          healthProbe,
-          settings: installOutcome.resolution.settings,
-        });
-        return Match.valueTags(health, {
-          Healthy: (healthy) =>
-            serviceStartedResult({
-              doctorResult,
-              health: healthy,
-              installResult,
-            }),
-          Unhealthy: (unhealthy) =>
-            serviceHealthFailureResult({
-              health: unhealthy,
-              installResult,
-              statusHint: serviceManager.statusHint(request),
-            }),
-        });
+      startAndVerifyInstalledService({
+        doctorResult,
+        healthProbe,
+        installOutcome,
+        installResult,
+        portableProbe,
+        serviceManager,
       }),
     ),
   );

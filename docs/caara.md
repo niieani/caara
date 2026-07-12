@@ -90,6 +90,12 @@ config file without depending on a working directory.
 `install-service --no-start` stops after writing the binary, config, service file, receipt, and
 generated Codex roles. It does not run doctor, start the service, or verify health.
 
+Portable delegation requires no repository checkout or separately installed web assets. The
+compiled Caara binary contains the CLI HTTP adapter, diagnostic driver, and inline observation-page
+HTML. Portable turn records and capability-protected observations use the Caara state directory
+under `${XDG_STATE_HOME:-$HOME/.local/state}/caara`; service configuration remains under
+`${XDG_CONFIG_HOME:-$HOME/.config}/caara`.
+
 `install-service --no-install-codex-roles` opts out of role installation. `install-service --yolo`
 turns on `allowDangerousSkipPermissions` in the service config and requests yolo generated roles so
 driver permission-bypass query params line up with the process-level dangerous gate.
@@ -152,10 +158,18 @@ inherited `PATH`, and built-in service defaults, then appends discovered non-def
 directories to the config `path`. Missing optional drivers are reported with remediation hints.
 Doctor and service install fail only when no real external driver is available.
 
+The live `caara doctor` command also starts and completes a diagnostic portable turn through the
+installed service, then loads its loopback capability viewer. Failure reports separate repair
+prerequisites for installing/starting the user service and placing external-agent executables on the
+service execution path. Default `install-service` runs the same portable check after service health
+verification; `--no-start` intentionally cannot perform it.
+
 `caara uninstall-service` unloads/stops the user service, removes the service manager file, removes
 the installer-managed binary recorded in the install receipt, and removes the receipt. It preserves
 config, state, sessions, and logs by default. `caara uninstall-service --purge` also removes the
-Caara config directory and state directory.
+entire Caara config and state directories, including portable turn records and observation data,
+without removing sibling user-owned paths under the XDG roots. The viewer has no separate assets to
+remove because its HTML is embedded in the installer-owned binary.
 
 ## Service Configuration
 
@@ -193,7 +207,9 @@ Built-in defaults:
 Non-loopback hosts are allowed but dangerous. Caara has no authentication layer. Binding to
 `0.0.0.0`, `::`, or another non-loopback address can expose a code-agent bridge to the network and
 should only be used in controlled setups such as containerized isolation with bind-mounted
-workspaces.
+workspaces. This posture also exposes portable-delegation endpoints and human observation pages.
+Observation URLs are bearer capabilities: anyone who receives one can inspect that agent's
+activity until retention expires it. Do not expose the viewer to an untrusted network.
 
 ## Service Execution Path And Logs
 

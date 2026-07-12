@@ -4,6 +4,10 @@ import path from "node:path";
 import { Console, Effect, Match, Option } from "effect";
 
 import {
+  liveCaaraPortableDoctorProbe,
+  type CaaraPortableDoctorProbe,
+} from "./caaraPortableDoctor.ts";
+import {
   caaraServiceLifecycleError,
   type CaaraServiceLifecycleEnvironment,
   type CaaraServicePlatform,
@@ -55,6 +59,7 @@ export interface RunCaaraInstallServiceOptions {
   readonly env?: CaaraServiceLifecycleEnvironment;
   readonly healthProbe?: CaaraHealthProbe;
   readonly platform?: CaaraServicePlatform;
+  readonly portableProbe?: CaaraPortableDoctorProbe;
   readonly runtime?: CaaraServiceRuntime;
   readonly serviceManager?: CaaraServiceManager;
 }
@@ -187,6 +192,7 @@ export const runCaaraInstallService = Effect.fnUntraced(function* ({
   env = process.env,
   healthProbe = liveCaaraServiceHealthProbe,
   platform = defaultServicePlatform(),
+  portableProbe,
   runtime = defaultServiceRuntime(),
   serviceManager = liveCaaraServiceManager,
 }: RunCaaraInstallServiceOptions) {
@@ -213,6 +219,7 @@ export const runCaaraInstallService = Effect.fnUntraced(function* ({
           healthProbe,
           options,
           platform,
+          portableProbe,
           runtime,
           serviceManager,
         }),
@@ -282,7 +289,10 @@ export const runCaaraUninstallService = Effect.fnUntraced(function* ({
 export const runCaaraInstallServiceCli = Effect.fnUntraced(function* ({
   args,
 }: RunCaaraInstallServiceCliOptions) {
-  const result = yield* runCaaraInstallService({ args });
+  const result = yield* runCaaraInstallService({
+    args,
+    portableProbe: liveCaaraPortableDoctorProbe,
+  });
   yield* Console.log(result.message);
   return yield* Option.match(
     Option.fromUndefinedOr([result].filter(({ exitCode }) => exitCode !== 0).at(0)),

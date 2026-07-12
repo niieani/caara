@@ -195,15 +195,6 @@ const persistProjection = Effect.fnUntraced(function* ({
         });
         yield* Effect.all(
           [
-            durable.saveTurn({
-              schemaVersion: 1,
-              turnId,
-              sessionId: record.sessionId,
-              state: durableState,
-              createdAtMillis: record.createdAtMillis,
-              updatedAtMillis,
-              expiresAtMillis: record.expiresAtMillis,
-            }),
             durable.saveObservation({
               schemaVersion: 1,
               capability: record.capability,
@@ -215,8 +206,17 @@ const persistProjection = Effect.fnUntraced(function* ({
               updatedAtMillis,
               expiresAtMillis: record.expiresAtMillis,
             }),
+            durable.saveTurn({
+              schemaVersion: 1,
+              turnId,
+              sessionId: record.sessionId,
+              state: durableState,
+              createdAtMillis: record.createdAtMillis,
+              updatedAtMillis,
+              expiresAtMillis: record.expiresAtMillis,
+            }),
           ],
-          { discard: true },
+          { concurrency: 1, discard: true },
         );
       }),
   });

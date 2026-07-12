@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -72,9 +73,10 @@ const withServiceProcess = <A, E, R>({
         path.join(process.cwd(), "temp.local", "2026-07-12", `portable-service-${randomUUID()}`);
       const executable = path.join(tempRoot, "caara-test");
       const env = {
+        ...process.env,
         CAARA_PORTABLE_RETENTION_MILLIS: retentionMillis?.toString(),
         HOME: tempRoot,
-        PATH: process.env.PATH,
+        PATH: `${path.join(tempRoot, ".local", "bin")}:${process.env.PATH ?? ""}`,
         XDG_CONFIG_HOME: tempRoot,
         XDG_STATE_HOME: tempRoot,
       };
@@ -123,10 +125,12 @@ const withServiceProcess = <A, E, R>({
 const runCliProcess = Effect.fnUntraced(function* ({
   executable,
   args,
+  env = process.env,
   stdin,
 }: {
   readonly executable: string;
   readonly args: readonly string[];
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly stdin?: string;
 }) {
   const stdinMode = Option.match(Option.fromUndefinedOr(stdin), {
@@ -135,7 +139,7 @@ const runCliProcess = Effect.fnUntraced(function* ({
   });
   const cliProcess = Bun.spawn([executable, ...args], {
     cwd: process.cwd(),
-    env: process.env,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: stdinMode,
@@ -176,7 +180,59 @@ const decodeCliError = Effect.fnUntraced(function* ({
   );
 });
 
+/** Runs compiled doctor and verifies the portable execution plus embedded viewer proof. */
+const verifyCompiledPortableDoctor = Effect.fnUntraced(function* ({
+  executable,
+  port,
+  stateRoot,
+}: {
+  readonly executable: string;
+  readonly port: number;
+  readonly stateRoot: string;
+}) {
+  const result = yield* runCliProcess({
+    executable,
+    args: ["doctor", "--host", "127.0.0.1", "--port", String(port)],
+    env: {
+      ...process.env,
+      HOME: stateRoot,
+      PATH: `${path.join(stateRoot, ".local", "bin")}:${process.env.PATH ?? ""}`,
+      XDG_CONFIG_HOME: stateRoot,
+      XDG_STATE_HOME: stateRoot,
+    },
+  });
+  assert.strictEqual(result.exitCode, 0);
+  assert.match(result.stdout, /portable diagnostic turn completed/u);
+  assert.match(result.stdout, /loopback observation viewer served/u);
+  assert.strictEqual(result.stdout.includes("diagnostic commentary"), false);
+});
+
 describe("portable Agent service process", () => {
+  it.live(
+    "compiled doctor executes a portable turn and verifies the loopback capability viewer",
+    () =>
+      Effect.gen(function* () {
+        const port = allocatePort();
+        const stateRoot = path.join(
+          process.cwd(),
+          "temp.local",
+          "2026-07-12",
+          `portable-doctor-${randomUUID()}`,
+        );
+        const driverBin = path.join(stateRoot, ".local", "bin");
+        const claudePath = path.join(driverBin, "claude");
+        yield* Effect.tryPromise(() => fs.mkdir(driverBin, { recursive: true }));
+        yield* Effect.tryPromise(() => Bun.write(claudePath, "#!/bin/sh\nexit 0\n"));
+        yield* Effect.tryPromise(() => fs.chmod(claudePath, 0o755));
+
+        return yield* withServiceProcess({
+          port,
+          stateRoot,
+          use: ({ executable }) => verifyCompiledPortableDoctor({ executable, port, stateRoot }),
+        });
+      }),
+    30_000,
+  );
   it.live(
     "preserves every prompt form and classifies public CLI request failures",
     () => {
