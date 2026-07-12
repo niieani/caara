@@ -280,7 +280,7 @@ export const handlePortableAgentWait = Effect.fnUntraced(function* ({
   const delays = [Effect.sleep(`${timeoutMillis} millis`)].filter(() => shouldWait);
   yield* Effect.all(delays, { discard: true });
   const projection = yield* turns.wait(portableTurnId);
-  return Option.match(projection, {
+  return yield* Option.match(projection, {
     onNone: () =>
       Effect.succeed(
         portableErrorResponse({
