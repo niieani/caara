@@ -8,14 +8,15 @@ import {
   agentExitCode,
   renderAgentResult,
 } from "./caaraAgentContract.ts";
+import { PortableSessionId, PortableTurnId } from "./portableAgentIdentity.ts";
 
 describe("portable Agent public contract", () => {
   it.effect("requires the versioned stable JSON envelope", () =>
     Effect.gen(function* () {
       const result = yield* Schema.decodeUnknownEffect(PortableAgentStartResult)({
         schemaVersion: 1,
-        turnId: "portable-turn-00000000-0000-4000-8000-000000000001",
-        sessionId: "portable-session-1",
+        turnId: PortableTurnId.make("portable-turn-00000000-0000-4000-8000-000000000001"),
+        sessionId: PortableSessionId.make("portable-session-1"),
         status: "accepted",
         observationUrl: "http://127.0.0.1/observe/capability",
       });
@@ -30,7 +31,13 @@ describe("portable Agent public contract", () => {
 
   it("maps every documented outcome to a stable process exit code", () => {
     assert.strictEqual(
-      agentExitCode({ schemaVersion: 1, status: "working" }),
+      agentExitCode({
+        schemaVersion: 1,
+        status: "working",
+        turnId: PortableTurnId.make("portable-turn-00000000-0000-4000-8000-000000000001"),
+        sessionId: PortableSessionId.make("portable-session-1"),
+        observationUrl: "http://127.0.0.1/observe/capability",
+      }),
       CaaraAgentExitCode.Working,
     );
     assert.strictEqual(

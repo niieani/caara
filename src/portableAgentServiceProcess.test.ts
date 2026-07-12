@@ -3,16 +3,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Effect, Match, Option, Schedule, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
-import { runCaaraAgentWait } from "./caaraAgentCli.ts";
+import { runCaaraAgentCancel, runCaaraAgentStart, runCaaraAgentWait } from "./caaraAgentCli.ts";
 import {
   PortableAgentCancelResult,
   PortableAgentErrorResult,
   PortableAgentStartResult,
   PortableAgentWaitResult,
 } from "./caaraAgentContract.ts";
+import { createCaaraAgentMcpServer } from "./caaraAgentMcp.ts";
 import {
   CaaraSessionBinding,
   DurableExternalSession,
@@ -212,6 +215,80 @@ const verifyCompiledPortableDoctor = Effect.fnUntraced(function* ({
 });
 
 describe("portable Agent service process", () => {
+  it.live(
+    "keeps real diagnostic activity viewer-only across every MCP result and error",
+    () => {
+      const port = allocatePort();
+      return withServiceProcess({
+        port,
+        use: ({ origin }) =>
+          Effect.acquireUseRelease(
+            Effect.gen(function* () {
+              const serviceArgs = ["--host", "127.0.0.1", "--port", String(port)];
+              const server = createCaaraAgentMcpServer({
+                operations: {
+                  start: (input) => runCaaraAgentStart({ args: serviceArgs, ...input }),
+                  wait: (input) => runCaaraAgentWait({ args: serviceArgs, ...input }),
+                  cancel: (input) => runCaaraAgentCancel({ args: serviceArgs, ...input }),
+                },
+              });
+              const client = new Client({ name: "caara-real-service-test", version: "1" });
+              const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+              yield* Effect.tryPromise(() => server.connect(serverTransport));
+              yield* Effect.tryPromise(() => client.connect(clientTransport));
+              return { client, server };
+            }),
+            ({ client }) =>
+              Effect.gen(function* () {
+                const sentinel = `MCP-VIEWER-ONLY-${randomUUID()}`;
+                const started = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_start",
+                    arguments: {
+                      target: "diagnostic/hangs-until-cancel",
+                      cwd: process.cwd(),
+                      prompt: sentinel,
+                      driverOptions: {
+                        diagnostic_cancel: "interrupted",
+                        diagnostic_activity_sentinel: sentinel,
+                      },
+                    },
+                  }),
+                );
+                const start = yield* Schema.decodeUnknownEffect(PortableAgentStartResult)(
+                  started.structuredContent,
+                );
+                const viewer = yield* fetchText({ url: start.observationUrl }).pipe(
+                  Effect.filterOrFail((html) => html.includes(sentinel)),
+                  Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+                );
+                assert.ok(viewer.includes(sentinel));
+
+                const failed = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_wait",
+                    arguments: { turnId: "malformed-turn-id" },
+                  }),
+                );
+                const allMcpOutput = JSON.stringify({ started, failed });
+                assert.notMatch(allMcpOutput, new RegExp(sentinel, "u"));
+                assert.strictEqual(failed.isError, true);
+                assert.strictEqual(client.getServerCapabilities()?.resources, undefined);
+                yield* runCaaraAgentCancel({
+                  args: ["--host", "127.0.0.1", "--port", String(port)],
+                  turnId: start.turnId,
+                });
+              }),
+            ({ client, server }) =>
+              Effect.tryPromise(() => client.close()).pipe(
+                Effect.andThen(Effect.tryPromise(() => server.close())),
+              ),
+          ),
+      });
+    },
+    30_000,
+  );
+
   it.live(
     "compiled doctor executes a portable turn and verifies the loopback capability viewer",
     () =>
@@ -710,7 +787,12 @@ describe("portable Agent service process", () => {
               ),
               Effect.flatMap(Schema.decodeUnknownEffect(PortableAgentWaitResponse)),
             );
-            assert.deepStrictEqual(bounded, { status: "working" });
+            assert.deepStrictEqual(bounded, {
+              status: "working",
+              turnId: accepted.turnId,
+              sessionId: accepted.sessionId,
+              observationPath: accepted.observationPath,
+            });
 
             const firstCompleted = yield* runCaaraAgentWait({
               args: ["--host", "127.0.0.1", "--port", String(port)],
@@ -1188,7 +1270,13 @@ describe("portable Agent service process", () => {
                   yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PortableAgentWaitResult))(
                     waited.stdout.trim(),
                   ),
-                  { schemaVersion: 1, status: "working" },
+                  {
+                    schemaVersion: 1,
+                    status: "working",
+                    turnId: start.turnId,
+                    sessionId: start.sessionId,
+                    observationUrl: start.observationUrl,
+                  },
                 );
                 assert.match(yield* fetchText({ url: start.observationUrl }), /Status: working/u);
                 const cancelledAfterRestart = yield* runCliProcess({

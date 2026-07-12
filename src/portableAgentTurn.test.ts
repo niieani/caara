@@ -103,6 +103,7 @@ const cancellationFailureStore = Effect.fnUntraced(function* ({
         }),
       ),
     loadObservation: () => Ref.get(observation),
+    loadObservationForTurn: () => Ref.get(observation),
     deleteTurn: () => Ref.set(turn, Option.none()),
     deleteObservation: () => Ref.set(observation, Option.none()),
     cleanupExpired: Effect.void,
@@ -492,6 +493,7 @@ describe("PortableAgentTurns", () => {
       loadTurn: () => Effect.succeed(Option.none()),
       saveObservation: () => Effect.void,
       loadObservation: () => Effect.succeed(Option.none()),
+      loadObservationForTurn: () => Effect.succeed(Option.none()),
       deleteTurn: () =>
         Effect.fail(new PortableAgentStoreError({ message: "injected rollback failure" })),
       deleteObservation: () => Effect.void,

@@ -71,6 +71,10 @@ describe("PortableAgentStore", () => {
         Option.getOrUndefined(yield* store.loadObservation(capability)),
         observation,
       );
+      assert.deepStrictEqual(
+        Option.getOrUndefined(yield* store.loadObservationForTurn(turnId)),
+        Option.getOrUndefined(yield* store.loadObservation(capability)),
+      );
       const fileSystem = yield* FileSystem.FileSystem;
       assert.strictEqual(yield* fileSystem.exists(path.join(root, "sessions")), false);
       assert.strictEqual(yield* fileSystem.exists(path.join(root, "portable-turns")), true);

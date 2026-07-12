@@ -9,6 +9,7 @@ import {
   runCaaraAgentStart,
   runCaaraAgentWait,
 } from "./caaraAgentCli.ts";
+import { PortableSessionId, PortableTurnId } from "./portableAgentIdentity.ts";
 
 /** Minimal environment used to keep command settings deterministic. */
 const env = { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp", XDG_STATE_HOME: "/tmp" };
@@ -69,7 +70,13 @@ describe("portable Agent CLI commands", () => {
           Effect.sync(() => requestedUrls.push(url)).pipe(
             Effect.map(() => ({
               status: 200,
-              body: { status: "working", commentary: "SENTINEL" },
+              body: {
+                status: "working",
+                turnId: "portable-turn-00000000-0000-4000-8000-000000000001",
+                sessionId: "portable-session-1",
+                observationPath: "/observe/secret",
+                commentary: "SENTINEL",
+              },
             })),
           ),
       };
@@ -94,7 +101,13 @@ describe("portable Agent CLI commands", () => {
           api: workingApi,
           env,
         }),
-        { schemaVersion: 1, status: "working" },
+        {
+          schemaVersion: 1,
+          status: "working",
+          turnId: PortableTurnId.make("portable-turn-00000000-0000-4000-8000-000000000001"),
+          sessionId: PortableSessionId.make("portable-session-1"),
+          observationUrl: "http://127.0.0.1:8799/observe/secret",
+        },
       );
       assert.deepStrictEqual(requestedUrls, [
         "http://127.0.0.1:8799/agent/turns/portable-turn-00000000-0000-4000-8000-000000000001?timeoutMillis=125",

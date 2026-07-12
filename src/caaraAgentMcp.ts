@@ -68,6 +68,9 @@ const startOutputSchema = z.object({
 const waitOutputSchema = z.object({
   schemaVersion: versionSchema,
   status: z.enum(["working", "completed", "failed", "cancelled"]),
+  turnId: z.string().optional(),
+  sessionId: z.string().optional(),
+  observationUrl: z.string().min(1).optional(),
   finalAnswer: z.string().optional(),
   outcome: z.enum(["Interrupted", "Abandoned", "Terminated"]).optional(),
   sessionReusable: z.boolean().optional(),

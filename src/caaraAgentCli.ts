@@ -279,7 +279,13 @@ export const runCaaraAgentWait = Effect.fnUntraced(function* ({
   );
   return yield* Schema.decodeUnknownEffect(PortableAgentWaitResult)({
     schemaVersion: caaraAgentContractVersion,
-    ...result,
+    ...Match.value(result).pipe(
+      Match.when({ status: "working" }, ({ observationPath, ...working }) => ({
+        ...working,
+        observationUrl: `${origin}${observationPath}`,
+      })),
+      Match.orElse((terminal) => terminal),
+    ),
   }).pipe(Effect.mapError(unavailableServiceError));
 });
 

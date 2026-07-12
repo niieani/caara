@@ -101,6 +101,9 @@ export class PortableAgentStore extends Context.Service<
     readonly loadObservation: (
       capability: ObservationCapability,
     ) => EffectContract<Option.Option<DurablePortableObservation>, PortableAgentStoreError>;
+    readonly loadObservationForTurn: (
+      turnId: PortableTurnId,
+    ) => EffectContract<Option.Option<DurablePortableObservation>, PortableAgentStoreError>;
     readonly cleanupExpired: EffectContract<void, PortableAgentStoreError>;
     readonly deleteTurn: (turnId: PortableTurnId) => EffectContract<void, PortableAgentStoreError>;
     readonly deleteObservation: (
@@ -216,6 +219,27 @@ export const portableAgentStoreLive = ({ stateDir }: { readonly stateDir: string
           write({ path: observationPath(observation.capability), value: observation }),
         loadObservation: (capability) =>
           read({ path: observationPath(capability), schema: DurablePortableObservation }),
+        loadObservationForTurn: Effect.fnUntraced(function* (turnId) {
+          const exists = yield* fileSystem
+            .exists(observationDirectory)
+            .pipe(Effect.mapError(storeError));
+          if (!exists) return Option.none<DurablePortableObservation>();
+          const entries = yield* fileSystem
+            .readDirectory(observationDirectory)
+            .pipe(Effect.mapError(storeError));
+          const observations = yield* Effect.forEach(
+            entries.filter((entry) => entry.endsWith(".json")),
+            (entry) =>
+              read({
+                path: pathService.join(observationDirectory, entry),
+                schema: DurablePortableObservation,
+              }),
+          );
+          return (
+            observations.find(Option.exists((observation) => observation.turnId === turnId)) ??
+            Option.none<DurablePortableObservation>()
+          );
+        }),
         deleteTurn: (turnId) =>
           fileSystem.remove(turnPath(turnId), { force: true }).pipe(Effect.mapError(storeError)),
         deleteObservation: (capability) =>

@@ -395,6 +395,15 @@ export const createCaaraCommand = ({
         Flag.between(0, 100),
         Flag.withDescription("Driver-owned option as name=value; repeat for multiple options"),
       ),
+      originLineage: Flag.string("origin-lineage").pipe(
+        Flag.between(0, 100),
+        Flag.withDescription("Delegation lineage entry; repeat to preserve nested origin"),
+      ),
+      originDepth: Flag.optional(
+        Flag.integer("origin-depth").pipe(
+          Flag.withDescription("Current non-negative portable delegation depth"),
+        ),
+      ),
       json: Flag.boolean("json").pipe(Flag.withDescription("Print stable JSON output")),
       sessionId: Flag.optional(
         Flag.string("session-id").pipe(
@@ -409,12 +418,30 @@ export const createCaaraCommand = ({
         const target = yield* requireStartFlag({ name: "target", value: input.target });
         const cwd = yield* requireStartFlag({ name: "cwd", value: input.cwd });
         const driverOptions = yield* parseDriverOptions(input.driverOptions);
+        const originDepth = Option.getOrUndefined(input.originDepth);
+        const validOriginDepth = yield* Effect.succeed(originDepth).pipe(
+          Effect.filterOrFail(
+            (value) => value === undefined || value >= 0,
+            () =>
+              new CaaraAgentCliError({
+                kind: "invalid_request",
+                message: "Origin depth must be a non-negative integer.",
+              }),
+          ),
+        );
+        const originMetadata = {
+          ...(input.originLineage.length > 0
+            ? { caaraLineage: input.originLineage.join(",") }
+            : {}),
+          ...(validOriginDepth === undefined ? {} : { caaraDepth: String(validOriginDepth) }),
+        };
         return yield* handlers.agentStart.run({
           args: settingsArgs(input),
           prompt,
           target,
           cwd,
           driverOptions,
+          ...(Object.keys(originMetadata).length > 0 ? { originMetadata } : {}),
           sessionId: Option.getOrUndefined(input.sessionId),
           json: input.json,
         });

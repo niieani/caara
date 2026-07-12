@@ -132,6 +132,32 @@ describe("Caara Agent MCP", () => {
     ),
   );
 
+  it.effect("returns the complete durable handle while a bounded wait remains working", () =>
+    withClient(
+      (client) =>
+        client.callTool({ name: "caara_agent_wait", arguments: { turnId } }).then((waited) => {
+          assert.deepStrictEqual(waited.structuredContent, {
+            schemaVersion: 1,
+            status: "working",
+            turnId,
+            sessionId,
+            observationUrl: "http://127.0.0.1:8787/observe/private-capability",
+          });
+        }),
+      {
+        ...operations({ calls: [] }),
+        wait: () =>
+          Effect.succeed({
+            schemaVersion: 1,
+            status: "working",
+            turnId,
+            sessionId,
+            observationUrl: "http://127.0.0.1:8787/observe/private-capability",
+          }),
+      },
+    ),
+  );
+
   it.effect("returns typed tool failures without diagnostic activity", () =>
     withClient(
       (client) =>

@@ -67,6 +67,12 @@ export interface PortableTurnObservation {
   };
 }
 
+/** Agent-safe identifiers and human capability retained for a live turn handle. */
+export interface PortableTurnWorkingHandle {
+  readonly sessionId: string;
+  readonly capability: ObservationCapabilityType;
+}
+
 /** Service exposing agent-safe terminal reads and capability-protected human observations. */
 export class PortableAgentTurns extends Context.Service<
   PortableAgentTurns,
@@ -82,6 +88,9 @@ export class PortableAgentTurns extends Context.Service<
     readonly wait: (
       turnId: PortableTurnIdType,
     ) => EffectContract<Option.Option<PortableTurnTerminalProjection>, PortableAgentStoreError>;
+    readonly workingHandle: (
+      turnId: PortableTurnIdType,
+    ) => EffectContract<Option.Option<PortableTurnWorkingHandle>, PortableAgentStoreError>;
     readonly observe: (
       capability: ObservationCapabilityType,
     ) => EffectContract<Option.Option<PortableTurnObservation>, PortableAgentStoreError>;
@@ -488,6 +497,31 @@ const makePortableAgentTurns = ({
         onNone: () => loadDurableTerminal(turnId),
         onSome: (record) =>
           Ref.get(record.state).pipe(Effect.map((state) => Option.some(state.terminal))),
+      });
+    }),
+    workingHandle: Effect.fnUntraced(function* (turnId) {
+      const memory = yield* Option.match(Option.fromUndefinedOr(records.get(turnId)), {
+        onNone: () => Effect.succeed(Option.none<PortableTurnRecord>()),
+        onSome: (record) => activeMemoryRecord({ turnId, record }),
+      });
+      return yield* Option.match(memory, {
+        onSome: ({ sessionId, capability }) =>
+          Effect.succeed(Option.some({ sessionId, capability })),
+        onNone: () =>
+          Option.match(Option.fromUndefinedOr(store), {
+            onNone: () => Effect.succeed(Option.none<PortableTurnWorkingHandle>()),
+            onSome: (durable) =>
+              Effect.all([durable.loadTurn(turnId), durable.loadObservationForTurn(turnId)]).pipe(
+                Effect.map(([turn, observation]) =>
+                  Option.all({ turn, observation }).pipe(
+                    Option.map(({ turn: durableTurn, observation: durableObservation }) => ({
+                      sessionId: durableTurn.sessionId,
+                      capability: durableObservation.capability,
+                    })),
+                  ),
+                ),
+              ),
+          }),
       });
     }),
     observe: Effect.fnUntraced(function* (capability) {

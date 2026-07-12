@@ -49,6 +49,9 @@ export const PortableAgentWaitResult = Schema.Union([
   Schema.Struct({
     schemaVersion: Schema.Literal(caaraAgentContractVersion),
     status: Schema.Literal("working"),
+    turnId: PortableTurnId,
+    sessionId: PortableSessionId,
+    observationUrl: Schema.NonEmptyString,
   }),
   Schema.Struct({
     schemaVersion: Schema.Literal(caaraAgentContractVersion),
@@ -128,7 +131,11 @@ export const renderAgentResult = (result: PortableAgentCommandResult): string =>
       (value) =>
         `Accepted ${value.turnId}\nSession: ${value.sessionId}\nObserve: ${value.observationUrl}`,
     ),
-    Match.when({ status: "working" }, () => "Working"),
+    Match.when(
+      { status: "working" },
+      ({ turnId, sessionId, observationUrl }) =>
+        `Working ${turnId}\nSession: ${sessionId}\nObserve: ${observationUrl}`,
+    ),
     Match.when({ status: "completed" }, ({ finalAnswer }) => `Completed\n${finalAnswer}`),
     Match.when({ status: "failed" }, () => "Failed"),
     Match.when(

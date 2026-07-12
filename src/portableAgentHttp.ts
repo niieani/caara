@@ -60,7 +60,12 @@ export const PortableAgentStartResponse = Schema.Struct({
 
 /** Agent-safe wait response containing no runtime observation fields. */
 export const PortableAgentWaitResponse = Schema.Union([
-  Schema.Struct({ status: Schema.Literal("working") }),
+  Schema.Struct({
+    status: Schema.Literal("working"),
+    turnId: PortableTurnId,
+    sessionId: PortableSessionId,
+    observationPath: Schema.NonEmptyString,
+  }),
   Schema.Struct({ status: Schema.Literal("completed"), finalAnswer: Schema.String }),
   Schema.Struct({ status: Schema.Literal("failed") }),
   Schema.Struct({
@@ -277,21 +282,47 @@ export const handlePortableAgentWait = Effect.fnUntraced(function* ({
   const projection = yield* turns.wait(portableTurnId);
   return Option.match(projection, {
     onNone: () =>
-      portableErrorResponse({
-        status: 404,
-        kind: "unknown_resource",
-        message: "Portable turn not found.",
-      }),
-    onSome: (state) =>
-      HttpServerResponse.jsonUnsafe(
-        Match.valueTags(state, {
-          Working: () => ({ status: "working" }) as const,
-          Completed: ({ finalAnswer }) => ({ status: "completed", finalAnswer }) as const,
-          Failed: () => ({ status: "failed" }) as const,
-          Cancelled: ({ outcome, sessionReusable }) =>
-            ({ status: "cancelled", outcome, sessionReusable }) as const,
+      Effect.succeed(
+        portableErrorResponse({
+          status: 404,
+          kind: "unknown_resource",
+          message: "Portable turn not found.",
         }),
       ),
+    onSome: (state) =>
+      Match.valueTags(state, {
+        Working: () =>
+          turns.workingHandle(portableTurnId).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.succeed(
+                    portableErrorResponse({
+                      status: 404,
+                      kind: "unknown_resource",
+                      message: "Portable working turn handle not found.",
+                    }),
+                  ),
+                onSome: ({ sessionId, capability }) =>
+                  Effect.succeed(
+                    HttpServerResponse.jsonUnsafe({
+                      status: "working",
+                      turnId: portableTurnId,
+                      sessionId,
+                      observationPath: `/observe/${capability}`,
+                    }),
+                  ),
+              }),
+            ),
+          ),
+        Completed: ({ finalAnswer }) =>
+          Effect.succeed(HttpServerResponse.jsonUnsafe({ status: "completed", finalAnswer })),
+        Failed: () => Effect.succeed(HttpServerResponse.jsonUnsafe({ status: "failed" })),
+        Cancelled: ({ outcome, sessionReusable }) =>
+          Effect.succeed(
+            HttpServerResponse.jsonUnsafe({ status: "cancelled", outcome, sessionReusable }),
+          ),
+      }),
   });
 });
 
