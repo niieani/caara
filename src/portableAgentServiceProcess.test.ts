@@ -270,16 +270,94 @@ describe("portable Agent service process", () => {
                     arguments: { turnId: "malformed-turn-id" },
                   }),
                 );
+                const working = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_wait",
+                    arguments: { turnId: start.turnId, timeoutMillis: 0 },
+                  }),
+                );
+                assert.deepStrictEqual(working.structuredContent, {
+                  schemaVersion: 1,
+                  status: "working",
+                  turnId: start.turnId,
+                  sessionId: start.sessionId,
+                  observationUrl: start.observationUrl,
+                });
+                const cancelled = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_cancel",
+                    arguments: { turnId: start.turnId },
+                  }),
+                );
+                yield* Schema.decodeUnknownEffect(PortableAgentCancelResult)(
+                  cancelled.structuredContent,
+                );
+                const resumed = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_start",
+                    arguments: {
+                      target: "diagnostic/hangs-until-cancel",
+                      cwd: process.cwd(),
+                      prompt: "resumed MCP turn",
+                      driverOptions: { diagnostic_cancel: "interrupted" },
+                      sessionId: start.sessionId,
+                    },
+                  }),
+                );
+                const resumedStart = yield* Schema.decodeUnknownEffect(PortableAgentStartResult)(
+                  resumed.structuredContent,
+                );
+                const resumedCancelled = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_cancel",
+                    arguments: { turnId: resumedStart.turnId },
+                  }),
+                );
+                const completing = yield* Effect.tryPromise(() =>
+                  client.callTool({
+                    name: "caara_agent_start",
+                    arguments: {
+                      target: "diagnostic/activity",
+                      cwd: process.cwd(),
+                      prompt: "complete through MCP",
+                      driverOptions: { diagnostic_activity_sentinel: sentinel },
+                    },
+                  }),
+                );
+                const completingStart = yield* Schema.decodeUnknownEffect(PortableAgentStartResult)(
+                  completing.structuredContent,
+                );
+                const completedResult = yield* Effect.suspend(() =>
+                  Effect.tryPromise(() =>
+                    client.callTool({
+                      name: "caara_agent_wait",
+                      arguments: { turnId: completingStart.turnId, timeoutMillis: 500 },
+                    }),
+                  ).pipe(
+                    Effect.flatMap((result) =>
+                      Schema.decodeUnknownEffect(PortableAgentWaitResult)(result.structuredContent),
+                    ),
+                    Effect.filterOrFail((result) => result.status === "completed"),
+                  ),
+                ).pipe(
+                  Effect.retry(Schedule.both(Schedule.spaced("25 millis"), Schedule.recurs(20))),
+                );
+                assert.strictEqual(completedResult.status, "completed");
                 const allMcpOutput = yield* Schema.encodeEffect(
                   Schema.fromJsonString(Schema.Unknown),
-                )({ started, failed });
+                )({
+                  started,
+                  working,
+                  cancelled,
+                  resumed,
+                  resumedCancelled,
+                  completing,
+                  completedResult,
+                  failed,
+                });
                 assert.notMatch(allMcpOutput, new RegExp(sentinel, "u"));
                 assert.strictEqual(failed.isError, true);
                 assert.strictEqual(client.getServerCapabilities()?.resources, undefined);
-                yield* runCaaraAgentCancel({
-                  args: ["--host", "127.0.0.1", "--port", String(port)],
-                  turnId: start.turnId,
-                });
               }),
             Effect.fnUntraced(function* ({ client, server }) {
               yield* Effect.tryPromise(() => client.close());
