@@ -90,6 +90,11 @@ describe("Caara doctor command", () => {
         externalAgentKind: "agy",
         executableName: "agy",
       },
+      {
+        driverName: "Codex",
+        externalAgentKind: "codex",
+        executableName: "codex",
+      },
     ]);
   });
 

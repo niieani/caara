@@ -38,6 +38,7 @@ export const PortableAgentStartRequest = Schema.Struct({
   target: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9-]*\/.+$/u))),
   cwd: Schema.NonEmptyString,
   driverOptions: Schema.Record(Schema.String, Schema.String),
+  originMetadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   sessionId: Schema.optional(PortableSessionId),
 });
 
@@ -199,7 +200,7 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
   });
   const turnRequest = {
     identity: { sessionId, parentSessionId: sessionId, turnId },
-    origin: { transport: "cli", metadata: {} },
+    origin: { transport: "cli", metadata: input.originMetadata ?? {} },
     advisories: { effort: undefined, sandboxPosture: "enforced" },
     requestedCwd,
     target,

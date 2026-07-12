@@ -25,6 +25,7 @@ export interface CaaraAgentMcpOperations {
     readonly prompt: string;
     readonly driverOptions: Readonly<Record<string, string>>;
     readonly sessionId?: string;
+    readonly originMetadata?: Readonly<Record<string, string>>;
   }) => EffectContract<
     typeof PortableAgentStartResult.Type,
     CaaraAgentCliError | CaaraSettingsError
@@ -132,6 +133,7 @@ export const createCaaraAgentMcpServer = ({
         prompt: z.string().min(1),
         driverOptions: z.record(z.string(), z.string()).default({}),
         sessionId: z.string().min(1).optional(),
+        originMetadata: z.record(z.string(), z.string()).optional(),
       }),
       outputSchema: startOutputSchema,
     },

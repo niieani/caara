@@ -13,6 +13,9 @@ const retiredClaudeCliSourcePattern = /(^|\/)(claudeCodeDriver|claudeCodeContrac
 /** Source token for direct Bun process spawning, assembled to avoid self-matching this test. */
 const bunSpawnCallToken = ["Bun", "spawn"].join(".");
 
+/** Source token identifying Claude as the directly spawned executable. */
+const claudeExecutableArrayToken = ["[", '"claude"'].join("");
+
 /** Returns the file as a singleton list only when it is a TypeScript source file. */
 const sourceFileSingleton = ({
   filePath,
@@ -82,7 +85,11 @@ describe("Claude CLI retirement", () => {
 
   it.effect("keeps source free of direct Claude process spawning", () =>
     Effect.gen(function* () {
-      const files = yield* sourceFilesContaining({ token: bunSpawnCallToken });
+      const spawnedFiles = yield* sourceFilesContaining({ token: bunSpawnCallToken });
+      const claudeCommandFiles = yield* sourceFilesContaining({
+        token: claudeExecutableArrayToken,
+      });
+      const files = spawnedFiles.filter((filePath) => claudeCommandFiles.includes(filePath));
 
       assert.deepStrictEqual(files, []);
     }).pipe(Effect.provide(BunServices.layer)),

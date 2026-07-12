@@ -17,6 +17,11 @@ import {
   caaraSettingsDefaultLayer,
   type CaaraSettingsValue,
 } from "../caaraSettings.ts";
+import { liveCodexCliClient } from "../codexCliDriver/client.ts";
+import {
+  codexMaximumDepthFromEnvironment,
+  createCodexCliAgentDriver,
+} from "../codexCliDriver/driver.ts";
 import {
   AgentDriverRegistry,
   type AgentCancellationOutcome,
@@ -603,11 +608,17 @@ export const caaraAgentDriverRegistryLive = Layer.effect(
       pathService,
       spawner,
     });
+    const codexMaximumDepth = yield* codexMaximumDepthFromEnvironment({ env: process.env });
+    const codexCliDriver = createCodexCliAgentDriver({
+      client: liveCodexCliClient,
+      maximumDepth: codexMaximumDepth,
+    });
     const resolve: AgentDriverResolve = (target) =>
       Match.value(target.externalAgentKind).pipe(
         Match.when("claude", () => Effect.succeed(claudeDriver)),
         Match.when("diagnostic", () => Effect.succeed(diagnosticAgentDriver)),
         Match.when("agy", () => Effect.succeed(antigravityCliDriver)),
+        Match.when("codex", () => Effect.succeed(codexCliDriver)),
         Match.orElse((externalAgentKind) =>
           Effect.fail(
             unsupportedExternalAgentKindError({

@@ -78,6 +78,7 @@ export interface RunCaaraAgentStartOptions {
   readonly cwd: string;
   readonly driverOptions: Readonly<Record<string, string>>;
   readonly sessionId?: string;
+  readonly originMetadata?: Readonly<Record<string, string>>;
   readonly api?: CaaraAgentApi;
   readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraSettingsEnvironment;
@@ -214,6 +215,7 @@ export const runCaaraAgentStart = Effect.fnUntraced(function* ({
   cwd,
   driverOptions,
   sessionId,
+  originMetadata,
   api = liveCaaraAgentApi,
   configLoader,
   env,
@@ -229,6 +231,10 @@ export const runCaaraAgentStart = Effect.fnUntraced(function* ({
       ...Option.match(Option.fromUndefinedOr(sessionId), {
         onNone: () => ({}),
         onSome: (selected) => ({ sessionId: selected }),
+      }),
+      ...Option.match(Option.fromUndefinedOr(originMetadata), {
+        onNone: () => ({}),
+        onSome: (metadata) => ({ originMetadata: metadata }),
       }),
     },
   });
