@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Match, Option, Schema, Stream } from "effect";
 import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import type { AgentRuntimeEvent } from "./mockResponsesProvider/agentDriver.ts";
 import { runAgentTurn } from "./mockResponsesProvider/agentTurn.ts";
 import { AgentTarget } from "./mockResponsesProvider/codexTurnContext.ts";
+import { ObservationCapability, PortableTurnId } from "./portableAgentIdentity.ts";
+import { portableAgentStoreLive } from "./portableAgentStore.ts";
 import {
-  ObservationCapability,
   PortableAgentTurns,
-  PortableTurnId,
   type PortableTurnObservation,
-  portableAgentTurnsProcessLocal,
+  portableAgentTurnsDurableLive,
 } from "./portableAgentTurn.ts";
 
 /** JSON request accepted by the portable diagnostic turn endpoint. */
@@ -37,6 +39,7 @@ export const PortableAgentStartResponse = Schema.Struct({
 export const PortableAgentWaitResponse = Schema.Union([
   Schema.Struct({ status: Schema.Literal("working") }),
   Schema.Struct({ status: Schema.Literal("completed"), finalAnswer: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("failed") }),
 ]);
 
 /** Escapes one runtime observation for literal placement in HTML text content. */
@@ -98,7 +101,13 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
       Match.orElse(() => Effect.succeed<AgentRuntimeEvent>(event)),
     );
   const runtimeEvents = execution.runtimeEvents.pipe(Stream.mapEffect(delayRuntimeEvent));
-  yield* turns.register({ turnId, capability, runtimeEvents });
+  yield* turns.register({
+    turnId,
+    sessionId,
+    capability,
+    runtimeEvents,
+    onRegistrationFailure: execution.cancel.pipe(Effect.ignore),
+  });
   return HttpServerResponse.jsonUnsafe({
     turnId,
     sessionId,
@@ -122,6 +131,7 @@ export const handlePortableAgentWait = Effect.fnUntraced(function* ({
         Match.valueTags(state, {
           Working: () => ({ status: "working" }) as const,
           Completed: ({ finalAnswer }) => ({ status: "completed", finalAnswer }) as const,
+          Failed: () => ({ status: "failed" }) as const,
         }),
       ),
   });
@@ -149,10 +159,24 @@ export const handlePortableObservation = Effect.fnUntraced(function* ({
 });
 
 /** Portable start, wait, and capability-viewer HTTP routes. */
+const portableStateDir =
+  process.env.CAARA_STATE_DIR ??
+  path.join(
+    process.env.XDG_STATE_HOME ?? path.join(process.env.HOME ?? process.cwd(), ".local", "state"),
+    "caara",
+  );
+
+/** Durable portable turn service assembled at the HTTP boundary. */
+const durablePortableAgentTurnsLayer = portableAgentTurnsDurableLive.pipe(
+  Layer.provide(portableAgentStoreLive({ stateDir: portableStateDir })),
+  Layer.provide(BunServices.layer),
+);
+
+/** Portable start, wait, and capability-viewer HTTP routes. */
 export const portableAgentRoutesLayer = Layer.mergeAll(
   HttpRouter.add("POST", "/agent/turns", (request) =>
     handlePortableAgentStart(request).pipe(
-      Effect.provideService(PortableAgentTurns, portableAgentTurnsProcessLocal),
+      Effect.provide(durablePortableAgentTurnsLayer),
       Effect.orElseSucceed(() =>
         HttpServerResponse.jsonUnsafe({ error: "invalid request" }, { status: 400 }),
       ),
@@ -160,24 +184,14 @@ export const portableAgentRoutesLayer = Layer.mergeAll(
   ),
   HttpRouter.add("GET", "/agent/turns/:turnId", () =>
     HttpRouter.params.pipe(
-      Effect.flatMap(({ turnId }) =>
-        Effect.provideService(
-          handlePortableAgentWait({ turnId }),
-          PortableAgentTurns,
-          portableAgentTurnsProcessLocal,
-        ),
-      ),
+      Effect.flatMap(({ turnId }) => handlePortableAgentWait({ turnId })),
+      Effect.provide(durablePortableAgentTurnsLayer),
     ),
   ),
   HttpRouter.add("GET", "/observe/:capability", () =>
     HttpRouter.params.pipe(
-      Effect.flatMap(({ capability }) =>
-        Effect.provideService(
-          handlePortableObservation({ capability }),
-          PortableAgentTurns,
-          portableAgentTurnsProcessLocal,
-        ),
-      ),
+      Effect.flatMap(({ capability }) => handlePortableObservation({ capability })),
+      Effect.provide(durablePortableAgentTurnsLayer),
     ),
   ),
 );
