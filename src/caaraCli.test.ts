@@ -47,6 +47,20 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
   uninstallService: recordingHandler({ name: "uninstall-service", events }),
   installCodexRoles: recordingHandler({ name: "install-codex-roles", events }),
   uninstallCodexRoles: recordingHandler({ name: "uninstall-codex-roles", events }),
+  installClaudeGuidance: {
+    run: ({ args }) =>
+      Effect.sync(() => {
+        events.push(`install-claude-guidance:${args.join(" ")}`);
+        return undefined;
+      }),
+  },
+  uninstallClaudeGuidance: {
+    run: ({ args }) =>
+      Effect.sync(() => {
+        events.push(`uninstall-claude-guidance:${args.join(" ")}`);
+        return undefined;
+      }),
+  },
   agentStart: {
     run: Effect.fnUntraced(function* ({ args, prompt, target, cwd, driverOptions, json }) {
       const encodedOptions = yield* Schema.encodeEffect(
@@ -87,6 +101,8 @@ describe("Caara root CLI", () => {
         "uninstall-service",
         "install-codex-roles",
         "uninstall-codex-roles",
+        "install-claude-guidance",
+        "uninstall-claude-guidance",
         "agent",
       ]) {
         assert.match(output, new RegExp(`\\n  ${subcommand}`, "u"));
@@ -143,6 +159,8 @@ describe("Caara root CLI", () => {
         "/tmp/agents",
       ]);
       yield* run(["uninstall-codex-roles", "/tmp/agents"]);
+      yield* run(["install-claude-guidance"]);
+      yield* run(["uninstall-claude-guidance"]);
       yield* run([
         "agent",
         "start",
@@ -168,6 +186,8 @@ describe("Caara root CLI", () => {
         "uninstall-service:--purge",
         "install-codex-roles:--config /tmp/caara.yaml --agents-md --panel-skill --yolo /tmp/agents",
         "uninstall-codex-roles:/tmp/agents",
+        "install-claude-guidance:",
+        "uninstall-claude-guidance:",
         'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:true:safe prompt',
         "agent-wait:--port 8799:turn-1:false",
       ]);

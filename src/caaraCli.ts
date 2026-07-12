@@ -19,6 +19,10 @@ import { runCaaraDoctorCli } from "./caaraDoctor.ts";
 import { runCaaraInstallServiceCli, runCaaraUninstallServiceCli } from "./caaraServiceLifecycle.ts";
 import { runCaaraStatusCli } from "./caaraStatus.ts";
 import {
+  runCaaraInstallClaudeGuidanceCli,
+  runCaaraUninstallClaudeGuidanceCli,
+} from "./claudePortableGuidance.ts";
+import {
   runCaaraInstallCodexRolesCli,
   runCaaraUninstallCodexRolesCli,
 } from "./codexRoleInstaller.ts";
@@ -187,6 +191,8 @@ export interface CaaraCliHandlers {
   readonly uninstallService: { readonly run: typeof runCaaraUninstallServiceCli };
   readonly installCodexRoles: { readonly run: typeof runCaaraInstallCodexRolesCli };
   readonly uninstallCodexRoles: { readonly run: typeof runCaaraUninstallCodexRolesCli };
+  readonly installClaudeGuidance: { readonly run: typeof runCaaraInstallClaudeGuidanceCli };
+  readonly uninstallClaudeGuidance: { readonly run: typeof runCaaraUninstallClaudeGuidanceCli };
   readonly agentStart: { readonly run: typeof runCaaraAgentStartCli };
   readonly agentWait: { readonly run: typeof runCaaraAgentWaitCli };
   readonly agentCancel: { readonly run: typeof runCaaraAgentCancelCli };
@@ -203,6 +209,8 @@ const liveCaaraCliHandlers: CaaraCliHandlers = {
   uninstallService: { run: runCaaraUninstallServiceCli },
   installCodexRoles: { run: runCaaraInstallCodexRolesCli },
   uninstallCodexRoles: { run: runCaaraUninstallCodexRolesCli },
+  installClaudeGuidance: { run: runCaaraInstallClaudeGuidanceCli },
+  uninstallClaudeGuidance: { run: runCaaraUninstallClaudeGuidanceCli },
   agentStart: { run: runCaaraAgentStartCli },
   agentWait: { run: runCaaraAgentWaitCli },
   agentCancel: { run: runCaaraAgentCancelCli },
@@ -328,6 +336,16 @@ export const createCaaraCommand = ({
       handlers.uninstallCodexRoles.run({ args: Option.toArray(targetDirectory) }),
   ).pipe(Command.withDescription("Remove Caara-managed Codex subagent roles"));
 
+  /** Installs the auto-discoverable personal Claude portable-guidance skill. */
+  const installClaudeGuidanceCommand = Command.make("install-claude-guidance", {}, () =>
+    handlers.installClaudeGuidance.run({ args: [] }),
+  ).pipe(Command.withDescription("Install Caara portable guidance for Claude"));
+
+  /** Removes only Caara's marker-owned personal Claude portable-guidance skill. */
+  const uninstallClaudeGuidanceCommand = Command.make("uninstall-claude-guidance", {}, () =>
+    handlers.uninstallClaudeGuidance.run({ args: [] }),
+  ).pipe(Command.withDescription("Remove Caara portable guidance for Claude"));
+
   /** Safely submits one prompt value without transcript or stdin ambiguity. */
   const agentStartCommand = Command.make(
     "start",
@@ -432,6 +450,8 @@ export const createCaaraCommand = ({
       uninstallServiceCommand,
       installCodexRolesCommand,
       uninstallCodexRolesCommand,
+      installClaudeGuidanceCommand,
+      uninstallClaudeGuidanceCommand,
       agentCommand,
     ]),
   );

@@ -42,6 +42,9 @@ For the compiled portable CLI plus installed-service path, use
 For a managing Codex task following installed blind-delegation guidance, use
 `docs/agents/codex-portable-smoke-runbook.md`.
 
+For Claude Code following its installed personal Caara skill to delegate to Antigravity, use
+`docs/agents/claude-code-portable-smoke-runbook.md`.
+
 ## Claude SDK Subagent Flow
 
 1. Start the local provider:
