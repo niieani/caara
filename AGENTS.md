@@ -46,6 +46,10 @@ Treat typecheck suggestions TS377* as blocking and resolve any issues before fin
 Read docs/agents/testing-patterns.md before writing or modifying tests; it is authoritative.
 Runtime lane = service-process integration tests under `src/runtime`, split into concurrent and serial Vitest projects. Non-runtime lane = in-process unit/integration tests outside `src/runtime`.
 For manual Codex subagent smoke tests, follow docs/agents/smoke-testing.md.
+Authenticated or metered Agent smokes must never be implemented as Vitest or other executable test
+code. Specify them as Markdown agent-executed playbooks under `docs/agents/smoke-prompts/`, linked
+from `docs/agents/smoke-testing.md`, and run them only after explicit user authorization. Automated
+tests must intercept or simulate the real Codex, Claude, and Antigravity boundaries.
 
 ### Type level tests
 
