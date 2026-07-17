@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.0](https://github.com/niieani/caara/compare/v1.2.1...v1.3.0) (2026-07-17)
+
+
+### Features
+
+* **agent-turn:** add transport-neutral lifecycle seam (CAARA-xorhkpac) ([8d72283](https://github.com/niieani/caara/commit/8d7228354932df4a47988d696140f326e9969d2b))
+* **antigravity:** install portable delegation guidance ([bc2434e](https://github.com/niieani/caara/commit/bc2434e25240dd5e80207fecf8b42671f383a2d3))
+* **claude:** install portable delegation skill ([78c5663](https://github.com/niieani/caara/commit/78c5663838582b1a5f5811bdfcb09b1d7a99260b))
+* **cli:** add blind diagnostic delegation viewer (CAARA-zecfhotr) ([3d26762](https://github.com/niieani/caara/commit/3d2676261dea22c854907dec1c448f5ba687338b))
+* **cli:** stabilize portable agent contracts ([9400fb6](https://github.com/niieani/caara/commit/9400fb688572ace41e851572a797d1fd1759ba6c))
+* **codex:** add recursive-safe external driver ([407610c](https://github.com/niieani/caara/commit/407610c8e33e2e6e79c0117b3ebba23ae980a1bf))
+* **codex:** install portable delegation guidance ([9cdb0c2](https://github.com/niieani/caara/commit/9cdb0c26d975d4cd58039a6d506c5c25a2010062))
+* **mcp:** expose blind portable delegation ([ee9b8c4](https://github.com/niieani/caara/commit/ee9b8c4012a3857a97e891dcadee62dd89563628))
+* **portable:** cancel turns without activity leaks ([e3f04ae](https://github.com/niieani/caara/commit/e3f04aed9b22c6b3fecee74c3f9b2999e6b006ed))
+* **portable:** resume sessions with bounded waits ([52f9ec6](https://github.com/niieani/caara/commit/52f9ec62dcedc4a732c14b12cec48e93fe8e5af1))
+* **service:** verify portable delegation after install ([9441f3d](https://github.com/niieani/caara/commit/9441f3d303be2b9396ea42b9694a998ecf32ed2b))
+* **storage:** persist portable turn observations (CAARA-aymuhwue) ([419c39b](https://github.com/niieani/caara/commit/419c39bf2706c3d05644321717bb9352b25b66c7))
+
+
+### Bug Fixes
+
+* **agent:** flatten wait HTTP effect ([6885309](https://github.com/niieani/caara/commit/68853096b8374909ee765708d6a7cd2ade509989))
+* **agent:** preserve working delegation handles ([04579ed](https://github.com/niieani/caara/commit/04579eda7839b6fd330b566b0724abe6692aed38))
+* **cli:** unify command parsing ([b4574aa](https://github.com/niieani/caara/commit/b4574aaabe95e9ee97897fbb02789ebda4e70836))
+* **codex:** persist delegation lineage ([238e1d8](https://github.com/niieani/caara/commit/238e1d8acb544e547bf8b746fab0338fb88e782f))
+* **codex:** preserve resumable lineage origin ([83a04ef](https://github.com/niieani/caara/commit/83a04ef95c134e4f4a0836c40e7d99ba258bd291))
+* **codex:** stream live CLI turns (CAARA-frnycgzd) ([3551a1a](https://github.com/niieani/caara/commit/3551a1a70d986ea4ec04a765b377e3fb40ef5520))
+
 ## [1.2.1](https://github.com/niieani/caara/compare/v1.2.0...v1.2.1) (2026-07-11)
 
 ### Bug Fixes
