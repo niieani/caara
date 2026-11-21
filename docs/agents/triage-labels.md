@@ -1,15 +1,14 @@
 # Triage Labels
 
-The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
+The skills speak in terms of five canonical triage roles. Vault Task notes carry no labels: each
+role maps to the Task's `assignee` and `status`.
 
-| Label                | Meaning                                  |
-| -------------------- | ---------------------------------------- |
-| `needs-triage`       | Maintainer needs to evaluate this issue  |
-| `needs-info`         | Waiting on reporter for more information |
-| `ready-for-agent`    | Fully specified, ready for an AFK agent  |
-| `ready-for-human`    | Requires human implementation            |
-| `wontfix`            | Will not be actioned                     |
+| Role              | Task note                                                                   |
+| ----------------- | --------------------------------------------------------------------------- |
+| `needs-triage`    | Not a Task yet: propose it to Bazyli, who decides whether it is work        |
+| `needs-info`      | `status: needs-input`; the question goes to Bazyli                          |
+| `ready-for-agent` | `assignee: "[[Julian]]"`, `status: todo`                                    |
+| `ready-for-human` | No `assignee` (Bazyli does it), `status: todo`, with a `due` or `schedule-at` reminder path |
+| `wontfix`         | `status: dropped`, the reason in the body                                   |
 
-When a skill mentions a role, use the corresponding label string from this table.
-
-Edit the right-hand column to match whatever vocabulary you actually use.
+When a skill applies a role, set the matching properties.

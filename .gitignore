@@ -13,8 +13,5 @@ src/**/__experiments__/
 !/data/**/*.sample.yaml
 !/data/**/*.sample.yml
 
-# Fiberplane local issue tracking
-.fp/
-
 *.local.*
 *.local

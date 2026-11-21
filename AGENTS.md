@@ -96,14 +96,13 @@ If committing, run `bun run fmt` prior.
 
 ### Issue tracker
 
-Issues are tracked in `fp`. See `docs/agents/issue-tracker.md`.
-
-Brainstorms and other fp features:
-@FP_AGENTS.md
+Issues and planned work are Task notes in Bazyli's Vault, under the project note [[CAARA]].
+A Task handed to an agent arrives as the brief in its prompt, with context in `~/context/<Task note name>/`.
+Commits for a Task carry a `Vault-Task: <Task note name>` git trailer.
 
 ### Triage labels
 
-Triage roles use the default label vocabulary. See `docs/agents/triage-labels.md`.
+Triage roles map to Task `assignee` and `status`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
