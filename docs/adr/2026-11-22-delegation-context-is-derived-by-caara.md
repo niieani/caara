@@ -36,3 +36,10 @@ Consequences:
   `CAARA_HARNESS=codex` and forwards `CAARA_DELEGATION_DEPTH` through `env_vars`. Claude Code
   launches MCP servers with `CLAUDECODE=1`, so it needs no configuration.
 - Diagnostic targets spawn no harness and are never limited.
+- The `x-caara-*` headers are unauthenticated request input on the portable and Responses routes.
+  They can only restrict a turn, because their absence already yields the most permissive state
+  (direct, depth 0). This does not fully meet the originating Task's "no HTTP caller/depth controls"
+  requirement. Whether to replace them with a service-issued opaque delegation token, an
+  adapter-only channel, or accept them as restrict-only markers is an open decision.
+- Codex stdio MCP servers receive only an environment allowlist, so Codex MCP entries must set
+  `CAARA_HARNESS` and forward `CAARA_DELEGATION_DEPTH`; Caara does not install that configuration.

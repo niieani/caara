@@ -240,8 +240,23 @@ The caller is derived at each boundary, in order:
 | Boundary | Caara's marker (wins) | Verified native marker |
 | --- | --- | --- |
 | `caara agent` CLI and `caara agent-mcp` | `CAARA_HARNESS` and optional `CAARA_DELEGATION_DEPTH` in the process environment | `CLAUDECODE=1` (Claude Code Bash tool and MCP servers), `CODEX_THREAD_ID` (Codex shell commands) |
-| Portable HTTP `POST /agent/turns` | `x-caara-harness` and `x-caara-delegation-depth` headers, sent by the CLI and MCP adapters | none: a raw call is direct |
+| Portable HTTP `POST /agent/turns` | `x-caara-harness` and `x-caara-delegation-depth` headers, sent by the CLI and MCP adapters | none: a call without the headers is direct |
 | Responses `/v1/responses` | the same headers, forwarded by installed roles through `env_http_headers` | the required Codex subagent identity headers: the caller is Codex |
+
+The service does not authenticate the `x-caara-*` headers: any local client can send them on the
+portable or Responses route, and Caara cannot tell its own adapters from other request input. They
+can only restrict a turn, never loosen it: omitting them gives a direct turn (no caller, depth 0),
+which is already the most permissive policy state, and any accepted header value adds a caller
+match or a higher depth. Bypassing the recursion protection therefore needs no header at all, the
+same as running the CLI with `CAARA_HARNESS` unset.
+
+Caara installs no MCP configuration. Claude Code gives MCP servers its full environment plus
+`CLAUDECODE=1`, so the MCP adapter sees the caller and any Caara-injected depth. Codex gives stdio
+MCP servers only an allowlist (`HOME`, `PATH`, `SHELL`, `USER`, `LANG`, `TERM`, `TMPDIR`, and similar):
+neither `CODEX_THREAD_ID` nor `CAARA_*` reaches the server unless the MCP entry sets
+`env = { CAARA_HARNESS = "codex" }` and `env_vars = ["CAARA_DELEGATION_DEPTH"]`, as the smoke
+docs show. Without that configuration, a Codex MCP call is treated as direct: Codex → Codex is not
+rejected, and a Caara-spawned Codex restarts the depth at 0.
 
 A harness marker without a depth is depth 0 (installed Antigravity guidance sets only
 `CAARA_HARNESS=agy`). A depth without a harness, an unknown harness, a non-canonical depth,

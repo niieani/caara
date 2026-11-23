@@ -282,6 +282,41 @@ describe("Codex portable delegation", () => {
     }).pipe(Effect.provide(portableCodexLayer({ client: configured.client, maximumDepth: 1 })));
   });
 
+  it.live("lets raw HTTP marker headers only restrict, never loosen, a direct start", () => {
+    const raw = makeCodexClient();
+    return Effect.gen(function* () {
+      const statuses = yield* Effect.forEach(
+        [
+          {},
+          { "x-caara-harness": "claude", "x-caara-delegation-depth": "0" },
+          { "x-caara-harness": "codex" },
+          { "x-caara-harness": "claude", "x-caara-delegation-depth": "3" },
+        ],
+        (headers) =>
+          HttpClientRequest.bodyJson(
+            HttpClientRequest.setHeaders(HttpClientRequest.post("/agent/turns"), headers),
+            {
+              prompt: "raw caller prompt",
+              target: "codex/gpt-5.6",
+              cwd: projectRoot,
+              driverOptions: {},
+            },
+          ).pipe(
+            Effect.flatMap(HttpClient.execute),
+            Effect.map((response) => response.status),
+          ),
+      );
+      assert.deepStrictEqual(statuses, [200, 200, 422, 422]);
+      assert.deepStrictEqual(
+        raw.invocations.map(({ delegationEnvironment }) => delegationEnvironment),
+        [
+          { CAARA_HARNESS: "codex", CAARA_DELEGATION_DEPTH: "1" },
+          { CAARA_HARNESS: "codex", CAARA_DELEGATION_DEPTH: "1" },
+        ],
+      );
+    }).pipe(Effect.provide(portableCodexLayer({ client: raw.client })));
+  });
+
   it.live("fails explicitly on conflicting native markers without contacting the harness", () => {
     const conflicted = makeCodexClient();
     return Effect.gen(function* () {
