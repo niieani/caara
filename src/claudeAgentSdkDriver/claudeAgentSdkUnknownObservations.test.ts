@@ -4,6 +4,7 @@ import { Effect, Layer, Schema } from "effect";
 import { TestConsole } from "effect/testing";
 
 import { CaaraAppLogWriter } from "../caaraLogging.ts";
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import type { AgentDriverTurn, AgentRuntimeEvent } from "../mockResponsesProvider/agentDriver.ts";
 import { agentTurnContextFromCodex } from "../mockResponsesProvider/codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "../mockResponsesProvider/codexTurnContext.ts";
@@ -60,7 +61,10 @@ const makeTarget = (): AgentTarget =>
 
 /** Builds one direct driver turn with core-normalized current-user prompt input. */
 const makeTurn = (): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: makeCodex() }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: makeCodex(),
+  }),
   target: makeTarget(),
   prompt: {
     input: [

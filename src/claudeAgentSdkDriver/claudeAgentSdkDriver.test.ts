@@ -2,6 +2,7 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Result } from "effect";
 
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import {
   type AgentDriverTurn,
   type AgentRuntimeEvent,
@@ -111,7 +112,10 @@ const makeTurn = ({
   readonly requestedCwd?: string;
   readonly advisoryEffort?: CodexAdvisoryEffort;
 } = {}): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: makeCodex({ advisoryEffort, requestedCwd }) }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: makeCodex({ advisoryEffort, requestedCwd }),
+  }),
   target,
   prompt: {
     input: [

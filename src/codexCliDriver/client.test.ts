@@ -1,12 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Match, Stream } from "effect";
 
-import {
-  codexCliArgv,
-  codexCliEnvironment,
-  createCodexCliClient,
-  type CodexCliProcess,
-} from "./client.ts";
+import { codexCliArgv, createCodexCliClient, type CodexCliProcess } from "./client.ts";
 import type { CodexCliInvocation } from "./driver.ts";
 
 /** Canonical invocation used by focused Codex process-boundary tests. */
@@ -14,8 +9,7 @@ const invocation: CodexCliInvocation = {
   cwd: "/worktree",
   model: "gpt-5.6",
   prompt: "inspect",
-  lineage: ["codex"],
-  depth: 1,
+  delegationEnvironment: { CAARA_HARNESS: "codex", CAARA_DELEGATION_DEPTH: "1" },
 };
 
 /** Controllable process fixture exposing JSONL and exit boundaries independently. */
@@ -72,10 +66,6 @@ describe("Codex CLI client", () => {
       "thread-1",
       "inspect",
     ]);
-    assert.deepStrictEqual(codexCliEnvironment(invocation), {
-      CAARA_DELEGATION_LINEAGE: "codex",
-      CAARA_DELEGATION_DEPTH: "1",
-    });
   });
 
   it.effect("returns at thread.started and streams later activity before process exit", () =>

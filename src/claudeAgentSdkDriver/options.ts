@@ -19,6 +19,10 @@ import {
   withReservedInteractiveToolDisallowed,
 } from "../claudeInteractionPolicy.ts";
 import {
+  type AgentTurnDelegation,
+  delegationChildEnvironment,
+} from "../mockResponsesProvider/agentDelegation.ts";
+import {
   createInvalidPromptAgentDriverError,
   type AgentDriverError,
 } from "../mockResponsesProvider/agentDriver.ts";
@@ -425,6 +429,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   advisoryEffort,
   caaraSettings,
   cwd,
+  delegation,
   model,
   pathToClaudeCodeExecutable,
   processEnvironment = process.env,
@@ -432,6 +437,7 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
   startup,
 }: {
   readonly advisoryEffort?: CodexAdvisoryEffort;
+  readonly delegation: AgentTurnDelegation;
   readonly caaraSettings: CaaraSettingsValue;
   readonly cwd: string;
   readonly model: string;
@@ -453,10 +459,14 @@ export const buildClaudeAgentSdkQueryOptions = Effect.fnUntraced(function* ({
     Start: ({ sessionId }) => ({ sessionId }),
     Resume: ({ resume }) => ({ resume }),
   });
-  const env = yield* caaraProcessEnvironmentWithExecutionPath({
+  const executionEnvironment = yield* caaraProcessEnvironmentWithExecutionPath({
     settings: caaraSettings,
     env: processEnvironment,
   }).pipe(Effect.mapError((error) => optionError(error.message)));
+  const env = {
+    ...executionEnvironment,
+    ...delegationChildEnvironment({ delegation, harness: "claude" }),
+  };
 
   return {
     cwd,

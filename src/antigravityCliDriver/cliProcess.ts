@@ -6,6 +6,7 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
 
+import { delegationChildEnvironment } from "../mockResponsesProvider/agentDelegation.ts";
 import {
   createInvalidPromptAgentDriverError,
   createServerErrorAgentDriverError,
@@ -367,6 +368,7 @@ const antigravityProcessCommand = ({
     env: {
       ...settings.environment,
       HOME: settings.homeDir,
+      ...delegationChildEnvironment({ delegation: turn.context.delegation, harness: "agy" }),
     },
     extendEnv: true,
     stdin: "ignore",

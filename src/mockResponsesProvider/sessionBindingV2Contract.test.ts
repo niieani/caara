@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Option, Result } from "effect";
 
+import { directAgentTurnDelegation } from "./agentDelegation.ts";
 import { type AgentDriverTurn, AgentDriverError } from "./agentDriver.ts";
 import { agentTurnContextFromCodex } from "./codexAgentTurnContext.ts";
 import { AgentTarget, CodexTurnContext } from "./codexTurnContext.ts";
@@ -96,7 +97,10 @@ const invalidRequestMessage = (result: Result.Result<unknown, unknown>): string 
 
 /** Builds a Diagnostic driver turn from a prepared v2 binding. */
 const diagnosticTurn = (binding: CaaraSessionBinding): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: followUpCodex }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: followUpCodex,
+  }),
   target: diagnosticTarget,
   prompt: { input: [] },
   cwd: binding.cwd,
@@ -110,7 +114,10 @@ describe("session binding v2 contracts", () => {
     Effect.gen(function* () {
       const result = yield* Effect.result(
         prepareSessionBinding({
-          context: agentTurnContextFromCodex({ codex: followUpCodex }),
+          context: agentTurnContextFromCodex({
+            delegation: directAgentTurnDelegation(),
+            codex: followUpCodex,
+          }),
           target: diagnosticTarget,
         }).pipe(Effect.provide(sessionDirectoryLayer(Option.none()))),
       );
@@ -123,7 +130,10 @@ describe("session binding v2 contracts", () => {
     Effect.gen(function* () {
       const result = yield* Effect.result(
         prepareSessionBinding({
-          context: agentTurnContextFromCodex({ codex: followUpCodex }),
+          context: agentTurnContextFromCodex({
+            delegation: directAgentTurnDelegation(),
+            codex: followUpCodex,
+          }),
           target: diagnosticTarget,
         }).pipe(
           Effect.provide(

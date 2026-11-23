@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
+import { directAgentTurnDelegation } from "./agentDelegation.ts";
 import { runAgentTurn, type AgentTurnRequest } from "./agentTurn.ts";
 import { AgentTarget } from "./codexTurnContext.ts";
 import { diagnosticAgentDriverRegistryLive } from "./diagnosticDriver.ts";
@@ -33,7 +34,8 @@ const makeRequest = ({
   prompt: { input: "hello" },
   requestedCwd: "/workspace",
   identity: { sessionId: "session-1", parentSessionId: "parent-1", turnId },
-  origin: { transport: "contract-test", metadata: { requestId: turnId } },
+  origin: { transport: "contract-test" },
+  delegation: directAgentTurnDelegation(),
   advisories: { effort: undefined, sandboxPosture: "enforced" },
 });
 
@@ -78,10 +80,8 @@ describe("AgentTurnRequest", () => {
           parentSessionId: "parent-1",
           turnId: "turn-1",
         },
-        origin: {
-          transport: "contract-test",
-          metadata: { requestId: "request-1" },
-        },
+        origin: { transport: "contract-test" },
+        delegation: directAgentTurnDelegation(),
         advisories: {
           effort: undefined,
           sandboxPosture: "enforced",

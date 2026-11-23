@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { defaultCaaraSettingsValue } from "../caaraSettings.ts";
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import type {
   AgentDriverTurn,
   AgentDriverTurnResult,
@@ -107,7 +108,10 @@ const makeTurn = ({
   readonly externalSession?: DurableExternalSession;
   readonly rawDriverOptions?: Readonly<Record<string, string>>;
 }): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: makeCodex({ turnId }) }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: makeCodex({ turnId }),
+  }),
   target: makeTarget({ rawDriverOptions }),
   prompt: {
     input: [

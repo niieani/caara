@@ -5,6 +5,7 @@ import type { Effect as EffectContract } from "effect/Effect";
 import * as z from "zod";
 
 import {
+  type CaaraAgentApi,
   type CaaraAgentCliError,
   runCaaraAgentCancel,
   runCaaraAgentStart,
@@ -15,7 +16,7 @@ import type {
   PortableAgentStartResult,
   PortableAgentWaitResult,
 } from "./caaraAgentContract.ts";
-import type { CaaraSettingsError } from "./caaraSettings.ts";
+import type { CaaraSettingsEnvironment, CaaraSettingsError } from "./caaraSettings.ts";
 
 /** Transport-neutral operations exposed by the blind MCP adapter. */
 export interface CaaraAgentMcpOperations {
@@ -25,7 +26,6 @@ export interface CaaraAgentMcpOperations {
     readonly prompt: string;
     readonly driverOptions: Readonly<Record<string, string>>;
     readonly sessionId?: string;
-    readonly originMetadata?: Readonly<Record<string, string>>;
   }) => EffectContract<
     typeof PortableAgentStartResult.Type,
     CaaraAgentCliError | CaaraSettingsError
@@ -45,12 +45,26 @@ export interface CaaraAgentMcpOperations {
   >;
 }
 
-/** Live MCP operations delegating through the installed durable Caara service. */
-export const liveCaaraAgentMcpOperations: CaaraAgentMcpOperations = {
-  start: (input) => runCaaraAgentStart({ args: [], ...input }),
-  wait: (input) => runCaaraAgentWait({ args: [], ...input }),
-  cancel: (input) => runCaaraAgentCancel({ args: [], ...input }),
-};
+/**
+ * Builds MCP operations delegating through the installed durable Caara service. The MCP server's
+ * own process environment, set by the host that launched it, identifies the calling harness.
+ */
+export const makeCaaraAgentMcpOperations = ({
+  env,
+  api,
+}: {
+  readonly env: CaaraSettingsEnvironment;
+  readonly api?: CaaraAgentApi;
+}): CaaraAgentMcpOperations => ({
+  start: (input) => runCaaraAgentStart({ args: [], ...input, env, api }),
+  wait: (input) => runCaaraAgentWait({ args: [], ...input, env, api }),
+  cancel: (input) => runCaaraAgentCancel({ args: [], ...input, env, api }),
+});
+
+/** Live MCP operations using the MCP server process environment. */
+export const liveCaaraAgentMcpOperations: CaaraAgentMcpOperations = makeCaaraAgentMcpOperations({
+  env: process.env,
+});
 
 /** Shared version field for MCP structured result schemas. */
 const versionSchema = z.literal(1);
@@ -136,7 +150,6 @@ export const createCaaraAgentMcpServer = ({
         prompt: z.string().min(1),
         driverOptions: z.record(z.string(), z.string()).default({}),
         sessionId: z.string().min(1).optional(),
-        originMetadata: z.record(z.string(), z.string()).optional(),
       }),
       outputSchema: startOutputSchema,
     },

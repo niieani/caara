@@ -174,7 +174,10 @@ export const handleResponsesCreate = Effect.fnUntraced(function* (
   const agentTurn = yield* runAgentTurn({
     target: responsesRequest.target,
     prompt: normalizedPrompt,
-    ...agentTurnContextFromCodex({ codex: responsesRequest.codex }),
+    ...agentTurnContextFromCodex({
+      codex: responsesRequest.codex,
+      delegation: responsesRequest.delegation,
+    }),
   }).pipe(
     Effect.catchTags({
       AgentDriverError: (error) =>

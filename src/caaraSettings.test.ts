@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Result } from "effect";
+import { Effect, Layer, Result } from "effect";
 
 import {
+  caaraDelegationMaximumDepthLayer,
+  caaraSettingsLayerFromValue,
   defaultCaaraConfigPath,
   defaultCaaraSettingsValue,
   parseCaaraServiceConfigYaml,
@@ -10,6 +12,7 @@ import {
   type CaaraSettingsEnvironment,
   type CaaraSettingsValue,
 } from "./caaraSettings.ts";
+import { DelegationMaximumDepth } from "./mockResponsesProvider/agentDelegation.ts";
 
 /** Extracts a failure message from one failed settings result. */
 const failureMessage = <A, E extends { readonly message: string }>(
@@ -92,6 +95,7 @@ describe("Caara server settings", () => {
         allowDangerousSkipPermissions: true,
         path: ["/opt/caara/bin"],
         logFile: "/tmp/caara.log",
+        delegation: { maximumDepth: 3 },
       } satisfies CaaraSettingsValue);
     }),
   );
@@ -168,12 +172,45 @@ describe("Caara server settings", () => {
           yaml: "logFile: relative.log\n",
           expected: /logFile must be absolute/u,
         },
+        {
+          yaml: "delegation:\n  maximumDepth: 0\n",
+          expected: /maximumDepth/u,
+        },
+        {
+          yaml: "delegation:\n  maximumDepth: 2.5\n",
+          expected: /maximumDepth/u,
+        },
+        {
+          yaml: "delegation:\n  lineage: true\n",
+          expected: /lineage/u,
+        },
       ] as const;
 
       for (const testCase of cases) {
         const result = yield* Effect.result(parseCaaraServiceConfigYaml({ yaml: testCase.yaml }));
         assert.match(failureMessage(result), testCase.expected);
       }
+    }),
+  );
+
+  it.effect("defaults delegation.maximumDepth to 3 and accepts a configured bound", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(defaultCaaraSettingsValue.delegation.maximumDepth, 3);
+      const settings = yield* resolveCaaraSettingsFromArgs({
+        args: [],
+        env: { HOME: "/Users/caara", XDG_CONFIG_HOME: "/xdg/config" },
+        configLoader: configLoaderFromFiles({
+          files: { [testConfigPaths.xdgDefault]: "delegation:\n  maximumDepth: 5\n" },
+        }),
+      });
+      assert.deepStrictEqual(settings.delegation, { maximumDepth: 5 });
+      const depthLayer = Layer.provide(
+        caaraDelegationMaximumDepthLayer,
+        caaraSettingsLayerFromValue({ settings }),
+      );
+      const readDepth = Effect.service(DelegationMaximumDepth);
+      const applied = yield* readDepth.pipe(Effect.provide(depthLayer));
+      assert.strictEqual(applied, 5);
     }),
   );
 

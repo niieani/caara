@@ -7,6 +7,7 @@ import { Effect, Layer, Match, Option, Schema, Stream } from "effect";
 import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { caaraAgentContractVersion, type CaaraAgentErrorKind } from "./caaraAgentContract.ts";
+import { resolveDelegationFromPortableHeaders } from "./mockResponsesProvider/agentDelegation.ts";
 import {
   AgentDriverRegistry,
   type AgentRuntimeEvent,
@@ -38,7 +39,6 @@ export const PortableAgentStartRequest = Schema.Struct({
   target: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9-]*\/.+$/u))),
   cwd: Schema.NonEmptyString,
   driverOptions: Schema.Record(Schema.String, Schema.String),
-  originMetadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   sessionId: Schema.optional(PortableSessionId),
 });
 
@@ -191,6 +191,7 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
     ),
   );
   const requestedCwd = yield* validatePortableCwd(input.cwd);
+  const delegation = yield* resolveDelegationFromPortableHeaders({ headers: request.headers });
   const turns = yield* PortableAgentTurns;
   const sessionId = input.sessionId ?? `portable-session-${randomUUID()}`;
   const turnId = PortableTurnId.make(`portable-turn-${randomUUID()}`);
@@ -205,7 +206,8 @@ export const handlePortableAgentStart = Effect.fnUntraced(function* (
   });
   const turnRequest = {
     identity: { sessionId, parentSessionId: sessionId, turnId },
-    origin: { transport: "cli", metadata: input.originMetadata ?? {} },
+    origin: { transport: "cli" },
+    delegation,
     advisories: { effort: undefined, sandboxPosture: "enforced" },
     requestedCwd,
     target,
@@ -463,6 +465,14 @@ export const portableAgentRoutesLayerFromTurns = ({
               portableErrorResponse({
                 status: 404,
                 kind: "unknown_resource",
+                message: error.message,
+              }),
+            ),
+          DelegationMarkerError: (error) =>
+            Effect.succeed(
+              portableErrorResponse({
+                status: 400,
+                kind: "invalid_request",
                 message: error.message,
               }),
             ),

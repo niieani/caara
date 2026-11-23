@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Match, Stream } from "effect";
 
+import {
+  type AgentTurnDelegation,
+  directAgentTurnDelegation,
+} from "../mockResponsesProvider/agentDelegation.ts";
 import { AgentDriverError } from "../mockResponsesProvider/agentDriver.ts";
 import { AgentTarget } from "../mockResponsesProvider/codexTurnContext.ts";
 import {
@@ -13,17 +17,18 @@ import {
   type CodexCliInvocation,
 } from "./driver.ts";
 
-/** Builds one portable Codex driver turn with explicit lineage metadata. */
+/** Builds one portable Codex driver turn with a Caara-derived delegation context. */
 const turn = ({
-  metadata = {},
+  delegation = directAgentTurnDelegation(),
   externalSession,
 }: {
-  readonly metadata?: Readonly<Record<string, string>>;
+  readonly delegation?: AgentTurnDelegation;
   readonly externalSession?: DurableExternalSession;
 }) => ({
   context: {
     identity: { sessionId: "portable-session", parentSessionId: "parent", turnId: "turn" },
-    origin: { transport: "cli", metadata },
+    origin: { transport: "cli" },
+    delegation,
     advisories: { effort: "high" as const, sandboxPosture: "enforced" as const },
     requestedCwd: "/workspace",
   },
@@ -68,22 +73,24 @@ describe("Codex CLI Agent driver", () => {
       const invocations: CodexCliInvocation[] = [];
       const driver = createCodexCliAgentDriver({
         client: recordingClient({ invocations }),
-        maximumDepth: 3,
       });
       const result = yield* driver.startOrResumeTurn(
-        turn({ metadata: { caaraLineage: "claude-root", caaraDepth: "1" } }),
+        turn({ delegation: { caller: "claude", depth: 1 } }),
       );
       const events = yield* Stream.runCollect(result.runtimeEvents);
 
       assert.strictEqual(invocations.length, 1);
-      assert.deepStrictEqual(invocations[0]?.lineage, ["claude-root", "codex"]);
-      assert.strictEqual(invocations[0]?.depth, 2);
-      assert.match(invocations[0]?.prompt ?? "", /caaraLineage=claude-root,codex/u);
-      assert.match(invocations[0]?.prompt ?? "", /caaraDepth=2/u);
+      assert.deepStrictEqual(invocations[0]?.delegationEnvironment, {
+        CAARA_HARNESS: "codex",
+        CAARA_DELEGATION_DEPTH: "2",
+      });
+      assert.strictEqual(invocations[0]?.prompt, "delegate");
       assert.ok(result.externalSession instanceof DurableExternalSession);
+      assert.deepStrictEqual(Object.keys(result.externalSession).toSorted(), [
+        "_tag",
+        "driverResumeCursor",
+      ]);
       assert.strictEqual(result.externalSession.driverResumeCursor, "codex-session-new");
-      assert.deepStrictEqual(result.externalSession.delegationLineage, ["claude-root"]);
-      assert.strictEqual(result.externalSession.delegationDepth, 1);
       assert.deepStrictEqual(
         [...events].map(({ _tag }) => _tag),
         [
@@ -113,7 +120,6 @@ describe("Codex CLI Agent driver", () => {
       const invocations: CodexCliInvocation[] = [];
       const driver = createCodexCliAgentDriver({
         client: recordingClient({ invocations }),
-        maximumDepth: 3,
       });
       yield* driver.startOrResumeTurn(
         turn({
@@ -126,42 +132,25 @@ describe("Codex CLI Agent driver", () => {
     }),
   );
 
-  it.effect("rejects same-lineage recursion and excessive depth before starting Codex", () =>
-    Effect.gen(function* () {
-      for (const metadata of [
-        { caaraLineage: "claude-root,codex", caaraDepth: "1" },
-        { caaraLineage: "claude-root", caaraDepth: "3" },
-      ]) {
-        const invocations: CodexCliInvocation[] = [];
-        const driver = createCodexCliAgentDriver({
-          client: recordingClient({ invocations }),
-          maximumDepth: 3,
-        });
-        const outcome = yield* Effect.result(driver.startOrResumeTurn(turn({ metadata })));
-        assert.strictEqual(outcome._tag, "Failure");
-        assert.strictEqual(invocations.length, 0);
-      }
-    }),
-  );
-
-  it.effect("resumes the durable session while preserving its pre-driver lineage", () =>
+  it.effect("derives delegation from each resumed turn instead of the stored session", () =>
     Effect.gen(function* () {
       const invocations: CodexCliInvocation[] = [];
       const driver = createCodexCliAgentDriver({
         client: recordingClient({ invocations }),
-        maximumDepth: 3,
       });
       const first = yield* driver.startOrResumeTurn(
-        turn({ metadata: { caaraLineage: "claude-root", caaraDepth: "1" } }),
+        turn({ delegation: { caller: "claude", depth: 1 } }),
       );
       assert.ok(first.externalSession instanceof DurableExternalSession);
       yield* driver.startOrResumeTurn(
-        turn({ metadata: {}, externalSession: first.externalSession }),
+        turn({ delegation: directAgentTurnDelegation(), externalSession: first.externalSession }),
       );
       assert.strictEqual(invocations.length, 2);
       assert.strictEqual(invocations[1]?.resumeSessionId, "codex-session-new");
-      assert.deepStrictEqual(invocations[1]?.lineage, ["claude-root", "codex"]);
-      assert.strictEqual(invocations[1]?.depth, 2);
+      assert.deepStrictEqual(invocations[1]?.delegationEnvironment, {
+        CAARA_HARNESS: "codex",
+        CAARA_DELEGATION_DEPTH: "1",
+      });
     }),
   );
 
@@ -184,15 +173,20 @@ describe("Codex CLI Agent driver", () => {
             }),
           ),
       };
-      const driver = createCodexCliAgentDriver({ client, maximumDepth: 3 });
+      const driver = createCodexCliAgentDriver({ client });
       const result = yield* driver.startOrResumeTurn(
         turn({
+          delegation: { caller: "agy", depth: 2 },
           externalSession: new DurableExternalSession({
             driverResumeCursor: makeDriverResumeCursor("lost-codex-session"),
           }),
         }),
       );
       assert.strictEqual(invocations.length, 2);
+      assert.deepStrictEqual(invocations[1]?.delegationEnvironment, {
+        CAARA_HARNESS: "codex",
+        CAARA_DELEGATION_DEPTH: "3",
+      });
       assert.strictEqual(result.lostSessionRecovery?.reason, "codex-resume-unavailable");
     }),
   );

@@ -194,12 +194,16 @@ not write `~/.codex/config.toml`:
 CAARA_BIN="$PWD/dist/caara"
 codex \
   -c "mcp_servers.caara-agent.command=\"$CAARA_BIN\"" \
-  -c 'mcp_servers.caara-agent.args=["agent-mcp"]'
+  -c 'mcp_servers.caara-agent.args=["agent-mcp"]' \
+  -c 'mcp_servers.caara-agent.env={CAARA_HARNESS="codex"}' \
+  -c 'mcp_servers.caara-agent.env_vars=["CAARA_DELEGATION_DEPTH"]'
 ```
 
 The same overrides work with `codex exec`. The keys follow the official
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference#configtoml)
-for `mcp_servers.<id>.command` and `mcp_servers.<id>.args`.
+for `mcp_servers.<id>.command`, `args`, `env`, and `env_vars`. Codex gives stdio MCP servers no
+native harness marker, so `env` sets Caara's `CAARA_HARNESS=codex` marker and `env_vars` forwards a
+Caara-injected depth when this Codex was itself spawned by Caara.
 
 Claude Code supports a persistent project-local scope. Add and remove only that local entry:
 
@@ -208,9 +212,13 @@ claude mcp add --scope local caara-agent -- "$PWD/dist/caara" agent-mcp
 claude mcp remove --scope local caara-agent
 ```
 
+Claude Code launches MCP servers with its native `CLAUDECODE=1` marker and its own environment, so
+no marker configuration is needed.
+
 Never use `codex mcp add` or Claude's user scope for a smoke. Start a fresh orchestrator session so
 MCP discovery is not mistaken for hot reload. The orchestrator harness and selected Caara target
-must differ; same-harness delegation is expected to be rejected once that policy is implemented.
+must differ: Caara rejects same-harness delegation before the target starts, naming the harness's
+native subagents instead. See the delegation context contract in `docs/caara.md`.
 
 ## Responses API Through Real Codex
 

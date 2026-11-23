@@ -50,6 +50,7 @@ const GeneratedRoleProviderConfig = Schema.Struct({
   request_max_retries: Schema.Finite,
   stream_max_retries: Schema.Finite,
   query_params: Schema.Record(Schema.String, Schema.String),
+  env_http_headers: Schema.Record(Schema.String, Schema.String),
 });
 
 /** Minimal generated Codex role config shape asserted by installer tests. */
@@ -254,6 +255,10 @@ describe("Caara Codex role installer", () => {
       assert.strictEqual(config.model, "agy/gemini-3.5-flash");
       assert.strictEqual(config.model_providers.caara.base_url, "http://127.0.0.1:8787/v1");
       assert.deepStrictEqual(config.model_providers.caara.query_params, {});
+      assert.deepStrictEqual(config.model_providers.caara.env_http_headers, {
+        "x-caara-harness": "CAARA_HARNESS",
+        "x-caara-delegation-depth": "CAARA_DELEGATION_DEPTH",
+      });
       assert.ok(!source.includes("Gemini 3.5 Flash (Low)"));
       assert.ok(!source.includes("Gemini 3.5 Flash (Medium)"));
       assert.ok(!source.includes("Gemini 3.5 Flash (High)"));

@@ -17,10 +17,14 @@ const env = { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp", XDG_STATE_HOME: "/tmp" };
 describe("portable Agent CLI commands", () => {
   it.effect("submits the prompt only as a JSON value and decodes immediate identifiers", () =>
     Effect.gen(function* () {
-      const requests: Array<{ readonly url: string; readonly body: unknown }> = [];
+      const requests: Array<{
+        readonly url: string;
+        readonly body: unknown;
+        readonly headers: unknown;
+      }> = [];
       const api: CaaraAgentApi = {
-        post: ({ url, body }) =>
-          Effect.sync(() => requests.push({ url, body })).pipe(
+        post: ({ url, body, headers }) =>
+          Effect.sync(() => requests.push({ url, body, headers })).pipe(
             Effect.map(() => ({
               status: 202,
               body: {
@@ -56,8 +60,75 @@ describe("portable Agent CLI commands", () => {
             driverOptions: { mode: "strict" },
             sessionId: "session-existing",
           },
+          headers: {},
         },
       ]);
+    }),
+  );
+
+  it.effect("forwards the caller derived from the calling environment as marker headers", () =>
+    Effect.gen(function* () {
+      const forwarded: unknown[] = [];
+      const api: CaaraAgentApi = {
+        post: ({ headers }) =>
+          Effect.sync(() => forwarded.push(headers)).pipe(
+            Effect.map(() => ({
+              status: 202,
+              body: {
+                turnId: "portable-turn-00000000-0000-4000-8000-000000000001",
+                sessionId: "session-1",
+                status: "working",
+                observationPath: "/observe/secret",
+              },
+            })),
+          ),
+        get: () => Effect.die("unused"),
+      };
+      for (const markers of [
+        { CLAUDECODE: "1" },
+        { CAARA_HARNESS: "agy", CAARA_DELEGATION_DEPTH: "2", CLAUDECODE: "1" },
+      ]) {
+        yield* runCaaraAgentStart({
+          args: [],
+          prompt: "delegate",
+          target: "diagnostic/activity",
+          cwd: "/workspace",
+          driverOptions: {},
+          api,
+          env: { ...env, ...markers },
+        });
+      }
+      assert.deepStrictEqual(forwarded, [
+        { "x-caara-harness": "claude", "x-caara-delegation-depth": "0" },
+        { "x-caara-harness": "agy", "x-caara-delegation-depth": "2" },
+      ]);
+    }),
+  );
+
+  it.effect("fails malformed or conflicting markers before contacting the service", () =>
+    Effect.gen(function* () {
+      const api: CaaraAgentApi = {
+        post: () => Effect.die("service must not be contacted"),
+        get: () => Effect.die("unused"),
+      };
+      for (const markers of [
+        { CAARA_DELEGATION_DEPTH: "1" },
+        { CLAUDECODE: "1", CODEX_THREAD_ID: "thread-1" },
+      ]) {
+        const error = yield* runCaaraAgentStart({
+          args: [],
+          prompt: "delegate",
+          target: "claude/sonnet",
+          cwd: "/workspace",
+          driverOptions: {},
+          api,
+          env: { ...env, ...markers },
+        }).pipe(
+          Effect.catchTag("CaaraSettingsError", (settingsError) => Effect.die(settingsError)),
+          Effect.flip,
+        );
+        assert.strictEqual(error.kind, "invalid_request");
+      }
     }),
   );
 

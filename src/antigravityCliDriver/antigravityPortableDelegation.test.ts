@@ -45,6 +45,10 @@ const FakeAgyInvocation = Schema.Struct({
   cwd: Schema.String,
   args: Schema.Array(Schema.String),
   prompt: Schema.String,
+  delegation: Schema.Struct({
+    harness: Schema.NullOr(Schema.String),
+    depth: Schema.NullOr(Schema.String),
+  }),
 });
 
 /** Converts unknown fixture IO failures into a typed test failure. */
@@ -113,11 +117,11 @@ const makeTestServerApi = ({
     return { status: response.status, body: yield* response.json };
   });
   return {
-    post: ({ url, body }) =>
-      HttpClientRequest.bodyJson(HttpClientRequest.post(new URL(url).pathname), body).pipe(
-        Effect.flatMap(execute),
-        Effect.orDie,
-      ),
+    post: ({ url, body, headers = {} }) =>
+      HttpClientRequest.bodyJson(
+        HttpClientRequest.setHeaders(HttpClientRequest.post(new URL(url).pathname), headers),
+        body,
+      ).pipe(Effect.flatMap(execute), Effect.orDie),
     get: (url) =>
       execute(HttpClientRequest.get(`${new URL(url).pathname}${new URL(url).search}`)).pipe(
         Effect.orDie,
@@ -161,17 +165,28 @@ const portableAgyLayer = ({
   );
 };
 
+/**
+ * Calling-process environment with no inherited host markers; each test adds the markers of the
+ * harness it simulates. HOME points at a missing directory so no user config is read.
+ */
+const callerEnvironment = (
+  markers: Readonly<Record<string, string>> = {},
+): Readonly<Record<string, string>> => ({ HOME: "/nonexistent/caara-test-home", ...markers });
+
 /** Starts one Antigravity turn through CLI adaptation and the real portable HTTP router. */
 const startAgyTurn = ({
   api,
   prompt,
   sessionId,
+  env = callerEnvironment(),
 }: {
   readonly api: CaaraAgentApi;
   readonly prompt: string;
   readonly sessionId?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }) =>
   runCaaraAgentStart({
+    env,
     args: ["--host", "127.0.0.1", "--port", "8787"],
     prompt,
     target: "agy/gemini-3.5-flash",
@@ -198,6 +213,7 @@ const proveFirstAndResume = Effect.fnUntraced(function* (fixture: PortableAgyFix
     api,
     prompt: "resumed portable agy prompt",
     sessionId: first.sessionId,
+    env: callerEnvironment({ CLAUDECODE: "1" }),
   });
   const resumedWait = yield* runCaaraAgentWait({
     args: [],
@@ -234,6 +250,26 @@ const proveFirstAndResume = Effect.fnUntraced(function* (fixture: PortableAgyFix
     argumentValue({ args: invocations[1]?.args ?? [], name: "--conversation" }),
     fakeAgyFixture.conversationId,
   );
+  assert.deepStrictEqual(invocations[0]?.delegation, { harness: "agy", depth: "1" });
+  assert.deepStrictEqual(invocations[1]?.delegation, { harness: "agy", depth: "1" });
+});
+
+/** Proves the guidance-set Antigravity marker blocks same-harness delegation before spawning. */
+const proveSameHarnessRejection = Effect.fnUntraced(function* (fixture: PortableAgyFixture) {
+  const api = makeTestServerApi({ client: yield* HttpClient.HttpClient });
+  const error = yield* startAgyTurn({
+    api,
+    prompt: "same-harness agy prompt",
+    env: callerEnvironment({ CAARA_HARNESS: "agy" }),
+  }).pipe(
+    Effect.catchTag("CaaraSettingsError", (settingsError) => Effect.die(settingsError)),
+    Effect.flip,
+  );
+  const journalExists = yield* Effect.promise(() => Bun.file(fixture.invocationLog).exists());
+
+  assert.strictEqual(error.kind, "target_failure");
+  assert.match(error.message, /Antigravity's native subagents/u);
+  assert.isFalse(journalExists);
 });
 
 /** Runs overlap rejection and conservative cancellation assertions against a provided server. */
@@ -291,6 +327,14 @@ describe("Antigravity portable delegation", () => {
       const fixture = yield* makeFixture();
       const layer = portableAgyLayer({ fixture, fakeMode: "portable-success" });
       yield* proveFirstAndResume(fixture).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.live("rejects Antigravity calling Antigravity before the executable starts", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const layer = portableAgyLayer({ fixture, fakeMode: "portable-success" });
+      yield* proveSameHarnessRejection(fixture).pipe(Effect.provide(layer));
     }),
   );
 

@@ -5,6 +5,11 @@ import { Context, Effect, Layer, Match, Option, Ref, Schema } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 import { Command, Flag } from "effect/unstable/cli";
 
+import {
+  DelegationMaximumDepth,
+  defaultDelegationMaximumDepth,
+} from "./mockResponsesProvider/agentDelegation.ts";
+
 /** Runtime-wide Caara settings shared by the server and external-agent drivers. */
 export interface CaaraSettingsValue {
   readonly host: string;
@@ -12,6 +17,12 @@ export interface CaaraSettingsValue {
   readonly allowDangerousSkipPermissions: boolean;
   readonly path: readonly string[];
   readonly logFile: string | undefined;
+  readonly delegation: CaaraDelegationSettings;
+}
+
+/** Service-owned bounds on nested harness delegation through Caara. */
+export interface CaaraDelegationSettings {
+  readonly maximumDepth: number;
 }
 
 /** Environment shape used to resolve default Caara config paths. */
@@ -73,6 +84,7 @@ export const defaultCaaraSettingsValue: CaaraSettingsValue = {
   allowDangerousSkipPermissions: false,
   path: [],
   logFile: undefined,
+  delegation: { maximumDepth: defaultDelegationMaximumDepth },
 };
 
 /** Lowest TCP port value accepted by startup and config parsing. */
@@ -88,6 +100,7 @@ const caaraServiceConfigKeys = new Set([
   "allowDangerousSkipPermissions",
   "path",
   "logFile",
+  "delegation",
 ]);
 
 /** Strict decoded shape for one Caara service YAML document. */
@@ -99,6 +112,11 @@ const CaaraServiceConfig = Schema.Struct({
   allowDangerousSkipPermissions: Schema.optionalKey(Schema.Boolean),
   path: Schema.optionalKey(Schema.Array(Schema.NonEmptyString)),
   logFile: Schema.optionalKey(Schema.NonEmptyString),
+  delegation: Schema.optionalKey(
+    Schema.Struct({
+      maximumDepth: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+    }),
+  ),
 });
 
 /** Strict decoded type for one Caara service YAML document. */
@@ -534,6 +552,10 @@ const mergeSettings = Effect.fnUntraced(function* ({
       defaultCaaraSettingsValue.allowDangerousSkipPermissions,
     path: config.path ?? defaultCaaraSettingsValue.path,
     logFile: config.logFile ?? defaultCaaraSettingsValue.logFile,
+    delegation: {
+      maximumDepth:
+        config.delegation?.maximumDepth ?? defaultCaaraSettingsValue.delegation.maximumDepth,
+    },
   } satisfies CaaraSettingsValue;
 });
 
@@ -588,3 +610,9 @@ export const caaraSettingsLayerFromArgs = ({ args }: { readonly args: readonly s
 export const caaraSettingsDefaultLayer = caaraSettingsLayerFromValue({
   settings: defaultCaaraSettingsValue,
 });
+
+/** Applies the configured `delegation.maximumDepth` to every Agent turn the service runs. */
+export const caaraDelegationMaximumDepthLayer = Layer.effect(
+  DelegationMaximumDepth,
+  Effect.map(CaaraSettings, (settings) => settings.delegation.maximumDepth),
+);

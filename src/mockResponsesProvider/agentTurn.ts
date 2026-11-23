@@ -1,6 +1,7 @@
 import { Effect, Exit, Match, Option, Ref, Schema, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
+import { DelegationMaximumDepth, enforceDelegationPolicy } from "./agentDelegation.ts";
 import {
   type AgentDriverError,
   AgentDriverRegistry,
@@ -67,6 +68,11 @@ const interruptedExitOption = (
 
 /** Starts or resumes one Agent turn and owns its complete runtime lifecycle. */
 export const runAgentTurn = Effect.fnUntraced(function* (request: AgentTurnRequest) {
+  yield* enforceDelegationPolicy({
+    delegation: request.delegation,
+    externalAgentKind: request.target.externalAgentKind,
+    maximumDepth: yield* DelegationMaximumDepth,
+  });
   const relayLogger = yield* RelayLogger;
   const driverRegistry = yield* AgentDriverRegistry;
   const sessionDirectory = yield* SessionDirectory;

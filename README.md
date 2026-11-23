@@ -310,7 +310,9 @@ turns targeting unavailable drivers fail explicitly.
 | macOS service               | `dev.caara` in `~/Library/LaunchAgents/dev.caara.plist`                           |
 | Linux service               | `caara.service` in `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/caara.service` |
 
-Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, `logFile`.
+Config keys are strict YAML: `host`, `port`, `allowDangerousSkipPermissions`, `path`, `logFile`,
+and `delegation.maximumDepth` (default `3`: how many nested Caara-spawned harnesses may run; Caara
+also rejects a harness delegating to itself and points it at its native subagents).
 CLI flags override YAML; YAML overrides built-in defaults. Foreground runs prepend config `path`
 entries to the inherited `PATH`; installed services prepend them to built-in defaults including
 `$HOME/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin`.

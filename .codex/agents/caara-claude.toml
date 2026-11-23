@@ -13,3 +13,4 @@ requires_openai_auth = false
 request_max_retries = 0
 stream_max_retries = 0
 query_params = { additional_directories = "$TMPDIR", allowed_tools = "Write($TMPDIR/caara-panel/smoke/**),Edit($TMPDIR/caara-panel/smoke/**)", permission_mode = "dontAsk" }
+env_http_headers = { "x-caara-harness" = "CAARA_HARNESS", "x-caara-delegation-depth" = "CAARA_DELEGATION_DEPTH" }

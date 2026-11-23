@@ -70,23 +70,12 @@ const recordingHandlers = ({ events }: { readonly events: string[] }): CaaraCliH
     events,
   }),
   agentStart: {
-    run: Effect.fnUntraced(function* ({
-      args,
-      prompt,
-      target,
-      cwd,
-      driverOptions,
-      originMetadata,
-      json,
-    }) {
+    run: Effect.fnUntraced(function* ({ args, prompt, target, cwd, driverOptions, json }) {
       const encodedOptions = yield* Schema.encodeEffect(
         Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
       )(driverOptions);
-      const encodedOrigin = yield* Schema.encodeEffect(
-        Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
-      )(originMetadata ?? {});
       events.push(
-        `agent-start:${args.join(" ")}:${target}:${cwd}:${encodedOptions}:${encodedOrigin}:${String(json)}:${prompt}`,
+        `agent-start:${args.join(" ")}:${target}:${cwd}:${encodedOptions}:${String(json)}:${prompt}`,
       );
     }),
   },
@@ -199,12 +188,6 @@ describe("Caara root CLI", () => {
         "/tmp",
         "--option",
         "alpha=β",
-        "--origin-lineage",
-        "claude-root",
-        "--origin-lineage",
-        "codex",
-        "--origin-depth",
-        "2",
         "--json",
         "--prompt",
         "safe prompt",
@@ -224,7 +207,7 @@ describe("Caara root CLI", () => {
         "uninstall-claude-guidance:",
         "install-antigravity-guidance:",
         "uninstall-antigravity-guidance:",
-        'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:{"caaraLineage":"claude-root,codex","caaraDepth":"2"}:true:safe prompt',
+        'agent-start:--port 8799:diagnostic/activity:/tmp:{"alpha":"β"}:true:safe prompt',
         "agent-wait:--port 8799:turn-1:false",
         "agent-mcp",
       ]);

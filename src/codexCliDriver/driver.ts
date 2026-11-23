@@ -2,6 +2,7 @@ import { Effect, Match, Option, Stream } from "effect";
 import type { Effect as EffectContract } from "effect/Effect";
 
 import { extractAntigravityCliPrompt } from "../antigravityCliDriver/prompt.ts";
+import { delegationChildEnvironment } from "../mockResponsesProvider/agentDelegation.ts";
 import {
   type AgentCancellationOutcome,
   type AgentDriver,
@@ -24,8 +25,8 @@ export interface CodexCliInvocation {
   readonly model: string;
   readonly prompt: string;
   readonly resumeSessionId?: string;
-  readonly lineage: readonly string[];
-  readonly depth: number;
+  /** Delegation markers Caara injects into the Codex process environment. */
+  readonly delegationEnvironment: Readonly<Record<string, string>>;
 }
 
 /** Driver-local activity emitted by a Codex execution harness. */
@@ -48,84 +49,6 @@ export interface CodexCliClient {
     invocation: CodexCliInvocation,
   ) => EffectContract<CodexCliRunningTurn, AgentDriverError>;
 }
-
-/** Metadata key carrying the comma-separated portable delegation lineage. */
-export const caaraLineageMetadataKey = (): string => "caaraLineage";
-
-/** Metadata key carrying the current portable delegation depth. */
-export const caaraDepthMetadataKey = (): string => "caaraDepth";
-
-/** Resolves the configurable Codex recursion limit with explicit invalid-value failure. */
-export const codexMaximumDepthFromEnvironment = ({
-  env,
-}: {
-  readonly env: Readonly<Record<string, string | undefined>>;
-}): EffectContract<number, AgentDriverError> => {
-  const maximumDepth = Number(env.CAARA_CODEX_MAXIMUM_DEPTH ?? "3");
-  return Effect.filterOrFail(
-    Effect.succeed(maximumDepth),
-    (value) => Number.isSafeInteger(value) && value > 0,
-    () =>
-      createInvalidPromptAgentDriverError({
-        message: "CAARA_CODEX_MAXIMUM_DEPTH must be a positive integer.",
-      }),
-  );
-};
-
-/** Parses transport-neutral lineage metadata into normalized driver input. */
-const delegationOrigin = ({
-  metadata,
-}: {
-  readonly metadata: Readonly<Record<string, string>>;
-}): EffectContract<
-  { readonly lineage: readonly string[]; readonly depth: number },
-  AgentDriverError
-> => {
-  const lineage = (metadata[caaraLineageMetadataKey()] ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  const rawDepth = metadata[caaraDepthMetadataKey()] ?? "0";
-  const depth = Number(rawDepth);
-  return Match.value(Number.isSafeInteger(depth) && depth >= 0).pipe(
-    Match.when(true, () => Effect.succeed({ lineage, depth })),
-    Match.orElse(() =>
-      Effect.fail(
-        createInvalidPromptAgentDriverError({
-          message: "Invalid Caara delegation depth metadata.",
-        }),
-      ),
-    ),
-  );
-};
-
-/** Rejects recursive or excessively deep Codex delegation before harness startup. */
-const enforceRecursionPolicy = ({
-  lineage,
-  depth,
-  maximumDepth,
-}: {
-  readonly lineage: readonly string[];
-  readonly depth: number;
-  readonly maximumDepth: number;
-}): EffectContract<void, AgentDriverError> =>
-  Effect.filterOrFail(
-    Effect.succeed({ lineage, depth }),
-    () => !lineage.includes("codex") && depth < maximumDepth,
-    () =>
-      Match.value(lineage.includes("codex")).pipe(
-        Match.when(true, () =>
-          createInvalidPromptAgentDriverError({
-            message: "Codex-to-Caara recursion rejected for the active delegation lineage.",
-          }),
-        ),
-        Match.orElse(() =>
-          createInvalidPromptAgentDriverError({
-            message: `Caara delegation depth ${depth} reached configured maximum ${maximumDepth}.`,
-          }),
-        ),
-      ),
-  ).pipe(Effect.asVoid);
 
 /** Maps one Codex harness activity into common viewer/runtime events. */
 const normalizeCodexActivity = (activity: CodexCliActivity): readonly AgentRuntimeEvent[] =>
@@ -160,42 +83,6 @@ const resumeSessionId = (externalSession: unknown): string | undefined =>
     ),
   );
 
-/** Reads durable delegation origin from a resumable Codex session when available. */
-const durableDelegationOrigin = (
-  externalSession: unknown,
-): { readonly lineage: readonly string[]; readonly depth: number } | undefined =>
-  [externalSession]
-    .filter(
-      (session): session is DurableExternalSession =>
-        session instanceof DurableExternalSession &&
-        session.delegationLineage !== undefined &&
-        session.delegationDepth !== undefined,
-    )
-    .map((session) => ({
-      lineage: session.delegationLineage ?? [],
-      depth: session.delegationDepth ?? 0,
-    }))
-    .at(0);
-
-/** Adds mandatory nested-delegation metadata instructions to the Codex task. */
-const promptWithDelegationOrigin = ({
-  prompt,
-  lineage,
-  depth,
-}: {
-  readonly prompt: string;
-  readonly lineage: readonly string[];
-  readonly depth: number;
-}): string =>
-  [
-    prompt,
-    "",
-    "Caara delegation invariant: for every nested Caara start, pass originMetadata exactly as:",
-    `caaraLineage=${lineage.join(",")}`,
-    `caaraDepth=${String(depth)}`,
-    "Never remove or reset this metadata.",
-  ].join("\n");
-
 /** Starts Codex, recovering explicitly when a durable resume cursor is unavailable. */
 const startWithLostSessionRecovery = Effect.fnUntraced(function* ({
   client,
@@ -220,8 +107,7 @@ const startWithLostSessionRecovery = Effect.fnUntraced(function* ({
         cwd: invocation.cwd,
         model: invocation.model,
         prompt: lostSessionRecoveryDriverPrompt,
-        lineage: invocation.lineage,
-        depth: invocation.depth,
+        delegationEnvironment: invocation.delegationEnvironment,
       });
       return {
         running,
@@ -234,13 +120,11 @@ const startWithLostSessionRecovery = Effect.fnUntraced(function* ({
   });
 });
 
-/** Creates the Codex external Agent driver with explicit recursion controls. */
+/** Creates the Codex external Agent driver around an injectable Codex harness client. */
 export const createCodexCliAgentDriver = ({
   client,
-  maximumDepth,
 }: {
   readonly client: CodexCliClient;
-  readonly maximumDepth: number;
 }): AgentDriver => ({
   preflight: ({ target }) =>
     Match.value(target.externalAgentKind).pipe(
@@ -252,15 +136,7 @@ export const createCodexCliAgentDriver = ({
       ),
     ),
   startOrResumeTurn: Effect.fnUntraced(function* (turn) {
-    const incomingOrigin = yield* delegationOrigin({ metadata: turn.context.origin.metadata });
-    const origin = durableDelegationOrigin(turn.externalSession) ?? incomingOrigin;
-    yield* enforceRecursionPolicy({ ...origin, maximumDepth });
-    const rawPrompt = yield* extractAntigravityCliPrompt(turn.prompt);
-    const propagatedOrigin = {
-      lineage: [...origin.lineage, "codex"],
-      depth: origin.depth + 1,
-    } as const;
-    const prompt = promptWithDelegationOrigin({ prompt: rawPrompt, ...propagatedOrigin });
+    const prompt = yield* extractAntigravityCliPrompt(turn.prompt);
     const started = yield* startWithLostSessionRecovery({
       client,
       invocation: {
@@ -268,7 +144,10 @@ export const createCodexCliAgentDriver = ({
         model: turn.target.externalModelSpecifier,
         prompt,
         resumeSessionId: resumeSessionId(turn.externalSession),
-        ...propagatedOrigin,
+        delegationEnvironment: delegationChildEnvironment({
+          delegation: turn.context.delegation,
+          harness: "codex",
+        }),
       },
     });
     const running = started.running;
@@ -278,8 +157,6 @@ export const createCodexCliAgentDriver = ({
       ),
       externalSession: new DurableExternalSession({
         driverResumeCursor: makeDriverResumeCursor(running.sessionId),
-        delegationLineage: origin.lineage,
-        delegationDepth: origin.depth,
       }),
       cancel: running.cancel,
       lostSessionRecovery: started.lostSessionRecovery,

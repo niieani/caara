@@ -36,7 +36,7 @@ export const renderAntigravityPortableGuidanceBlock = (): string =>
     "",
     "1. Select the explicit different-family target `claude/sonnet` and an absolute working directory.",
     "2. Write arbitrary or multiline task text to a file without interpolating it into shell syntax.",
-    "3. Run `caara agent start --json --target claude/sonnet --cwd CWD --prompt-file PROMPT_FILE`. Accepted starts exit 10. Parse its JSON and immediately show `observationUrl` to the user as a clickable human-only link.",
+    "3. Run `CAARA_HARNESS=agy caara agent start --json --target claude/sonnet --cwd CWD --prompt-file PROMPT_FILE`. Always keep the `CAARA_HARNESS=agy` prefix: it tells Caara that Antigravity is the caller. Accepted starts exit 10. Parse its JSON and immediately show `observationUrl` to the user as a clickable human-only link.",
     "4. Never open, fetch, inspect, or summarize `observationUrl`. Never pass it to a tool or model. It is a bearer capability containing private agent activity.",
     "5. Repeatedly run `caara agent wait --json --timeout-millis 30000 TURN_ID`. Exit 11 means working; wait again. At terminal completion consume only `finalAnswer`, never reasoning, tool activity, transcript, or viewer HTML.",
     "6. To stop, run `caara agent cancel --json TURN_ID`. Successful cancellation exits 12. Honor `sessionReusable` before a follow-up using `--session-id`.",

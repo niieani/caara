@@ -1,8 +1,9 @@
 # Agent Turn is the transport-neutral lifecycle seam
 
 Responses, CLI, MCP, and future adapters decode their transport contracts into one `AgentTurnContext`:
-portable session identity, optional requested working directory, origin metadata, and normalized
-advisories. Raw Responses requests, Codex headers, and Codex-only identity fields do not cross this
+portable session identity, optional requested working directory, the originating transport, the
+Caara-derived delegation context (see
+`2026-11-22-delegation-context-is-derived-by-caara.md`), and normalized advisories. Raw Responses requests, Codex headers, and Codex-only identity fields do not cross this
 boundary. Responses owns its Codex-to-Agent-Turn adapter; drivers, session storage, and concurrency
 consume only the neutral context.
 

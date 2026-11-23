@@ -4,6 +4,7 @@ import { Effect, Layer, Match, Option, Stream } from "effect";
 import * as Path from "effect/Path";
 
 import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import {
   AgentDriverRegistry,
   type AgentDriverTurn,
@@ -177,6 +178,7 @@ const makeTurn = ({
   readonly rawDriverOptions?: Readonly<Record<string, string>>;
 } = {}): AgentDriverTurn => ({
   context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
     codex: new CodexTurnContext({
       parentSessionId: "parent-session-sdk-recovery",
       threadId: "codex-thread-sdk-recovery",

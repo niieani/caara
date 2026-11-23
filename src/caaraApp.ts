@@ -8,6 +8,7 @@ import {
   rotateCaaraLogFile,
 } from "./caaraLogging.ts";
 import {
+  caaraDelegationMaximumDepthLayer,
   CaaraSettings,
   caaraSettingsLayerFromArgs,
   caaraSettingsLayerFromValue,
@@ -67,6 +68,7 @@ const caaraAppLoggingLayerFromFile = ({ logFile }: { readonly logFile: string })
 
 /** Builds the live application layer before app-owned logging is attached. */
 const runtimeLayerWithoutLogging = mockResponsesServerLayer.pipe(
+  Layer.provideMerge(caaraDelegationMaximumDepthLayer),
   Layer.provideMerge(sessionDirectoryLayer),
   Layer.provideMerge(turnConcurrencyLive),
   Layer.provideMerge(caaraAgentDriverLive),

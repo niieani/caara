@@ -18,10 +18,7 @@ import {
   type CaaraSettingsValue,
 } from "../caaraSettings.ts";
 import { liveCodexCliClient } from "../codexCliDriver/client.ts";
-import {
-  codexMaximumDepthFromEnvironment,
-  createCodexCliAgentDriver,
-} from "../codexCliDriver/driver.ts";
+import { createCodexCliAgentDriver } from "../codexCliDriver/driver.ts";
 import {
   AgentDriverRegistry,
   type AgentCancellationOutcome,
@@ -291,6 +288,7 @@ const sdkQueryTurnResult = Effect.fnUntraced(function* ({
     pathToClaudeCodeExecutable,
     rawDriverOptions: turn.target.rawDriverOptions,
     startup,
+    delegation: turn.context.delegation,
   });
   const activityTransportVisibility = yield* parseClaudeAgentSdkActivityTransportVisibility(
     turn.target.rawDriverOptions,
@@ -407,6 +405,7 @@ const recoverWithFreshSdkSession = Effect.fnUntraced(function* ({
     pathToClaudeCodeExecutable,
     rawDriverOptions: turn.target.rawDriverOptions,
     startup: { _tag: "Start", sessionId },
+    delegation: turn.context.delegation,
   });
   yield* client.query({ prompt: lostSessionRecoveryDriverPrompt, options }).pipe(
     Effect.mapError((error) =>
@@ -608,11 +607,7 @@ export const caaraAgentDriverRegistryLive = Layer.effect(
       pathService,
       spawner,
     });
-    const codexMaximumDepth = yield* codexMaximumDepthFromEnvironment({ env: process.env });
-    const codexCliDriver = createCodexCliAgentDriver({
-      client: liveCodexCliClient,
-      maximumDepth: codexMaximumDepth,
-    });
+    const codexCliDriver = createCodexCliAgentDriver({ client: liveCodexCliClient });
     const resolve: AgentDriverResolve = (target) =>
       Match.value(target.externalAgentKind).pipe(
         Match.when("claude", () => Effect.succeed(claudeDriver)),

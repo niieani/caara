@@ -25,7 +25,7 @@ describe("Antigravity portable guidance", () => {
     assert.ok(source.startsWith(antigravityPortableGuidanceBeginMarker()));
     assert.ok(source.endsWith(antigravityPortableGuidanceEndMarker()));
     assert.match(source, /claude\/sonnet/u);
-    assert.match(source, /caara agent start --json/u);
+    assert.match(source, /`CAARA_HARNESS=agy caara agent start --json/u);
     assert.match(source, /--prompt-file/u);
     assert.match(source, /immediately.+observationUrl/isu);
     assert.match(source, /never open, fetch, inspect, or summarize/iu);

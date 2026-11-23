@@ -9,6 +9,7 @@ import { Effect, Layer, Match, Option } from "effect";
 import * as Path from "effect/Path";
 
 import { caaraSettingsDefaultLayer } from "../caaraSettings.ts";
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import {
   AgentDriverRegistry,
   type AgentCancellationOutcome,
@@ -362,7 +363,10 @@ export const makeTurn = ({
 }: {
   readonly externalSession?: DurableExternalSession;
 } = {}): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: makeCodex({ requestedCwd: projectRoot }) }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: makeCodex({ requestedCwd: projectRoot }),
+  }),
   target: makeTarget(),
   prompt: {
     input: [

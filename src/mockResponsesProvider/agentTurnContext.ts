@@ -1,3 +1,5 @@
+import type { AgentTurnDelegation } from "./agentDelegation.ts";
+
 /** Stable transport-neutral identity of an Agent session and its current turn. */
 export interface AgentTurnSessionIdentity {
   readonly sessionId: string;
@@ -5,10 +7,9 @@ export interface AgentTurnSessionIdentity {
   readonly turnId: string;
 }
 
-/** Metadata identifying the adapter that originated an Agent turn. */
+/** Identifies the transport adapter that originated an Agent turn. */
 export interface AgentTurnOrigin {
   readonly transport: string;
-  readonly metadata: Readonly<Record<string, string>>;
 }
 
 /** Transport-neutral advisory signals an external-agent driver may interpret. */
@@ -21,6 +22,7 @@ export interface AgentTurnAdvisories {
 export interface AgentTurnContext {
   readonly identity: AgentTurnSessionIdentity;
   readonly origin: AgentTurnOrigin;
+  readonly delegation: AgentTurnDelegation;
   readonly advisories: AgentTurnAdvisories;
   readonly requestedCwd: string | undefined;
 }

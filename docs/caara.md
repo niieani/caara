@@ -134,7 +134,8 @@ result with `schemaVersion: 1`. Exit statuses are: 0 completed, 10 accepted, 11 
 21 cancelled, 64 invalid request, 66 unknown turn/session, 69 unavailable service, 70 target
 failure, and 75 concurrency/cancellation conflict. Errors go to stderr; successful and nonterminal
 results go to stdout. Agent automation should always pass `--json` and branch on both the typed
-status and process exit status.
+status and process exit status. There are no caller, lineage, or depth flags: Caara derives the
+[delegation context](#delegation-context) from the calling process environment.
 The real Claude portable smoke flow—resume, caller blindness, capability viewer, and reusable
 cancellation—is documented in `docs/agents/smoke-prompts/cli-claude.md`.
 
@@ -187,6 +188,8 @@ allowDangerousSkipPermissions: false
 path:
   - /absolute/path/to/bin
 logFile: /absolute/path/to/caara.log
+delegation:
+  maximumDepth: 3
 ```
 
 Rules:
@@ -195,7 +198,8 @@ Rules:
 - Missing default config is allowed and uses built-in defaults.
 - Missing explicit `--config` fails.
 - Malformed YAML, multi-document YAML, unknown keys, wrong types, empty `host`, invalid `port`,
-  relative `path` entries, and relative `logFile` fail explicitly.
+  relative `path` entries, relative `logFile`, and a `delegation.maximumDepth` that is not an
+  integer of at least 1 fail explicitly.
 - Existing config is preserved by `install-service` unless explicit install flags update service
   settings. Install output says whether config was created, preserved, or updated.
 
@@ -208,6 +212,7 @@ Built-in defaults:
 | `allowDangerousSkipPermissions` | `false` |
 | `path` | `[]` |
 | `logFile` | `${XDG_STATE_HOME:-$HOME/.local/state}/caara/logs/caara.log` |
+| `delegation.maximumDepth` | `3` |
 
 Non-loopback hosts are allowed but dangerous. Caara has no authentication layer. Binding to
 `0.0.0.0`, `::`, or another non-loopback address can expose a code-agent bridge to the network and
@@ -215,6 +220,44 @@ should only be used in controlled setups such as containerized isolation with bi
 workspaces. This posture also exposes portable-delegation endpoints and human observation pages.
 Observation URLs are bearer capabilities: anyone who receives one can inspect that agent's
 activity until retention expires it. Do not expose the viewer to an untrusted network.
+
+## Delegation Context
+
+Caara derives the delegation context of every Agent turn itself; callers never pass lineage or
+depth. The context has two parts:
+
+- the **immediate caller harness** (`claude`, `agy`, or `codex`), or none for a direct human,
+  script, or raw HTTP call;
+- the **delegation depth**: the number of Caara-spawned harnesses above the caller. Direct
+  invocation is depth 0, and every harness Caara spawns runs at its caller's depth plus one.
+
+Caara injects `CAARA_HARNESS=<spawned harness>` and `CAARA_DELEGATION_DEPTH=<depth + 1>` into the
+Claude Agent SDK query environment, the `agy` process, and the `codex exec` process. Resumed
+sessions derive the context again on each turn; it is never stored in session bindings.
+
+The caller is derived at each boundary, in order:
+
+| Boundary | Caara's marker (wins) | Verified native marker |
+| --- | --- | --- |
+| `caara agent` CLI and `caara agent-mcp` | `CAARA_HARNESS` and optional `CAARA_DELEGATION_DEPTH` in the process environment | `CLAUDECODE=1` (Claude Code Bash tool and MCP servers), `CODEX_THREAD_ID` (Codex shell commands) |
+| Portable HTTP `POST /agent/turns` | `x-caara-harness` and `x-caara-delegation-depth` headers, sent by the CLI and MCP adapters | none: a raw call is direct |
+| Responses `/v1/responses` | the same headers, forwarded by installed roles through `env_http_headers` | the required Codex subagent identity headers: the caller is Codex |
+
+A harness marker without a depth is depth 0 (installed Antigravity guidance sets only
+`CAARA_HARNESS=agy`). A depth without a harness, an unknown harness, a non-canonical depth,
+a malformed native marker, several distinct native markers with no Caara marker, or a Responses
+`x-caara-harness` other than `codex` fails explicitly as an invalid request. Antigravity has no
+verified native marker, so it relies on Caara's marker.
+
+Before any executable or SDK query starts, the Agent Turn seam rejects:
+
+- an immediate caller/target match (Claude → Claude, Antigravity → Antigravity, Codex → Codex),
+  naming that harness's native subagents instead;
+- a harness target once the incoming depth reaches `delegation.maximumDepth` (default 3: three
+  harness entries are allowed, the fourth is rejected).
+
+Repeated non-adjacent harnesses, such as Codex → Claude → Codex, are allowed. The Diagnostic
+driver spawns no harness and is never limited.
 
 ## Service Execution Path And Logs
 
@@ -824,6 +867,10 @@ Role update rules:
 - Caara writes only role names from its managed catalog.
 - Unmarked same-name files cause a hard failure; Caara will not overwrite user roles.
 - Marked files are regenerated around preserved `[model_providers.caara].query_params`.
+- Every generated provider sets
+  `env_http_headers = { "x-caara-harness" = "CAARA_HARNESS", "x-caara-delegation-depth" = "CAARA_DELEGATION_DEPTH" }`,
+  so a Caara-spawned Codex forwards its [delegation context](#delegation-context) to Responses.
+  Codex omits each header when its variable is unset.
 - Marked roles for drivers that are no longer found are removed as stale.
 - `uninstall-codex-roles` removes only marked Caara roles.
 
@@ -894,6 +941,7 @@ requires_openai_auth = false
 request_max_retries = 0
 stream_max_retries = 0
 query_params = { additional_directories = "$TMPDIR", allowed_tools = "Write($TMPDIR/caara-panel/smoke/**),Edit($TMPDIR/caara-panel/smoke/**)", permission_mode = "dontAsk" }
+env_http_headers = { "x-caara-harness" = "CAARA_HARNESS", "x-caara-delegation-depth" = "CAARA_DELEGATION_DEPTH" }
 ```
 
 Current local Fable role:

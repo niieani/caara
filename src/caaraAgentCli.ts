@@ -19,6 +19,12 @@ import type { CaaraConfigLoader, CaaraSettingsEnvironment } from "./caaraSetting
 import { resolveCaaraSettingsFromArgs } from "./caaraSettings.ts";
 import { caaraHealthProbeUrl } from "./caaraStatus.ts";
 import {
+  type AgentTurnDelegation,
+  caaraDelegationDepthHeader,
+  caaraHarnessHeader,
+  resolveDelegationFromEnvironment,
+} from "./mockResponsesProvider/agentDelegation.ts";
+import {
   PortableAgentCancelResponse,
   PortableAgentStartServiceResponse,
   PortableAgentWaitResponse,
@@ -66,6 +72,7 @@ export interface CaaraAgentApi {
   readonly post: (input: {
     readonly url: string;
     readonly body: Schema.Json;
+    readonly headers?: Readonly<Record<string, string>>;
   }) => EffectContract<CaaraAgentApiResponse, CaaraAgentCliError>;
   readonly get: (url: string) => EffectContract<CaaraAgentApiResponse, CaaraAgentCliError>;
 }
@@ -78,7 +85,6 @@ export interface RunCaaraAgentStartOptions {
   readonly cwd: string;
   readonly driverOptions: Readonly<Record<string, string>>;
   readonly sessionId?: string;
-  readonly originMetadata?: Readonly<Record<string, string>>;
   readonly api?: CaaraAgentApi;
   readonly configLoader?: CaaraConfigLoader;
   readonly env?: CaaraSettingsEnvironment;
@@ -169,8 +175,11 @@ const readHttpResponse = Effect.fnUntraced(function* (response: {
 
 /** Live HTTP implementation used by installed `caara agent` commands. */
 export const liveCaaraAgentApi: CaaraAgentApi = {
-  post: ({ url, body }) =>
-    HttpClientRequest.bodyJson(HttpClientRequest.post(url), body).pipe(
+  post: ({ url, body, headers = {} }) =>
+    HttpClientRequest.bodyJson(
+      HttpClientRequest.setHeaders(HttpClientRequest.post(url), headers),
+      body,
+    ).pipe(
       Effect.flatMap(HttpClient.execute),
       Effect.flatMap(readHttpResponse),
       Effect.mapError(unavailableServiceError),
@@ -207,6 +216,22 @@ const requireSuccessfulResponse = Effect.fnUntraced(function* (response: CaaraAg
   return yield* cliError(error.error);
 });
 
+/**
+ * Encodes the caller derived from this process environment as Caara's marker headers, so the
+ * service applies the same delegation context the CLI or MCP host established. A direct call sends
+ * no marker.
+ */
+const delegationMarkerHeaders = (
+  delegation: AgentTurnDelegation,
+): Readonly<Record<string, string>> =>
+  Option.match(Option.fromUndefinedOr(delegation.caller), {
+    onNone: () => ({}),
+    onSome: (caller) => ({
+      [caaraHarnessHeader()]: caller,
+      [caaraDelegationDepthHeader()]: String(delegation.depth),
+    }),
+  });
+
 /** Starts one portable Agent turn through the running user service. */
 export const runCaaraAgentStart = Effect.fnUntraced(function* ({
   args,
@@ -215,14 +240,17 @@ export const runCaaraAgentStart = Effect.fnUntraced(function* ({
   cwd,
   driverOptions,
   sessionId,
-  originMetadata,
   api = liveCaaraAgentApi,
   configLoader,
-  env,
+  env = process.env,
 }: RunCaaraAgentStartOptions) {
+  const delegation = yield* resolveDelegationFromEnvironment({ env }).pipe(
+    Effect.mapError((error) => cliError({ kind: "invalid_request", message: error.message })),
+  );
   const origin = yield* resolveAgentServiceOrigin({ args, configLoader, env });
   const response = yield* api.post({
     url: `${origin}/agent/turns`,
+    headers: delegationMarkerHeaders(delegation),
     body: {
       prompt,
       target,
@@ -231,10 +259,6 @@ export const runCaaraAgentStart = Effect.fnUntraced(function* ({
       ...Option.match(Option.fromUndefinedOr(sessionId), {
         onNone: () => ({}),
         onSome: (selected) => ({ sessionId: selected }),
-      }),
-      ...Option.match(Option.fromUndefinedOr(originMetadata), {
-        onNone: () => ({}),
-        onSome: (metadata) => ({ originMetadata: metadata }),
       }),
     },
   });

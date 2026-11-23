@@ -2,6 +2,12 @@ import { TOML } from "bun";
 import { Effect, Match, Schema } from "effect";
 
 import type { CaaraCodexRoleDefinition } from "./codexRoleCatalog.ts";
+import {
+  caaraDelegationDepthEnvironmentVariable,
+  caaraDelegationDepthHeader,
+  caaraHarnessEnvironmentVariable,
+  caaraHarnessHeader,
+} from "./mockResponsesProvider/agentDelegation.ts";
 
 /** Query parameters preserved and rendered inside the Caara model provider block. */
 export type CodexRoleQueryParams = Readonly<Record<string, string>>;
@@ -63,6 +69,13 @@ const renderQueryParams = (queryParams: CodexRoleQueryParams): string => {
   );
 };
 
+/**
+ * Renders the provider headers that forward Caara's delegation markers from a Caara-spawned Codex
+ * process environment to the Responses transport. Codex omits a header whose variable is unset.
+ */
+const renderDelegationMarkerHeaders = (): string =>
+  `{ ${tomlString(caaraHarnessHeader())} = ${tomlString(caaraHarnessEnvironmentVariable())}, ${tomlString(caaraDelegationDepthHeader())} = ${tomlString(caaraDelegationDepthEnvironmentVariable())} }`;
+
 /** Renders one generated Codex role as parseable TOML. */
 export const renderCodexRoleToml = ({
   baseUrl,
@@ -86,6 +99,7 @@ export const renderCodexRoleToml = ({
     "request_max_retries = 0",
     "stream_max_retries = 0",
     `query_params = ${renderQueryParams(queryParams)}`,
+    `env_http_headers = ${renderDelegationMarkerHeaders()}`,
     "",
   ].join("\n");
 

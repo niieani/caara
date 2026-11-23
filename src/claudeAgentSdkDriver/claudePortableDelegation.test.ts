@@ -54,11 +54,11 @@ const makeTestServerApi = ({
     return { status: response.status, body: yield* response.json };
   });
   return {
-    post: ({ url, body }) =>
-      HttpClientRequest.bodyJson(HttpClientRequest.post(new URL(url).pathname), body).pipe(
-        Effect.flatMap(execute),
-        Effect.orDie,
-      ),
+    post: ({ url, body, headers = {} }) =>
+      HttpClientRequest.bodyJson(
+        HttpClientRequest.setHeaders(HttpClientRequest.post(new URL(url).pathname), headers),
+        body,
+      ).pipe(Effect.flatMap(execute), Effect.orDie),
     get: (url) =>
       execute(HttpClientRequest.get(`${new URL(url).pathname}${new URL(url).search}`)).pipe(
         Effect.orDie,
@@ -103,17 +103,28 @@ const portableClaudeLayer = ({
   };
 };
 
+/**
+ * Calling-process environment with no inherited host markers; each test adds the markers of the
+ * harness it simulates. HOME points at a missing directory so no user config is read.
+ */
+const callerEnvironment = (
+  markers: Readonly<Record<string, string>> = {},
+): Readonly<Record<string, string>> => ({ HOME: "/nonexistent/caara-test-home", ...markers });
+
 /** Starts one Claude portable turn through the public CLI adapter and real HTTP router. */
 const startClaudeTurn = ({
   api,
   prompt,
   sessionId,
+  env = callerEnvironment(),
 }: {
   readonly prompt: string;
   readonly sessionId?: string;
   readonly api: CaaraAgentApi;
+  readonly env?: Readonly<Record<string, string>>;
 }) =>
   runCaaraAgentStart({
+    env,
     args: ["--host", "127.0.0.1", "--port", "8787"],
     prompt,
     target: "claude/sonnet",
@@ -150,7 +161,11 @@ describe("Claude portable delegation", () => {
 
     return Effect.gen(function* () {
       const api = makeTestServerApi({ client: yield* HttpClient.HttpClient });
-      const first = yield* startClaudeTurn({ prompt: "first portable prompt", api });
+      const first = yield* startClaudeTurn({
+        prompt: "first portable prompt",
+        api,
+        env: callerEnvironment({ CODEX_THREAD_ID: "codex-thread-native" }),
+      });
       const firstWait = yield* runCaaraAgentWait({
         args: [],
         turnId: first.turnId,
@@ -164,6 +179,7 @@ describe("Claude portable delegation", () => {
         prompt: "resumed portable prompt",
         sessionId: first.sessionId,
         api,
+        env: callerEnvironment({ CAARA_HARNESS: "codex", CAARA_DELEGATION_DEPTH: "2" }),
       });
       const resumedWait = yield* runCaaraAgentWait({
         args: [],
@@ -189,6 +205,34 @@ describe("Claude portable delegation", () => {
       assert.strictEqual(harness.harness.recordedRequests[0]?.options.effort, "max");
       assert.strictEqual(harness.harness.recordedRequests[0]?.options.maxBudgetUsd, 0.75);
       assert.strictEqual(harness.harness.recordedRequests[1]?.options.resume, firstSdkSession);
+      assert.strictEqual(harness.harness.recordedRequests[0]?.options.env?.CAARA_HARNESS, "claude");
+      assert.strictEqual(
+        harness.harness.recordedRequests[0]?.options.env?.CAARA_DELEGATION_DEPTH,
+        "1",
+      );
+      assert.strictEqual(harness.harness.recordedRequests[1]?.options.env?.CAARA_HARNESS, "claude");
+      assert.strictEqual(
+        harness.harness.recordedRequests[1]?.options.env?.CAARA_DELEGATION_DEPTH,
+        "3",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.live("rejects Claude calling Claude before any SDK query starts", () => {
+    const harness = portableClaudeLayer({ runtimeMessages: [], sessionIds: [] });
+    return Effect.gen(function* () {
+      const api = makeTestServerApi({ client: yield* HttpClient.HttpClient });
+      const error = yield* startClaudeTurn({
+        prompt: "same-harness prompt",
+        api,
+        env: callerEnvironment({ CLAUDECODE: "1" }),
+      }).pipe(
+        Effect.catchTag("CaaraSettingsError", (settingsError) => Effect.die(settingsError)),
+        Effect.flip,
+      );
+      assert.strictEqual(error.kind, "target_failure");
+      assert.match(error.message, /Claude Code's native subagents \(the Agent tool\)/u);
+      assert.strictEqual(harness.harness.recordedRequests.length, 0);
     }).pipe(Effect.provide(harness.layer));
   });
 

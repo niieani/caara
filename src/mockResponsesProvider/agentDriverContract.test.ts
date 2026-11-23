@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Stream } from "effect";
 
+import { directAgentTurnDelegation } from "./agentDelegation.ts";
 import {
   AgentDriverRegistry,
   type AgentDriver,
@@ -48,7 +49,10 @@ const contractCodex = new CodexTurnContext({
 
 /** Builds one driver-facing turn using the explicit AgentDriverTurn contract. */
 const contractTurn = (): AgentDriverTurn => ({
-  context: agentTurnContextFromCodex({ codex: contractCodex }),
+  context: agentTurnContextFromCodex({
+    delegation: directAgentTurnDelegation(),
+    codex: contractCodex,
+  }),
   target: contractTarget,
   prompt: {
     input: [

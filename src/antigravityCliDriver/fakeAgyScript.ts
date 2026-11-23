@@ -32,7 +32,7 @@ if (!invocationLog) {
 }
 
 fs.mkdirSync(path.dirname(invocationLog), { recursive: true });
-fs.appendFileSync(invocationLog, JSON.stringify({ cwd: process.cwd(), args, prompt }) + "\\n");
+fs.appendFileSync(invocationLog, JSON.stringify({ cwd: process.cwd(), args, prompt, delegation: { harness: process.env.CAARA_HARNESS ?? null, depth: process.env.CAARA_DELEGATION_DEPTH ?? null } }) + "\\n");
 
 const appendSignalLog = (signal) => {
   fs.appendFileSync(invocationLog, JSON.stringify({ event: "signal", signal, mode }) + "\\n");

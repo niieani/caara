@@ -4,9 +4,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Effect, Schema } from "effect";
 import * as z from "zod";
 
-import { CaaraAgentCliError } from "./caaraAgentCli.ts";
+import { type CaaraAgentApi, CaaraAgentCliError } from "./caaraAgentCli.ts";
 import type { CaaraAgentMcpOperations } from "./caaraAgentMcp.ts";
-import { createCaaraAgentMcpServer } from "./caaraAgentMcp.ts";
+import { createCaaraAgentMcpServer, makeCaaraAgentMcpOperations } from "./caaraAgentMcp.ts";
 import { PortableSessionId, PortableTurnId } from "./portableAgentIdentity.ts";
 
 const turnId = PortableTurnId.make("portable-turn-00000000-0000-4000-8000-000000000001");
@@ -36,6 +36,18 @@ const operations = ({ calls }: { readonly calls: string[] }): CaaraAgentMcpOpera
       sessionReusable: true,
     });
   },
+});
+
+/** Accepts every start while recording the delegation marker headers the adapter forwards. */
+const headerRecordingApi = (forwarded: unknown[]): CaaraAgentApi => ({
+  post: ({ headers }) =>
+    Effect.sync(() => forwarded.push(headers)).pipe(
+      Effect.map(() => ({
+        status: 202,
+        body: { turnId, sessionId, status: "working", observationPath: "/observe/private" },
+      })),
+    ),
+  get: () => Effect.die("unused"),
 });
 
 /** Runs one assertion against a fully initialized in-memory MCP connection. */
@@ -76,8 +88,34 @@ describe("Caara Agent MCP", () => {
           tools.tools.map(({ execution }) => execution?.taskSupport),
           ["forbidden", "forbidden", "forbidden"],
         );
+        assert.deepStrictEqual(
+          Object.keys(tools.tools[0]?.inputSchema.properties ?? {}).toSorted(),
+          ["cwd", "driverOptions", "prompt", "sessionId", "target"],
+        );
       }),
     ),
+  );
+
+  it.effect("derives the caller from the MCP server environment set by its host", () =>
+    Effect.gen(function* () {
+      const forwarded: unknown[] = [];
+      yield* withClient(
+        (client) =>
+          client
+            .callTool({
+              name: "caara_agent_start",
+              arguments: { target: "agy/gemini-3.5-flash", cwd: "/workspace", prompt: "delegate" },
+            })
+            .then((started) => assert.strictEqual(started.isError, undefined)),
+        makeCaaraAgentMcpOperations({
+          env: { HOME: "/nonexistent/caara-test-home", CLAUDECODE: "1" },
+          api: headerRecordingApi(forwarded),
+        }),
+      );
+      assert.deepStrictEqual(forwarded, [
+        { "x-caara-harness": "claude", "x-caara-delegation-depth": "0" },
+      ]);
+    }),
   );
 
   it.effect("starts, resumes, waits, and cancels through durable portable handles", () =>

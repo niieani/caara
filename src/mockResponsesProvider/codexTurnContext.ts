@@ -1,6 +1,10 @@
 import { Effect, Match, Option, Schema } from "effect";
 import * as Path from "effect/Path";
 
+import {
+  type AgentTurnDelegation,
+  resolveDelegationFromCodexResponsesHeaders,
+} from "./agentDelegation.ts";
 import { InvalidResponsesRequest } from "./errors.ts";
 import { decodeResponsesCreateRequest, type ResponsesCreateRequest } from "./protocol.ts";
 import { extractCwdCandidates } from "./requestDiagnosticsLogger.ts";
@@ -101,6 +105,7 @@ export class AgentTarget extends Schema.Class<AgentTarget>("AgentTarget")({
 export interface DecodedCodexTurnRequest {
   readonly responses: ResponsesCreateRequest;
   readonly codex: CodexTurnContext;
+  readonly delegation: AgentTurnDelegation;
   readonly target: AgentTarget;
 }
 
@@ -386,6 +391,9 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
   const advisoryEffort = yield* decodeAdvisoryEffort(body);
   const pathService = yield* Path.Path;
   yield* validateIdentityConsistency({ headers: decodedHeaders, metadata, bodyMetadata });
+  const delegation = yield* resolveDelegationFromCodexResponsesHeaders({
+    headers: normalizeHeaders(headers),
+  }).pipe(Effect.mapError((error) => invalidRequest(error.message)));
 
   const rawDriverOptions = yield* parseProviderQueryParams(url);
   const target = yield* parseAgentTarget({
@@ -414,6 +422,7 @@ export const decodeCodexTurnRequest = Effect.fnUntraced(function* ({
       workspacePaths,
       cwdCandidates,
     }),
+    delegation,
     target,
   };
 });

@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Option, Result, Stream } from "effect";
 
 import { defaultCaaraSettingsValue, type CaaraSettingsValue } from "../caaraSettings.ts";
+import { directAgentTurnDelegation } from "../mockResponsesProvider/agentDelegation.ts";
 import { createRuntimeTurnSucceededEvent } from "../mockResponsesProvider/agentDriver.ts";
 import type { ClaudeAgentSdkQueryRuntime } from "./claudeAgentSdkClient.ts";
 import { runtimeEventsFromClaudeAgentSdkQuery } from "./events.ts";
@@ -97,6 +98,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("builds non-interactive permission options without shadowing allow rules", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
@@ -125,6 +127,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("accepts noninteractive permission modes from query options", () =>
     Effect.gen(function* () {
       const autoOptions = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
@@ -132,6 +135,7 @@ describe("Claude Agent SDK permission policy", () => {
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p111" },
       });
       const dontAskOptions = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
@@ -139,6 +143,7 @@ describe("Claude Agent SDK permission policy", () => {
         startup: { _tag: "Start", sessionId: "00000000-0000-4000-8000-00000000p112" },
       });
       const bypassOptions = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings({ allowDangerousSkipPermissions: true }),
         cwd: projectRoot,
         model: "sonnet",
@@ -156,6 +161,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("passes Caara service-mode execution PATH to the SDK subprocess environment", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: {
           ...defaultCaaraSettingsValue,
           path: ["/config/bin"],
@@ -183,6 +189,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("passes the resolved Claude Code executable path to the SDK", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
@@ -198,6 +205,7 @@ describe("Claude Agent SDK permission policy", () => {
   it.effect("expands TMPDIR-only Claude permission scope options", () =>
     Effect.gen(function* () {
       const options = yield* buildClaudeAgentSdkQueryOptions({
+        delegation: directAgentTurnDelegation(),
         caaraSettings: caaraSettings(),
         cwd: projectRoot,
         model: "sonnet",
@@ -238,6 +246,7 @@ describe("Claude Agent SDK permission policy", () => {
       ] as const) {
         const result = yield* Effect.result(
           buildClaudeAgentSdkQueryOptions({
+            delegation: directAgentTurnDelegation(),
             caaraSettings: caaraSettings(),
             cwd: projectRoot,
             model: "sonnet",
@@ -262,6 +271,7 @@ describe("Claude Agent SDK permission policy", () => {
       for (const rawDriverOptions of scopedPermissionOptions) {
         const result = yield* Effect.result(
           buildClaudeAgentSdkQueryOptions({
+            delegation: directAgentTurnDelegation(),
             caaraSettings: caaraSettings(),
             cwd: projectRoot,
             model: "sonnet",
@@ -293,6 +303,7 @@ describe("Claude Agent SDK permission policy", () => {
         for (const rawDriverOptions of invalidPlaceholderOptions) {
           const result = yield* Effect.result(
             buildClaudeAgentSdkQueryOptions({
+              delegation: directAgentTurnDelegation(),
               caaraSettings: caaraSettings(),
               cwd: projectRoot,
               model: "sonnet",
@@ -312,6 +323,7 @@ describe("Claude Agent SDK permission policy", () => {
     Effect.gen(function* () {
       const deniedResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
@@ -329,6 +341,7 @@ describe("Claude Agent SDK permission policy", () => {
     Effect.gen(function* () {
       const defaultResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
@@ -338,6 +351,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const planResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
@@ -347,6 +361,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const hyphenatedOptionResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
@@ -377,6 +392,7 @@ describe("Claude Agent SDK permission policy", () => {
     Effect.gen(function* () {
       const allowedToolsResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",
@@ -386,6 +402,7 @@ describe("Claude Agent SDK permission policy", () => {
       );
       const toolsResult = yield* Effect.result(
         buildClaudeAgentSdkQueryOptions({
+          delegation: directAgentTurnDelegation(),
           caaraSettings: caaraSettings(),
           cwd: projectRoot,
           model: "sonnet",

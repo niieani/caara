@@ -251,6 +251,35 @@ _Avoid_: Permission prompt, follow-up task, recovery prompt
 The Codex-facing OpenAI Responses-compatible HTTP and SSE shape Caara speaks.
 _Avoid_: Caara API, provider API
 
+**Delegation context**:
+The immediate caller harness and delegation depth Caara derives itself for one Agent turn at its
+transport boundary. Never supplied by the caller and never stored as session state; resumed turns
+derive it again.
+_Avoid_: Lineage, origin metadata, caller-supplied depth
+
+**Immediate caller harness**:
+The external harness (Claude Code, Antigravity, or Codex) that directly asked Caara for a turn, or
+none for a direct human, script, or raw HTTP call. Only an immediate caller/target match is
+same-harness delegation.
+_Avoid_: Lineage, ancestor chain, origin
+
+**Delegation depth**:
+The number of Caara-spawned harnesses above the immediate caller: 0 for direct invocation, plus one
+for each harness Caara spawns. Bounded by the service's `delegation.maximumDepth`.
+_Avoid_: Recursion depth, lineage length
+
+**Harness marker**:
+Evidence identifying the immediate caller harness: Caara's own injected marker
+(`CAARA_HARNESS`/`CAARA_DELEGATION_DEPTH`, forwarded as `x-caara-*` headers), or a verified native
+host marker such as Claude Code's `CLAUDECODE=1`, Codex's `CODEX_THREAD_ID`, or the Codex subagent
+identity headers. Caara's marker wins; malformed or conflicting markers fail explicitly.
+_Avoid_: Origin flag, caller hint, guessed marker
+
+**Same-harness delegation**:
+A turn whose target harness equals its immediate caller harness. Caara rejects it before the harness
+starts and points the agent to that harness's native subagents.
+_Avoid_: Recursion, self-delegation loop
+
 ## Skill Pack Language
 
 **Caara skill pack**:

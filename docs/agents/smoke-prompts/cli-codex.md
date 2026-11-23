@@ -22,6 +22,11 @@ Requirements:
   contract has deliberately changed and the playbook was updated with matching automated fake
   boundary coverage.
 - Verify start/wait/cancel never expose reasoning, JSONL activity, commands, or viewer HTML.
+- Run `./dist/caara` from a shell with no Codex marker (`CODEX_THREAD_ID`, or `CAARA_HARNESS=codex`).
+  Caara treats a Codex shell as the immediate caller and rejects Codex → Codex before `codex exec`
+  starts. Record one deliberate rejection check: rerun turn 1's start with
+  `CODEX_THREAD_ID=smoke-native-marker` and require exit 70 with a message naming Codex's native
+  subagents (`spawn_agent`) and no new `codex exec` process.
 - Write `result.md`; clean up only the provider process owned by this smoke.
 
 Do not modify repository files. Do not install or reuse the global Caara service.

@@ -36,19 +36,11 @@ export const codexCliArgv = (invocation: CodexCliInvocation): readonly string[] 
   );
 };
 
-/** Builds recursion metadata inherited by Codex and nested Caara invocations. */
-export const codexCliEnvironment = (
-  invocation: CodexCliInvocation,
-): Readonly<Record<string, string>> => ({
-  CAARA_DELEGATION_LINEAGE: invocation.lineage.join(","),
-  CAARA_DELEGATION_DEPTH: String(invocation.depth),
-});
-
 /** Starts the real Codex executable with piped protocol and diagnostic channels. */
 const spawnLiveCodex: CodexCliSpawn = (invocation) => {
   const process = Bun.spawn(["codex", ...codexCliArgv(invocation)], {
     cwd: invocation.cwd,
-    env: { ...globalThis.process.env, ...codexCliEnvironment(invocation) },
+    env: { ...globalThis.process.env, ...invocation.delegationEnvironment },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

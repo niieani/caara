@@ -26,6 +26,11 @@ Lifecycle:
    the trusted smoke operator, then cancel the exact turn. Report only the typed cancellation
    outcome.
 
+4. Start one turn targeting your own harness (`codex/gpt-5.6` from Codex, `claude/sonnet` from
+   Claude). Require a typed `target_failure` that names your harness's native subagents, and no
+   accepted turn. Caara derives the caller from the MCP server environment; never pass caller or
+   depth arguments.
+
 Assertions to report:
 
 - tool discovery exposed exactly start/wait/cancel and no resources, prompts, transcript reader, or
@@ -34,6 +39,7 @@ Assertions to report:
 - no MCP result/error included reasoning, commentary, tools, transcript fields, viewer HTML, or
   private activity;
 - the same session was used for all three turns;
+- same-harness delegation was rejected before the target started;
 - the trusted smoke operator confirmed the harness PID exited after cancellation.
 
 Return a compact assertion report plus terminal answers. Do not modify files or MCP configuration.
